@@ -25,6 +25,8 @@ pub enum GatewayError {
     #[error("{0}")]
     Forbidden(String),
     #[error("{0}")]
+    BudgetExceeded(String),
+    #[error("{0}")]
     Unavailable(String),
     #[error("{0}")]
     Internal(String),
@@ -40,6 +42,7 @@ impl GatewayError {
             Self::UpstreamTimeout => StatusCode::GATEWAY_TIMEOUT,
             Self::Unauthorized(_) => StatusCode::UNAUTHORIZED,
             Self::Forbidden(_) => StatusCode::FORBIDDEN,
+            Self::BudgetExceeded(_) => StatusCode::PAYMENT_REQUIRED,
             Self::Unavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
             Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
@@ -50,6 +53,7 @@ impl GatewayError {
             400 => "invalid_request_error",
             401 => "authentication_error",
             403 => "permission_error",
+            402 => "insufficient_quota",
             404 => "not_found_error",
             429 => "rate_limit_error",
             s if s < 500 => "invalid_request_error",

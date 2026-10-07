@@ -23,12 +23,15 @@ use switchyard_translation::{
 };
 
 use crate::auth::{ConfigKeyStore, KeyRecord, KeyStore, hash_key, presented_key};
+use crate::budget::{BudgetPolicy, BudgetTracker};
+use crate::clock::Clock;
 use crate::clock::SystemClock;
 use crate::config::Config;
+use crate::config::OverBudget;
 use crate::error::GatewayError;
 use crate::ledger::Ledger;
 use crate::metering::{Accounting, CALL_ID_HEADER, CallContext};
-use crate::policy::{AllowAll, PolicyContext, RoutingPolicy};
+use crate::policy::{All, AllowAll, BudgetState, KeyContext, PolicyContext, RoutingPolicy};
 use crate::pool::{self, PROVIDER_HEADER, TargetClient};
 use crate::routing::Routes;
 
@@ -38,32 +41,63 @@ pub struct AppState {
     config: Config,
     targets: HashMap<ModelId, Arc<TargetClient>>,
     accounting: Arc<Accounting>,
+    tracker: Option<Arc<BudgetTracker>>,
     routes: Routes,
     policy: Arc<dyn RoutingPolicy>,
     keys: Arc<dyn KeyStore>,
 }
 
 pub async fn router(config: Config) -> Result<Router, String> {
-    router_with_policy(config, Arc::new(AllowAll)).await
+    router_with_options(config, Options::default()).await
 }
 
-/// Like [`router`], with a custom policy deciding which targets are eligible per request.
+/// Like [`router`], with a custom policy deciding which targets are eligible per request. The
+/// budget policy always applies in addition.
 pub async fn router_with_policy(
     config: Config,
     policy: Arc<dyn RoutingPolicy>,
 ) -> Result<Router, String> {
+    router_with_options(
+        config,
+        Options {
+            policy: Some(policy),
+            ..Options::default()
+        },
+    )
+    .await
+}
+
+/// Embedding hooks: an extra routing policy and a clock (tests control budget periods with it).
+#[derive(Default)]
+pub struct Options {
+    pub policy: Option<Arc<dyn RoutingPolicy>>,
+    pub clock: Option<Arc<dyn Clock>>,
+}
+
+pub async fn router_with_options(config: Config, options: Options) -> Result<Router, String> {
+    let clock: Arc<dyn Clock> = options.clock.unwrap_or_else(|| Arc::new(SystemClock));
     let targets = pool::build(&config)?;
     let ledger = match &config.ledger {
         Some(path) => Some(Ledger::open(path).await.map_err(|e| e.to_string())?),
         None => None,
     };
-    let accounting = Arc::new(Accounting::new(ledger, Arc::new(SystemClock)));
+    let tracker = (!config.keys.is_empty())
+        .then(|| Arc::new(BudgetTracker::new(clock.clone(), &config.budget)));
+    if let (Some(tracker), Some(ledger)) = (&tracker, &ledger) {
+        tracker.hydrate(ledger).await.map_err(|e| e.to_string())?;
+    }
+    let accounting = Arc::new(Accounting::new(ledger, clock, tracker.clone()));
+    let policy: Arc<dyn RoutingPolicy> = Arc::new(All(vec![
+        options.policy.unwrap_or_else(|| Arc::new(AllowAll)),
+        Arc::new(BudgetPolicy::new(&config)),
+    ]));
     let routes = Routes::build(&config)?;
     let keys: Arc<dyn KeyStore> = Arc::new(ConfigKeyStore::new(&config.keys));
     let state = Arc::new(AppState {
         config,
         targets,
         accounting,
+        tracker,
         routes,
         policy,
         keys,
@@ -71,6 +105,7 @@ pub async fn router_with_policy(
     Ok(Router::new()
         .route("/healthz", get(|| async { StatusCode::OK }))
         .route("/v1/models", get(list_models))
+        .route("/v1/key/info", get(key_info))
         .route(
             "/v1/chat/completions",
             post(|s, h, b| infer(s, WireFormat::OpenAiChat, h, b)),
@@ -99,6 +134,54 @@ async fn list_models(State(state): State<Arc<AppState>>, headers: HeaderMap) -> 
         .map(|id| json!({"id": id, "object": "model", "created": 0, "owned_by": "switchyard-conductor"}))
         .collect();
     axum::Json(json!({"object": "list", "data": data})).into_response()
+}
+
+/// The calling key's id, limits, spend and budget state.
+async fn key_info(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response {
+    let format = WireFormat::OpenAiChat;
+    let caller = match authenticate(&state, &headers).await {
+        Ok(Some(caller)) => caller,
+        Ok(None) => {
+            return GatewayError::ModelNotFound("key info needs a key: the gateway is open".into())
+                .into_response_for(format);
+        }
+        Err(error) => return error.into_response_for(format),
+    };
+    let Some(tracker) = &state.tracker else {
+        return GatewayError::Internal("budget tracking is not running".into())
+            .into_response_for(format);
+    };
+    let status = tracker.status(&caller.id, &caller.limits);
+    let usd = |micro: u64| micro as f64 / 1_000_000.0;
+    let remaining = |limit: Option<f64>, spent: f64| limit.map(|l| (l - spent).max(0.0));
+    axum::Json(json!({
+        "id": caller.id,
+        "state": match status.state {
+            BudgetState::Healthy => "healthy",
+            BudgetState::Restricted => "restricted",
+            BudgetState::Exhausted => "exhausted",
+        },
+        "binding_limit": status.binding_limit,
+        "limits": {
+            "daily_usd": status.limits.daily_usd,
+            "monthly_usd": status.limits.monthly_usd,
+            "daily_tokens": status.limits.daily_tokens,
+            "monthly_tokens": status.limits.monthly_tokens,
+        },
+        "spend": {
+            "daily_usd": usd(status.day.micro_usd),
+            "monthly_usd": usd(status.month.micro_usd),
+            "daily_tokens": status.day.tokens,
+            "monthly_tokens": status.month.tokens,
+        },
+        "remaining": {
+            "daily_usd": remaining(status.limits.daily_usd, usd(status.day.micro_usd)),
+            "monthly_usd": remaining(status.limits.monthly_usd, usd(status.month.micro_usd)),
+            "daily_tokens": remaining(status.limits.daily_tokens.map(|t| t as f64), status.day.tokens as f64),
+            "monthly_tokens": remaining(status.limits.monthly_tokens.map(|t| t as f64), status.month.tokens as f64),
+        },
+    }))
+    .into_response()
 }
 
 /// Identifies the caller. `None` means the gateway is open (no keys configured).
@@ -205,17 +288,41 @@ async fn handle(
     // endpoint speaks OpenAI Chat and the IR is translated for it.
     let metadata = Metadata::from_headers(headers);
     let session_id = metadata.session_id.clone().filter(|s| !s.is_empty());
+    let budget = caller
+        .zip(state.tracker.as_ref())
+        .map(|(key, tracker)| (key, tracker.status(&key.id, &key.limits)));
+    if let Some((key, status)) = &budget
+        && status.state == BudgetState::Exhausted
+        && key.over_budget == OverBudget::Block
+    {
+        return Err(GatewayError::BudgetExceeded(format!(
+            "budget exhausted: key `{}` reached its {}",
+            key.id,
+            status.binding_limit.unwrap_or("limit")
+        )));
+    }
+    let budget_state = budget.as_ref().map(|(_, status)| status.state);
     let context = PolicyContext {
         route: &model,
-        session_id: metadata.session_id.as_deref().filter(|s| !s.is_empty()),
+        session_id: session_id.as_deref(),
         metadata: &metadata,
+        key: caller.map(|key| KeyContext {
+            id: &key.id,
+            budget: budget_state.unwrap_or(BudgetState::Healthy),
+        }),
     };
     let plan = route
         .plan(&model, |target| state.policy.is_eligible(&context, target))
         .ok_or_else(|| {
-            GatewayError::Unavailable(format!(
-                "no eligible target for route `{model}`: all are excluded by routing policy"
-            ))
+            if budget_state == Some(BudgetState::Exhausted) {
+                GatewayError::BudgetExceeded(format!(
+                    "budget exhausted and route `{model}` has no free target to continue on"
+                ))
+            } else {
+                GatewayError::Unavailable(format!(
+                    "no eligible target for route `{model}`: all are excluded by routing policy"
+                ))
+            }
         })?;
     let names: Vec<ModelId> = plan.models.models_for(&Category::Any).to_vec();
     let models = Arc::new(plan.models);

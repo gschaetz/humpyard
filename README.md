@@ -7,7 +7,8 @@ Status: pre-alpha. Today it is a protocol-translating proxy to one OpenAI-compat
 Routing, multiple providers and budgets are next. See [docs/background.md](docs/background.md).
 
 See [docs/architecture.md](docs/architecture.md) for diagrams and component status and
-[docs/routing.md](docs/routing.md) for routes, failover and the routing policy.
+[docs/routing.md](docs/routing.md) for routes, failover and the routing policy, and
+[docs/budgets.md](docs/budgets.md) for virtual keys, the usage ledger and budgets.
 
 ## Quickstart
 
@@ -57,7 +58,7 @@ See [examples/config.toml](examples/config.toml). Three kinds of entries:
 Logging is controlled by `RUST_LOG` (default `info`). `check-config` validates a file and reports
 dangling provider/target references and missing key variables.
 
-Not supported yet: budget/health-aware policy, `previous_response_id` (returns 400), inbound auth.
+Not supported yet: provider-health-aware policy, database-managed keys, `previous_response_id` (returns 400).
 
 ## Development
 
