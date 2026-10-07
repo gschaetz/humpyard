@@ -16,7 +16,9 @@ use futures::{Stream, StreamExt};
 use serde_json::{Value, json};
 
 use switchyard_llm_client::run;
-use switchyard_protocol::{Category, LlmResponse, Metadata, ModelId, Request, WireFormat};
+use switchyard_protocol::{
+    Category, LlmRequest, LlmResponse, Metadata, ModelId, Request, WireFormat,
+};
 use switchyard_translation::{
     LlmStreamError, RawEventStream, decode_request, encode_aggregated_response_with_extensions,
     encode_stream_with_extensions, util::SWITCHYARD_METADATA_KEY,
@@ -30,13 +32,13 @@ use crate::config::Config;
 use crate::config::OverBudget;
 use crate::error::GatewayError;
 use crate::ledger::Ledger;
-use crate::metering::{Accounting, CALL_ID_HEADER, CallContext};
+use crate::metering::{Accounting, CALL_ID_HEADER, CallContext, StreamTemplate};
 use crate::num::f64_from_u64;
 use crate::policy::{
     All, AllowAll, BudgetState, KeyContext, PolicyContext, RequestMeta, RoutingPolicy,
 };
 use crate::pool::{self, PROVIDER_HEADER, TargetClient};
-use crate::routing::Routes;
+use crate::routing::{Plan, Route, Routes};
 
 const TARGET_HEADER: &str = "x-humpyard-target";
 
@@ -245,8 +247,31 @@ async fn infer(
     }
 }
 
-// Split into named stages in `harden-engineering` task 4.3, which removes this allowance.
-#[allow(clippy::too_many_lines)]
+/// A client request, decoded.
+struct Decoded {
+    body: Value,
+    llm_request: LlmRequest,
+    model: String,
+}
+
+/// What the headers say about this request.
+struct RequestInfo {
+    metadata: Metadata,
+    session_id: Option<String>,
+    meta: RequestMeta,
+}
+
+/// A finished upstream run, before the response is encoded.
+struct Executed {
+    selected: ModelId,
+    response: switchyard_protocol::Response,
+    ctx: Arc<CallContext>,
+    stream_template: Option<StreamTemplate>,
+}
+
+/// The request path, in the order `docs/invariants.md` (item 5) fixes: decode, authorize, check
+/// the budget, plan with the policy, run, encode. Nothing reaches an upstream before the first
+/// four succeed.
 async fn handle(
     state: &AppState,
     format: WireFormat,
@@ -254,6 +279,33 @@ async fn handle(
     raw: &[u8],
     caller: Option<&KeyRecord>,
 ) -> Result<(String, Response), GatewayError> {
+    let Decoded {
+        body,
+        llm_request,
+        model,
+    } = decode(format, raw)?;
+    let route = authorize(state, caller, &model)?;
+    let info = request_info(headers);
+    let budget = check_budget(state, caller)?;
+    let plan = plan_route(state, route, &model, caller, budget, &info)?;
+    let extensions = llm_request.extensions.clone();
+    let request = Request {
+        llm_request,
+        raw_request: Some(body),
+        metadata: Some(info.metadata),
+    };
+    let ctx = CallContext::new(
+        state.accounting.clone(),
+        caller.map(|k| k.id.clone()),
+        info.session_id,
+        model,
+    );
+    let executed = execute(state, &ctx, plan, request).await?;
+    encode(format, executed, &extensions)
+}
+
+/// Stage 1: parse the body and translate it into Switchyard's neutral form.
+fn decode(format: WireFormat, raw: &[u8]) -> Result<Decoded, GatewayError> {
     let mut body: Value = serde_json::from_slice(raw)
         .map_err(|e| GatewayError::BadRequest(format!("invalid JSON body: {e}")))?;
     // Only trusted translation hops may supply preservation state; strip any from clients.
@@ -276,56 +328,93 @@ async fn handle(
             "`previous_response_id` is not supported: stateful responses are unavailable".into(),
         ));
     }
+    Ok(Decoded {
+        body,
+        llm_request,
+        model,
+    })
+}
+
+/// Stage 2: the key may use this route, and the route exists.
+fn authorize<'a>(
+    state: &'a AppState,
+    caller: Option<&KeyRecord>,
+    model: &str,
+) -> Result<&'a Route, GatewayError> {
     if let Some(key) = caller
-        && !key.may_use(&model)
+        && !key.may_use(model)
     {
         return Err(GatewayError::Forbidden(format!(
             "this key may not use `{model}`"
         )));
     }
-    let route = state
+    state
         .routes
-        .get(&model)
-        .ok_or_else(|| GatewayError::ModelNotFound(model.clone()))?;
+        .get(model)
+        .ok_or_else(|| GatewayError::ModelNotFound(model.to_string()))
+}
 
-    let extensions = llm_request.extensions.clone();
+/// Stage 2b: what the client's headers tell us about the session and agent.
+fn request_info(headers: &HeaderMap) -> RequestInfo {
     // `wire_format` stays unset: setting it pins the backend to the client's protocol, but every
     // endpoint speaks OpenAI Chat and the IR is translated for it.
     let metadata = Metadata::from_headers(headers);
     let session_id = metadata.session_id.clone().filter(|s| !s.is_empty());
-    let request_meta = RequestMeta {
+    let meta = RequestMeta {
         agent_id: metadata.agent_id.clone(),
         parent_agent_id: metadata.parent_agent_id.clone(),
         is_subagent: metadata.is_subagent,
         task_id: metadata.task_id.clone(),
     };
-    let budget = caller
-        .zip(state.tracker.as_ref())
-        .map(|(key, tracker)| (key, tracker.status(&key.id, &key.limits)));
-    if let Some((key, status)) = &budget
-        && status.state == BudgetState::Exhausted
-        && key.over_budget == OverBudget::Block
-    {
+    RequestInfo {
+        metadata,
+        session_id,
+        meta,
+    }
+}
+
+/// Stage 3: refuse a key that has used up its budget (unless it may continue on free targets).
+/// Returns the key's budget state, or `None` for open-mode requests.
+fn check_budget(
+    state: &AppState,
+    caller: Option<&KeyRecord>,
+) -> Result<Option<BudgetState>, GatewayError> {
+    let Some((key, tracker)) = caller.zip(state.tracker.as_ref()) else {
+        return Ok(None);
+    };
+    let status = tracker.status(&key.id, &key.limits);
+    if status.state == BudgetState::Exhausted && key.over_budget == OverBudget::Block {
         return Err(GatewayError::BudgetExceeded(format!(
             "budget exhausted: key `{}` reached its {}",
             key.id,
             status.binding_limit.unwrap_or("limit")
         )));
     }
-    let budget_state = budget.as_ref().map(|(_, status)| status.state);
+    Ok(Some(status.state))
+}
+
+/// Stage 4: let the routing policy narrow the targets; nothing eligible is a refusal.
+fn plan_route(
+    state: &AppState,
+    route: &Route,
+    model: &str,
+    caller: Option<&KeyRecord>,
+    budget: Option<BudgetState>,
+    info: &RequestInfo,
+) -> Result<Plan, GatewayError> {
     let context = PolicyContext {
-        route: &model,
-        session_id: session_id.as_deref(),
-        metadata: &request_meta,
+        route: model,
+        session_id: info.session_id.as_deref(),
+        metadata: &info.meta,
         key: caller.map(|key| KeyContext {
             id: &key.id,
-            budget: budget_state.unwrap_or(BudgetState::Healthy),
+            budget: budget.unwrap_or(BudgetState::Healthy),
         }),
     };
-    let plan = route
-        .plan(&model, |target| state.policy.is_eligible(&context, target))
+    route
+        .plan(model, |target| state.policy.is_eligible(&context, target))
         .ok_or_else(|| {
-            if budget_state == Some(BudgetState::Exhausted) {
+            if budget == Some(BudgetState::Exhausted) {
                 GatewayError::BudgetExceeded(format!(
                     "budget exhausted and route `{model}` has no free target to continue on"
                 ))
@@ -334,22 +423,19 @@ async fn handle(
                     "no eligible target for route `{model}`: all are excluded by routing policy"
                 ))
             }
-        })?;
-    let names: Vec<ModelId> = plan.models.models_for(&Category::Any).to_vec();
-    let models = Arc::new(plan.models);
-    let ctx = CallContext::new(
-        state.accounting.clone(),
-        caller.map(|k| k.id.clone()),
-        session_id,
-        model.clone(),
-    );
-    let clients = ctx.router(&state.targets, &names);
-    let request = Request {
-        llm_request,
-        raw_request: Some(body),
-        metadata: Some(metadata),
-    };
+        })
+}
 
+/// Stage 5: run the route's algorithm over the metered clients and settle the usage accounting.
+async fn execute(
+    state: &AppState,
+    ctx: &Arc<CallContext>,
+    plan: Plan,
+    request: Request,
+) -> Result<Executed, GatewayError> {
+    let names: Vec<ModelId> = plan.models.models_for(&Category::Any).to_vec();
+    let clients = ctx.router(&state.targets, &names);
+    let models = Arc::new(plan.models);
     let (selected, mut response) = match run(plan.algorithm, clients, request, models, None).await {
         Ok(done) => done,
         Err(error) => {
@@ -362,18 +448,33 @@ async fn handle(
         .remove(CALL_ID_HEADER)
         .and_then(|v| v.to_str().ok()?.parse::<u64>().ok());
     let stream_template = ctx.finish_ok(answer_id);
+    Ok(Executed {
+        selected,
+        response,
+        ctx: ctx.clone(),
+        stream_template,
+    })
+}
 
+/// Stage 6: encode the answer for the client's protocol and attach the attribution headers.
+fn encode(
+    format: WireFormat,
+    executed: Executed,
+    extensions: &switchyard_protocol::ProviderExtensions,
+) -> Result<(String, Response), GatewayError> {
+    let Executed {
+        selected,
+        mut response,
+        ctx,
+        stream_template,
+    } = executed;
     let served = response.served_model().unwrap_or(&selected).to_string();
     let upstream_headers = std::mem::take(&mut response.upstream_headers);
     let mut http_response = match response.llm_response {
         LlmResponse::Agg(agg) => {
-            let body = encode_aggregated_response_with_extensions(
-                &agg,
-                format,
-                Some(&served),
-                &extensions,
-            )
-            .map_err(|e| GatewayError::Internal(format!("cannot encode response: {e}")))?;
+            let body =
+                encode_aggregated_response_with_extensions(&agg, format, Some(&served), extensions)
+                    .map_err(|e| GatewayError::Internal(format!("cannot encode response: {e}")))?;
             axum::Json(body).into_response()
         }
         LlmResponse::Stream(stream) => {
@@ -382,7 +483,7 @@ async fn handle(
                 None => stream,
             };
             let events =
-                encode_stream_with_extensions(stream, format, Some(served.clone()), &extensions)
+                encode_stream_with_extensions(stream, format, Some(served.clone()), extensions)
                     .map_err(|e| GatewayError::Internal(e.to_string()))?;
             frame_stream(events, format).into_response()
         }
@@ -456,5 +557,79 @@ fn error_event(format: WireFormat, message: &str) -> Event {
     match format {
         WireFormat::OpenAiChat => Event::default().data(body.to_string()),
         _ => Event::default().event("error").data(body.to_string()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::http::HeaderValue;
+
+    fn raw(value: &Value) -> Vec<u8> {
+        serde_json::to_vec(value).unwrap()
+    }
+
+    #[test]
+    fn decode_accepts_a_chat_request_and_names_the_model() {
+        let body = json!({"model": "fast", "messages": [{"role": "user", "content": "hi"}]});
+        let decoded = decode(WireFormat::OpenAiChat, &raw(&body)).unwrap();
+        assert_eq!(decoded.model, "fast");
+        assert_eq!(decoded.body, body);
+    }
+
+    #[test]
+    fn decode_rejects_bad_json_a_missing_model_and_stateful_responses() {
+        let bad = decode(WireFormat::OpenAiChat, b"{nope").err().unwrap();
+        assert!(matches!(bad, GatewayError::BadRequest(m) if m.contains("invalid JSON")));
+
+        let no_model = json!({"messages": [{"role": "user", "content": "hi"}]});
+        let err = decode(WireFormat::OpenAiChat, &raw(&no_model))
+            .err()
+            .unwrap();
+        assert!(matches!(err, GatewayError::BadRequest(m) if m.contains("`model` is required")));
+
+        let blank = json!({"model": "  ", "messages": [{"role": "user", "content": "hi"}]});
+        assert!(decode(WireFormat::OpenAiChat, &raw(&blank)).is_err());
+
+        let stateful = json!({"model": "m", "input": "hi", "previous_response_id": "resp_1"});
+        let err = decode(WireFormat::OpenAiResponses, &raw(&stateful))
+            .err()
+            .unwrap();
+        assert!(matches!(err, GatewayError::BadRequest(m) if m.contains("previous_response_id")));
+        // A null value is not a reference to earlier state.
+        let null_id = json!({"model": "m", "input": "hi", "previous_response_id": null});
+        assert!(decode(WireFormat::OpenAiResponses, &raw(&null_id)).is_ok());
+    }
+
+    #[test]
+    fn decode_strips_client_supplied_preservation_state() {
+        let body = json!({
+            "model": "m",
+            "messages": [{"role": "user", "content": "hi"}],
+            "metadata": {SWITCHYARD_METADATA_KEY: {"forged": true}, "keep": 1}
+        });
+        let decoded = decode(WireFormat::OpenAiChat, &raw(&body)).unwrap();
+        assert!(
+            decoded.body["metadata"]
+                .get(SWITCHYARD_METADATA_KEY)
+                .is_none()
+        );
+        assert_eq!(decoded.body["metadata"]["keep"], 1);
+    }
+
+    #[test]
+    fn request_info_reads_session_and_agent_headers() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-switchyard-session-id",
+            HeaderValue::from_static("sess-1"),
+        );
+        let info = request_info(&headers);
+        assert_eq!(info.session_id.as_deref(), Some("sess-1"));
+
+        let mut blank = HeaderMap::new();
+        blank.insert("x-switchyard-session-id", HeaderValue::from_static(""));
+        assert_eq!(request_info(&blank).session_id, None);
+        assert_eq!(request_info(&HeaderMap::new()).session_id, None);
     }
 }
