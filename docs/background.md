@@ -37,7 +37,7 @@ the code in the original discussion was illustrative).
 ## Phases
 1. Core gateway + serde types + SSE streaming proxy to one provider
 2. Switchyard coupling (in-process)
-3. Provider registry port + health pinger + legacy `.modelrelay.json` import
+3. Provider registry port + health pinger + `migrate-modelrelay` one-shot migration (see below)
 4. Cost tracking, virtual keys, budgets feeding Switchyard
 
 ## Switchyard findings (verified 2026-10-06 against NVIDIA-NeMo/Switchyard v0.3.0)
@@ -68,6 +68,18 @@ the code in the original discussion was illustrative).
   (this changes phase 1: serde types come from `switchyard-protocol`).
 - **Known upstream issue:** buffered upstream work continues after client disconnect (can incur cost).
 - **Upstream contribution rules** (if we send PRs): Conventional Commits, DCO sign-off (`-s`).
+
+## modelrelay migration (decided 2026-10-06)
+Checked against the fork's `docs/configuration.md` and a live `~/.modelrelay.json`:
+- The JSON holds only credentials, provider toggles, custom OpenAI-compatible endpoints, bans,
+  tags and pinning. The built-in provider/model catalog lives in code (`sources.js`, `tags.js`,
+  `scores.js`) and keys can also come from ~15 env vars, so the file alone is not the whole config.
+- The fork keeps changing its own schema (it auto-migrates legacy shapes), and it stores keys in
+  plaintext, which conflicts with our env-var-only key rule.
+- Decision: no runtime reader. Provide a re-runnable `migrate-modelrelay` command that reads the
+  JSON plus env vars and writes our TOML. Keys become `api_key_env` references with a printed list
+  of variables to set; plaintext keys are never copied. The built-in catalog is ported once as
+  bundled data. Custom endpoints, bans, tags and pinning carry over.
 
 ## Open questions
 - Where `State` persists across requests, and whether a host can supply/own it.
