@@ -19,7 +19,7 @@
 ## 4. Structure
 
 - [x] 4.1 Share test scaffolding in `tests/common` and update the test files to use it; verify the same test count passes and duplicate helper definitions are gone (grep)
-- [ ] 4.2 Split `config.rs` into schema and validation modules with unchanged public API; verify all config tests pass untouched
+- [x] 4.2 Split `config.rs` into schema and validation modules with unchanged public API; verify all config tests pass untouched
 - [ ] 4.3 Split `handle()` into named stages with the invariant order; verify every end-to-end suite passes unchanged and no stage exceeds the `too_many_lines` limit
 
 ## 5. CI
