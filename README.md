@@ -6,7 +6,8 @@ and modelrelay-style multi-provider dispatch in one binary.
 Status: pre-alpha. Today it is a protocol-translating proxy to one OpenAI-compatible upstream.
 Routing, multiple providers and budgets are next. See [docs/background.md](docs/background.md).
 
-See [docs/architecture.md](docs/architecture.md) for diagrams and component status.
+See [docs/architecture.md](docs/architecture.md) for diagrams and component status and
+[docs/routing.md](docs/routing.md) for routes, failover and the routing policy.
 
 ## Quickstart
 

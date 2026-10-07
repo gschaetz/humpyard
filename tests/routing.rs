@@ -306,3 +306,40 @@ async fn escalation_mode_route_starts_on_the_efficient_target() {
     let reply = send(&h, plain("agent"), Some("esc-1")).await;
     assert_eq!((reply.status, reply.target.as_str()), (200, "fast"));
 }
+
+/// A Claude-Code-style Anthropic client: the agent loop starts on the efficient model, then a
+/// failing tool result escalates the same session to the capable one, all through /v1/messages.
+#[tokio::test]
+async fn anthropic_agent_escalates_after_a_failing_tool_result() {
+    let h = harness(STAGE).await;
+    let turn = |is_error: bool, result: &str| {
+        json!({"model": "auto", "max_tokens": 100, "messages": [
+            {"role": "user", "content": "fix the build"},
+            {"role": "assistant", "content": [{"type": "tool_use", "id": "toolu_1", "name": "Bash", "input": {"command": "cargo test"}}]},
+            {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "toolu_1", "is_error": is_error, "content": result}]}]})
+    };
+    let call = |body: Value| {
+        let url = format!("{}/v1/messages", h.url);
+        async move {
+            let resp = reqwest::Client::new()
+                .post(url)
+                .header("x-switchyard-session-id", "agent-1")
+                .json(&body)
+                .send()
+                .await
+                .unwrap();
+            let target = resp.headers()["x-conductor-target"]
+                .to_str()
+                .unwrap()
+                .to_string();
+            let body: Value = resp.json().await.unwrap();
+            (target, body)
+        }
+    };
+    let (target, body) = call(turn(false, "ok")).await;
+    assert_eq!(target, "fast");
+    assert_eq!(body["type"], "message");
+    let (target, body) = call(turn(true, "fatal runtime error: out of memory")).await;
+    assert_eq!(target, "smart");
+    assert_eq!(body["content"][0]["text"], "smart-m");
+}
