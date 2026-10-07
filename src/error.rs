@@ -21,6 +21,10 @@ pub enum GatewayError {
     #[error("upstream timed out")]
     UpstreamTimeout,
     #[error("{0}")]
+    Unauthorized(String),
+    #[error("{0}")]
+    Forbidden(String),
+    #[error("{0}")]
     Unavailable(String),
     #[error("{0}")]
     Internal(String),
@@ -34,6 +38,8 @@ impl GatewayError {
             Self::Upstream { status, .. } => *status,
             Self::UpstreamUnreachable(_) => StatusCode::BAD_GATEWAY,
             Self::UpstreamTimeout => StatusCode::GATEWAY_TIMEOUT,
+            Self::Unauthorized(_) => StatusCode::UNAUTHORIZED,
+            Self::Forbidden(_) => StatusCode::FORBIDDEN,
             Self::Unavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
             Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
@@ -42,7 +48,8 @@ impl GatewayError {
     fn kind(&self) -> &'static str {
         match self.status().as_u16() {
             400 => "invalid_request_error",
-            401 | 403 => "authentication_error",
+            401 => "authentication_error",
+            403 => "permission_error",
             404 => "not_found_error",
             429 => "rate_limit_error",
             s if s < 500 => "invalid_request_error",

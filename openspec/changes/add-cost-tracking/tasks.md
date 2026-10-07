@@ -2,14 +2,14 @@
 
 ## 1. Configuration and pricing
 
-- [ ] 1.1 Add `[keys.*]`, `[ledger]`, `[budget]` and endpoint `price` to the config with validation (hashes well formed, limits non-negative, `restricted_at` in 0 to 1, budget needs a ledger, USD budgets need every endpoint priced); unit tests cover each gateway-config scenario
-- [ ] 1.2 Implement the cost calculator in integer micro-USD from `Usage` and endpoint prices (input, cached input, output); unit tests include the $0.003 example and cached-token handling
+- [x] 1.1 Add `[keys.*]`, `[ledger]`, `[budget]` and endpoint `price` to the config with validation (hashes well formed, limits non-negative, `restricted_at` in 0 to 1, budget needs a ledger, USD budgets need every endpoint priced); unit tests cover each gateway-config scenario
+- [x] 1.2 Implement the cost calculator in integer micro-USD from `Usage` and endpoint prices (input, cached input, output); unit tests include the $0.003 example and cached-token handling
 
 ## 2. Client authentication
 
-- [ ] 2.1 Define the async `KeyStore` trait and the config-backed implementation keyed by SHA-256 hash; unit tests cover lookup and unknown keys
-- [ ] 2.2 Authenticate inference endpoints via `Authorization: Bearer` or `x-api-key`, 401 in each endpoint's error shape, open mode without keys, route allowlist with 403; integration tests cover all client-auth scenarios and that no upstream call happens on 401/403
-- [ ] 2.3 Add `keygen <id>` and verify the printed hash authenticates the printed key; add a test that logs contain neither key nor hash
+- [x] 2.1 Define the async `KeyStore` trait and the config-backed implementation keyed by SHA-256 hash; unit tests cover lookup and unknown keys
+- [x] 2.2 Authenticate inference endpoints via `Authorization: Bearer` or `x-api-key`, 401 in each endpoint's error shape, open mode without keys, route allowlist with 403; integration tests cover all client-auth scenarios and that no upstream call happens on 401/403
+- [x] 2.3 Add `keygen <id>` and verify the printed hash authenticates the printed key; add a test that logs contain neither key nor hash
 
 ## 3. Usage ledger
 

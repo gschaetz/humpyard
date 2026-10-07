@@ -21,6 +21,7 @@ use switchyard_translation::{
     encode_stream_with_extensions, util::SWITCHYARD_METADATA_KEY,
 };
 
+use crate::auth::{ConfigKeyStore, KeyRecord, KeyStore, hash_key, presented_key};
 use crate::config::Config;
 use crate::error::GatewayError;
 use crate::policy::{AllowAll, PolicyContext, RoutingPolicy};
@@ -34,6 +35,7 @@ pub struct AppState {
     clients: ClientRouter,
     routes: Routes,
     policy: Arc<dyn RoutingPolicy>,
+    keys: Arc<dyn KeyStore>,
 }
 
 pub fn router(config: Config) -> Result<Router, String> {
@@ -47,11 +49,13 @@ pub fn router_with_policy(
 ) -> Result<Router, String> {
     let clients = pool::build(&config)?;
     let routes = Routes::build(&config)?;
+    let keys: Arc<dyn KeyStore> = Arc::new(ConfigKeyStore::new(&config.keys));
     let state = Arc::new(AppState {
         config,
         clients,
         routes,
         policy,
+        keys,
     });
     Ok(Router::new()
         .route("/healthz", get(|| async { StatusCode::OK }))
@@ -71,14 +75,38 @@ pub fn router_with_policy(
         .with_state(state))
 }
 
-async fn list_models(State(state): State<Arc<AppState>>) -> Response {
+async fn list_models(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response {
+    let caller = match authenticate(&state, &headers).await {
+        Ok(caller) => caller,
+        Err(error) => return error.into_response_for(WireFormat::OpenAiChat),
+    };
     let data: Vec<Value> = state
         .config
         .model_names()
         .into_iter()
+        .filter(|id| caller.as_ref().is_none_or(|key| key.may_use(id)))
         .map(|id| json!({"id": id, "object": "model", "created": 0, "owned_by": "switchyard-conductor"}))
         .collect();
     axum::Json(json!({"object": "list", "data": data})).into_response()
+}
+
+/// Identifies the caller. `None` means the gateway is open (no keys configured).
+async fn authenticate(
+    state: &AppState,
+    headers: &HeaderMap,
+) -> Result<Option<KeyRecord>, GatewayError> {
+    if !state.keys.enforces_auth() {
+        return Ok(None);
+    }
+    let key = presented_key(headers).ok_or_else(|| {
+        GatewayError::Unauthorized(
+            "missing API key: send `Authorization: Bearer <key>` or `x-api-key`".into(),
+        )
+    })?;
+    match state.keys.lookup(&hash_key(key)).await {
+        Some(record) => Ok(Some(record)),
+        None => Err(GatewayError::Unauthorized("invalid API key".into())),
+    }
 }
 
 async fn infer(
@@ -88,10 +116,19 @@ async fn infer(
     body: Bytes,
 ) -> Response {
     let started = std::time::Instant::now();
-    match handle(&state, format, &headers, &body).await {
+    let caller = match authenticate(&state, &headers).await {
+        Ok(caller) => caller,
+        Err(error) => {
+            tracing::warn!(%format, status = error.status().as_u16(), error = %error, "request rejected");
+            return error.into_response_for(format);
+        }
+    };
+    let key_id = caller.as_ref().map_or("-", |k| k.id.as_str()).to_string();
+    match handle(&state, format, &headers, &body, caller.as_ref()).await {
         Ok((target, response)) => {
             tracing::info!(
                 %format,
+                key = key_id,
                 target,
                 provider = response
                     .headers()
@@ -105,7 +142,7 @@ async fn infer(
             response
         }
         Err(error) => {
-            tracing::warn!(%format, status = error.status().as_u16(), error = %error, "request failed");
+            tracing::warn!(%format, key = key_id, status = error.status().as_u16(), error = %error, "request failed");
             error.into_response_for(format)
         }
     }
@@ -116,6 +153,7 @@ async fn handle(
     format: WireFormat,
     headers: &HeaderMap,
     raw: &[u8],
+    caller: Option<&KeyRecord>,
 ) -> Result<(String, Response), GatewayError> {
     let mut body: Value = serde_json::from_slice(raw)
         .map_err(|e| GatewayError::BadRequest(format!("invalid JSON body: {e}")))?;
@@ -138,6 +176,13 @@ async fn handle(
         return Err(GatewayError::BadRequest(
             "`previous_response_id` is not supported: stateful responses are unavailable".into(),
         ));
+    }
+    if let Some(key) = caller
+        && !key.may_use(&model)
+    {
+        return Err(GatewayError::Forbidden(format!(
+            "this key may not use `{model}`"
+        )));
     }
     let route = state
         .routes

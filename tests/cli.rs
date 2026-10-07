@@ -52,3 +52,29 @@ fn serve_refuses_invalid_config() {
     let out = run(&["serve", "--config", &path], Some("k"));
     assert!(!out.status.success());
 }
+
+#[test]
+fn keygen_prints_a_key_and_the_matching_hash_and_stores_nothing() {
+    use sha2::{Digest, Sha256};
+    let dir = std::env::temp_dir().join(format!("sc-keygen-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_switchyard-conductor"))
+        .args(["keygen", "alice"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    let text = String::from_utf8_lossy(&out.stdout);
+    let key = text
+        .split_whitespace()
+        .find(|w| w.starts_with("sk-conductor-"))
+        .expect("key printed");
+    assert!(text.contains("[keys.alice]"));
+    let expected = format!("sha256:{}", hex::encode(Sha256::digest(key.as_bytes())));
+    assert!(text.contains(&format!("sha256 = \"{expected}\"")), "{text}");
+    assert_eq!(
+        std::fs::read_dir(&dir).unwrap().count(),
+        0,
+        "keygen must not write files"
+    );
+}
