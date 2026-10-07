@@ -28,11 +28,18 @@ to change next time.
   gateway-owned types. `PolicyContext` therefore drops `Metadata` for `route`, `session_id`, `key`
   and a small `agent` summary. Alternative considered: a full facade crate re-exporting Switchyard;
   rejected as more indirection than the current size warrants, revisit if the allowed set grows.
-- **Architecture tests are plain Rust tests** scanning `src/` (no extra tooling): (1) Switchyard
-  imports only in the allowed modules, (2) layering: the "core" modules (`config`, `auth`,
-  `budget`, `ledger`, `clock`, `policy`) may not `use crate::{server, pool, routing, metering}`,
-  (3) `sqlx` only in `ledger`, (4) no `println!`/`dbg!` outside `main`. Each failure message
-  names the rule and points at `docs/invariants.md`.
+- **Architecture linter: try `mille` first, keep a plain-Rust test as the fallback.** `mille`
+  (github.com/makinzm/mille, `cargo install mille`, `mille.toml`) is a tree-sitter based linter
+  with path-glob layers, per-layer allow/deny between layers, and per-layer `external_allow`/
+  `external_deny` for crates, which matches our rules directly. It is 0.0.x, so we spike it before
+  committing: express the rules below in `mille.toml`, check it passes today (after task 2.1) and
+  fails on an injected violation, and time the CI install (pin the version, use `--locked`). If it
+  holds up it becomes the enforcement and the decision is recorded as an ADR; if not we write the
+  same rules as a plain Rust test scanning `src/`. Rules either way: (1) Switchyard crates only in
+  the engine and edge modules, (2) layering: the core modules (`config`, `auth`, `budget`,
+  `ledger`, `clock`, `policy`) may not depend on `server`, `pool`, `routing` or `metering`,
+  (3) `sqlx` only in `ledger`, (4) no `println!`/`dbg!` outside `main`. Failure messages name the
+  rule and point at `docs/invariants.md`. Do not run both: one source of truth.
 - **Lints in `Cargo.toml` `[lints]`** so `clippy -D warnings` in CI enforces them: `pedantic` as a
   baseline with a short, justified allow list; `unwrap_used`, `expect_used` and `panic` denied
   (tests allowed through `clippy.toml`); `cast_possible_truncation`, `cast_sign_loss`,
@@ -50,9 +57,14 @@ to change next time.
 - **Property tests** (`proptest`): cost is monotone and linear in token counts up to rounding,
   never overflows for realistic maxima, free prices cost zero; budget state is monotone in spend and
   period rollover only ever resets, never inflates.
-- **ADRs** (`docs/adr/NNNN-title.md`, one page each): use Switchyard in-process; dispatch on
-  Switchyard's client; config-first keys behind a `KeyStore` trait; SQLite ledger with async writer;
-  integer micro-USD; one-shot modelrelay migration.
+- **ADRs use a project workflow schema.** `openspec/schemas/spec-driven-adr` (forked from the
+  built-in schema, adapted from the MIT community schema `spec-driven-with-adr`, no companion
+  skills) adds an `adr` step after design that records durable decisions as immutable, supersedable
+  files in `docs/adr/` (template in `docs/adr/template.md`) and is the default for new changes.
+  This change itself started under `spec-driven`, so its ADRs are written by task 6.2:
+  use Switchyard in-process; dispatch on Switchyard's client; config-first keys behind a
+  `KeyStore` trait; SQLite ledger with async writer; integer micro-USD; one-shot modelrelay
+  migration; and the architecture-linter choice from task 1.2.
 
 ## Risks / Trade-offs
 

@@ -8,6 +8,10 @@ See [README.md](README.md) and [docs/background.md](docs/background.md) for desi
 - Spec-driven with **OpenSpec** (`openspec/`): propose changes with `/opsx:propose`, specs in
   `openspec/specs/`, active changes in `openspec/changes/`. Write specs before code.
 - Project constraints for OpenSpec artifacts live in `openspec/config.yaml`.
+- Workflow schema: `spec-driven-adr` (project-local, `openspec/schemas/`): proposal → specs → design →
+  adr → tasks. The `adr` step records long-term architectural commitments as **immutable**,
+  supersedable ADRs in `docs/adr/` (never edit an accepted ADR; add a new one that supersedes it).
+  Tactical choices stay in `design.md`. Changes started before the schema keep their own schema.
 
 - Keep [docs/architecture.md](docs/architecture.md) current: any PR that changes structure, request
   flow or component status updates its diagrams and status table, and its "Last updated" line.

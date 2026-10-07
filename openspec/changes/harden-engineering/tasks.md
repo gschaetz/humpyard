@@ -3,7 +3,8 @@
 ## 1. Invariants and architecture tests
 
 - [ ] 1.1 Write `docs/invariants.md` (pipeline order, engine boundary, layering, secrets, money as integer micro-USD, ledger keyed by key id, no I/O on the response path) and verify each invariant names the test or CI check that enforces it
-- [ ] 1.2 Add architecture tests for the Switchyard import boundary, module layering, `sqlx` confinement and `println!`/`dbg!`; verify the import-boundary test fails on today's `policy.rs` before task 2.1 fixes it
+- [ ] 1.2 Spike `mille`: express the boundary, layering, `sqlx` confinement and `println!`/`dbg!` rules in `mille.toml`, run it locally, and verify it flags today's `policy.rs` and an injected violation; if it is unusable or flaky, write the same rules as a plain Rust architecture test instead; record the outcome and reasoning in design.md
+- [ ] 1.3 Wire the chosen linter into CI (pinned and locked if `mille`) and verify a deliberate violation on a scratch branch fails the job; expected to fail on `policy.rs` until task 2.1 lands, so merge them together
 
 ## 2. Decoupling
 
@@ -30,5 +31,5 @@
 ## 6. Property tests and ADRs
 
 - [ ] 6.1 Add property tests for pricing and budget state/rollover; verify they run in CI and shrink a deliberately injected bug locally
-- [ ] 6.2 Write the six ADRs from the existing designs; verify each links to its OpenSpec change and to the invariant it supports
+- [ ] 6.2 Write the ADRs (the six existing decisions plus the linter choice) in `docs/adr/` from `docs/adr/template.md`, following the adr step's rules; verify each links to its OpenSpec change and to the invariant it supports and that numbers are sequential
 - [ ] 6.3 Update `AGENTS.md` and `docs/architecture.md` to point to the invariants, the architecture tests and the ADRs; verify the links resolve
