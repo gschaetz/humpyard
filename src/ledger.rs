@@ -8,6 +8,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use sqlx::Row;
+
+use crate::num::{from_i64, to_i64};
 use sqlx::sqlite::{
     SqliteConnectOptions, SqliteJournalMode, SqlitePool, SqlitePoolOptions, SqliteSynchronous,
 };
@@ -123,7 +125,10 @@ impl Ledger {
             let mut batch = Vec::with_capacity(BATCH);
             while rx.recv_many(&mut batch, BATCH).await > 0 {
                 if let Err(error) = insert_batch(&writer_pool, &batch).await {
-                    writer_failed.fetch_add(batch.len() as u64, Ordering::Relaxed);
+                    writer_failed.fetch_add(
+                        u64::try_from(batch.len()).unwrap_or(u64::MAX),
+                        Ordering::Relaxed,
+                    );
                     tracing::error!(%error, entries = batch.len(), "ledger write failed; entries lost");
                 }
                 batch.clear();
@@ -170,8 +175,8 @@ impl Ledger {
                 (
                     row.get::<String, _>("key_id"),
                     Spend {
-                        micro_usd: row.get::<i64, _>("cost").max(0) as u64,
-                        tokens: row.get::<i64, _>("tokens").max(0) as u64,
+                        micro_usd: from_i64(row.get::<i64, _>("cost")),
+                        tokens: from_i64(row.get::<i64, _>("tokens")),
                     },
                 )
             })
@@ -199,12 +204,12 @@ impl Ledger {
                 } else {
                     Kind::Judge
                 },
-                input_tokens: row.get::<i64, _>("input_tokens") as u64,
-                cached_input_tokens: row.get::<i64, _>("cached_input_tokens") as u64,
-                cache_creation_tokens: row.get::<i64, _>("cache_creation_tokens") as u64,
-                output_tokens: row.get::<i64, _>("output_tokens") as u64,
-                reasoning_tokens: row.get::<i64, _>("reasoning_tokens") as u64,
-                cost_micro_usd: row.get::<i64, _>("cost_micro_usd") as u64,
+                input_tokens: from_i64(row.get::<i64, _>("input_tokens")),
+                cached_input_tokens: from_i64(row.get::<i64, _>("cached_input_tokens")),
+                cache_creation_tokens: from_i64(row.get::<i64, _>("cache_creation_tokens")),
+                output_tokens: from_i64(row.get::<i64, _>("output_tokens")),
+                reasoning_tokens: from_i64(row.get::<i64, _>("reasoning_tokens")),
+                cost_micro_usd: from_i64(row.get::<i64, _>("cost_micro_usd")),
                 outcome: row.get("outcome"),
                 usage_missing: row.get("usage_missing"),
             })
@@ -286,12 +291,12 @@ async fn insert_batch(pool: &SqlitePool, batch: &[Entry]) -> Result<(), sqlx::Er
         .bind(&e.provider)
         .bind(&e.model)
         .bind(e.kind.as_str())
-        .bind(e.input_tokens as i64)
-        .bind(e.cached_input_tokens as i64)
-        .bind(e.cache_creation_tokens as i64)
-        .bind(e.output_tokens as i64)
-        .bind(e.reasoning_tokens as i64)
-        .bind(e.cost_micro_usd as i64)
+        .bind(to_i64(e.input_tokens))
+        .bind(to_i64(e.cached_input_tokens))
+        .bind(to_i64(e.cache_creation_tokens))
+        .bind(to_i64(e.output_tokens))
+        .bind(to_i64(e.reasoning_tokens))
+        .bind(to_i64(e.cost_micro_usd))
         .bind(&e.outcome)
         .bind(e.usage_missing)
         .execute(&mut *tx)

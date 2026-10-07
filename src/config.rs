@@ -315,14 +315,14 @@ impl std::fmt::Debug for Provider {
 /// Parses `sha256:<64 hex>` (the prefix is optional).
 fn parse_hash(id: &str, text: &str) -> Result<[u8; 32], ConfigError> {
     let hex_part = text.strip_prefix("sha256:").unwrap_or(text);
-    let bytes = hex::decode(hex_part).ok().filter(|b| b.len() == 32);
-    bytes
-        .map(|b| b.try_into().expect("length checked"))
-        .ok_or_else(|| {
-            invalid(format!(
-                "keys.{id}.sha256 must be `sha256:` followed by 64 hex digits"
-            ))
-        })
+    let bytes = hex::decode(hex_part)
+        .ok()
+        .and_then(|b| <[u8; 32]>::try_from(b).ok());
+    bytes.ok_or_else(|| {
+        invalid(format!(
+            "keys.{id}.sha256 must be `sha256:` followed by 64 hex digits"
+        ))
+    })
 }
 
 fn invalid(message: impl Into<String>) -> ConfigError {

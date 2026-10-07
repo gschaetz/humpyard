@@ -104,7 +104,7 @@ fn endpoint_client(provider: &Provider, endpoint: &Endpoint) -> Result<TargetEnd
         api_key: Some(provider.api_key.clone()),
         forward_auth: false,
         extra_headers: provider.headers.clone(),
-        extra_body: Default::default(),
+        extra_body: std::collections::BTreeMap::default(),
         reasoning_effort: None,
         max_retries: provider.max_retries,
         timeout: Some(Duration::from_secs(provider.timeout_secs)),

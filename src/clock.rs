@@ -2,6 +2,8 @@
 
 use time::{Date, OffsetDateTime, Time};
 
+use crate::num::millis_from_nanos;
+
 pub trait Clock: Send + Sync {
     /// Unix milliseconds.
     fn now_ms(&self) -> i64;
@@ -11,21 +13,21 @@ pub struct SystemClock;
 
 impl Clock for SystemClock {
     fn now_ms(&self) -> i64 {
-        (OffsetDateTime::now_utc().unix_timestamp_nanos() / 1_000_000) as i64
+        millis_from_nanos(OffsetDateTime::now_utc().unix_timestamp_nanos())
     }
 }
 
 fn at(now_ms: i64) -> OffsetDateTime {
-    OffsetDateTime::from_unix_timestamp_nanos(now_ms as i128 * 1_000_000)
+    OffsetDateTime::from_unix_timestamp_nanos(i128::from(now_ms) * 1_000_000)
         .unwrap_or(OffsetDateTime::UNIX_EPOCH)
 }
 
 fn start_of(date: Date) -> i64 {
-    (date
-        .with_time(Time::MIDNIGHT)
-        .assume_utc()
-        .unix_timestamp_nanos()
-        / 1_000_000) as i64
+    millis_from_nanos(
+        date.with_time(Time::MIDNIGHT)
+            .assume_utc()
+            .unix_timestamp_nanos(),
+    )
 }
 
 /// Start of the UTC calendar day containing `now_ms`.
@@ -36,7 +38,8 @@ pub fn day_start_ms(now_ms: i64) -> i64 {
 /// Start of the UTC calendar month containing `now_ms`.
 pub fn month_start_ms(now_ms: i64) -> i64 {
     let date = at(now_ms).date();
-    start_of(date.replace_day(1).expect("day 1 exists in every month"))
+    // Day 1 exists in every month, so the fallback is unreachable; it avoids a panic path.
+    start_of(date.replace_day(1).unwrap_or(date))
 }
 
 #[cfg(test)]
@@ -47,7 +50,7 @@ mod tests {
     fn ms(year: i32, month: Month, day: u8, h: u8, m: u8, s: u8) -> i64 {
         let date = Date::from_calendar_date(year, month, day).unwrap();
         let time = Time::from_hms(h, m, s).unwrap();
-        (date.with_time(time).assume_utc().unix_timestamp_nanos() / 1_000_000) as i64
+        millis_from_nanos(date.with_time(time).assume_utc().unix_timestamp_nanos())
     }
 
     #[test]

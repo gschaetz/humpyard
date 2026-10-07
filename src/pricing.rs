@@ -4,6 +4,7 @@
 use switchyard_protocol::Usage;
 
 use crate::config::Price;
+use crate::num::{f64_from_u64, u64_from_f64_rounded};
 
 /// Cost of `usage` at `price`, rounded to the nearest micro-USD.
 ///
@@ -11,23 +12,36 @@ use crate::config::Price;
 /// price (the input price when none is configured), and output plus reasoning tokens at the
 /// output price.
 pub fn cost_micro_usd(usage: &Usage, price: &Price) -> u64 {
-    let input =
-        (usage.input_tokens.unwrap_or(0) + usage.cache_creation_input_tokens().unwrap_or(0)) as f64;
-    let cached = usage.cached_input_tokens().unwrap_or(0) as f64;
-    let output = (usage.output_tokens.unwrap_or(0) + usage.reasoning_tokens.unwrap_or(0)) as f64;
+    let input = f64_from_u64(
+        usage
+            .input_tokens
+            .unwrap_or(0)
+            .saturating_add(usage.cache_creation_input_tokens().unwrap_or(0)),
+    );
+    let cached = f64_from_u64(usage.cached_input_tokens().unwrap_or(0));
+    let output = f64_from_u64(
+        usage
+            .output_tokens
+            .unwrap_or(0)
+            .saturating_add(usage.reasoning_tokens.unwrap_or(0)),
+    );
     let micro = input * price.input
         + cached * price.cached_input.unwrap_or(price.input)
         + output * price.output;
-    micro.round() as u64
+    u64_from_f64_rounded(micro)
 }
 
 /// Total tokens counted against token limits: everything sent and generated.
 pub fn total_tokens(usage: &Usage) -> u64 {
-    usage.input_tokens.unwrap_or(0)
-        + usage.cached_input_tokens().unwrap_or(0)
-        + usage.cache_creation_input_tokens().unwrap_or(0)
-        + usage.output_tokens.unwrap_or(0)
-        + usage.reasoning_tokens.unwrap_or(0)
+    [
+        usage.input_tokens,
+        usage.cached_input_tokens(),
+        usage.cache_creation_input_tokens(),
+        usage.output_tokens,
+        usage.reasoning_tokens,
+    ]
+    .into_iter()
+    .fold(0, |sum, n| sum.saturating_add(n.unwrap_or(0)))
 }
 
 #[cfg(test)]

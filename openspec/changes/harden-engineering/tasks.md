@@ -12,9 +12,9 @@
 
 ## 3. Lints
 
-- [ ] 3.1 Add the `[lints]` tables and `clippy.toml`, fix `unwrap`/`expect`/`panic` findings, and verify `cargo clippy --all-targets -- -D warnings` passes
-- [ ] 3.2 Move the money and token casts into tested conversion helpers (saturating or checked) and deny the cast lints; unit tests cover boundary values (`u64::MAX`, negative `i64` from SQLite)
-- [ ] 3.3 Work through the remaining pedantic findings (fix or justified allow) and verify the allow list in `Cargo.toml` is under ten entries, each with a reason comment
+- [x] 3.1 Add the `[lints]` tables and `clippy.toml`, fix `unwrap`/`expect`/`panic` findings, and verify `cargo clippy --all-targets -- -D warnings` passes
+- [x] 3.2 Move the money and token casts into tested conversion helpers (saturating or checked) and deny the cast lints; unit tests cover boundary values (`u64::MAX`, negative `i64` from SQLite)
+- [x] 3.3 Work through the remaining pedantic findings (fix or justified allow) and verify the allow list in `Cargo.toml` is under ten entries, each with a reason comment
 
 ## 4. Structure
 

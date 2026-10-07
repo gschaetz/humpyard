@@ -1,4 +1,10 @@
 //! Virtual-key authentication on the inference endpoints.
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unnecessary_wraps
+)] // test scaffolding: fail loudly, favor readability
 
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicUsize, Ordering};

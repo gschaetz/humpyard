@@ -9,6 +9,7 @@ use parking_lot::Mutex;
 use crate::clock::{Clock, day_start_ms, month_start_ms};
 use crate::config::{BudgetConfig, Config, Limits};
 use crate::ledger::{Ledger, LedgerError, Spend};
+use crate::num::f64_from_u64;
 use crate::policy::{BudgetState, PolicyContext, RoutingPolicy};
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -67,7 +68,6 @@ impl BudgetTracker {
     }
 
     fn rolled<'a>(
-        &self,
         counters: &'a mut HashMap<String, KeyCounters>,
         key: &str,
         now: i64,
@@ -93,7 +93,7 @@ impl BudgetTracker {
     pub fn record(&self, key: &str, micro_usd: u64, tokens: u64) {
         let now = self.clock.now_ms();
         let mut counters = self.counters.lock();
-        let entry = self.rolled(&mut counters, key, now);
+        let entry = Self::rolled(&mut counters, key, now);
         for spend in [&mut entry.day, &mut entry.month] {
             spend.micro_usd += micro_usd;
             spend.tokens += tokens;
@@ -103,20 +103,20 @@ impl BudgetTracker {
     pub fn status(&self, key: &str, limits: &Limits) -> BudgetStatus {
         let now = self.clock.now_ms();
         let mut counters = self.counters.lock();
-        let entry = *self.rolled(&mut counters, key, now);
-        let usd = |s: Spend| s.micro_usd as f64 / 1_000_000.0;
+        let entry = *Self::rolled(&mut counters, key, now);
+        let usd = |s: Spend| f64_from_u64(s.micro_usd) / 1_000_000.0;
         let checks: [(&'static str, f64, Option<f64>); 4] = [
             ("daily_usd", usd(entry.day), limits.daily_usd),
             ("monthly_usd", usd(entry.month), limits.monthly_usd),
             (
                 "daily_tokens",
-                entry.day.tokens as f64,
-                limits.daily_tokens.map(|t| t as f64),
+                f64_from_u64(entry.day.tokens),
+                limits.daily_tokens.map(f64_from_u64),
             ),
             (
                 "monthly_tokens",
-                entry.month.tokens as f64,
-                limits.monthly_tokens.map(|t| t as f64),
+                f64_from_u64(entry.month.tokens),
+                limits.monthly_tokens.map(f64_from_u64),
             ),
         ];
         let mut worst: Option<(&'static str, f64)> = None;

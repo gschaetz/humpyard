@@ -6,9 +6,10 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use switchyard_libsy::{
-    Algorithm, ClassifyTrigger as LibClassifyTrigger, EscalationJudgeConfig, LlmClassifierConfig,
-    LlmTaskClassifier, Passthrough, PickerMode as LibPickerMode, Random, RuntimeModels,
-    StageRouter, StageRouterConfig, TaskClassifierConfig,
+    Algorithm, ClassifierContractConfig, ClassifyTrigger as LibClassifyTrigger,
+    EscalationJudgeConfig, LlmClassifierConfig, LlmTaskClassifier, Passthrough,
+    PickerMode as LibPickerMode, Random, RuntimeModels, StageRouter, StageRouterConfig,
+    TaskClassifierConfig,
 };
 use switchyard_protocol::{Category, ModelId};
 
@@ -21,7 +22,12 @@ pub struct Route {
     groups: HashMap<Category, Vec<ModelId>>,
     /// Random routes keep their weights: they follow target order, so removing a target needs
     /// them re-aligned.
-    random_weights: Option<Option<Vec<f64>>>,
+    random: Option<RandomSpec>,
+}
+
+/// The part of a `random` route that must be re-aligned when targets are removed.
+struct RandomSpec {
+    weights: Option<Vec<f64>>,
 }
 
 /// What to run for one request after the routing policy has had its say.
@@ -59,7 +65,7 @@ impl Route {
         Self {
             algorithm,
             groups,
-            random_weights: None,
+            random: None,
         }
     }
 
@@ -124,14 +130,14 @@ impl Route {
                 groups.insert(tier, substitute);
             }
         }
-        let algorithm = match &self.random_weights {
-            Some(weights)
+        let algorithm = match &self.random {
+            Some(spec)
                 if groups
                     .get(&Category::Any)
                     .is_some_and(|g| g.len() != self.groups[&Category::Any].len()) =>
             {
                 self.rebuilt_random(
-                    weights.as_deref(),
+                    spec.weights.as_deref(),
                     groups.get(&Category::Any).map(Vec::as_slice),
                 )
             }
@@ -188,7 +194,9 @@ fn build_route(name: &str, spec: &RouteSpec) -> Result<Route, String> {
                 ),
                 HashMap::from([(Category::Any, ids(targets))]),
             );
-            route.random_weights = Some(weights.clone());
+            route.random = Some(RandomSpec {
+                weights: weights.clone(),
+            });
             route
         }
         RouteSpec::StageRouter {
@@ -236,7 +244,7 @@ fn build_route(name: &str, spec: &RouteSpec) -> Result<Route, String> {
                     },
                 },
                 ClassifierMode::Escalation => LlmClassifierConfig::Escalation {
-                    contract: Default::default(),
+                    contract: ClassifierContractConfig::default(),
                     config: EscalationJudgeConfig {
                         confirmations: *confirmations,
                         ..EscalationJudgeConfig::default()

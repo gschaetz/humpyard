@@ -9,6 +9,24 @@ repository = "https://github.com/gschaetz/humpyard"
 homepage = "https://humpyard.dev"
 readme = "README.md"
 
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+# Production code must not panic on bad input or I/O; tests may (see clippy.toml).
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+# Allowed pedantic lints, each with its reason (keep this list short):
+must_use_candidate = "allow"    # noise on constructors and getters; `#[must_use]` is added where ignoring a result is a bug
+missing_errors_doc = "allow"    # this is the internal library of a binary; error types describe the failures
+# Money and token arithmetic must not silently truncate, wrap or lose sign or precision.
+cast_possible_truncation = "deny"
+cast_possible_wrap = "deny"
+cast_sign_loss = "deny"
+cast_precision_loss = "deny"
+
 [dependencies]
 async-stream = "0.3.6"
 async-trait = "0.1.92"

@@ -1,4 +1,11 @@
 //! Usage metering end to end: every upstream call lands in the ledger, attributed and priced.
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::format_push_string,
+    clippy::needless_pass_by_value
+)] // test scaffolding: fail loudly, favor readability
 
 use std::convert::Infallible;
 use std::net::SocketAddr;
