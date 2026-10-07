@@ -11,7 +11,8 @@ including stream events (`switchyard-translation`). See `docs/background.md` for
 **Goals:** a request path that later phases can insert routing into without reshaping; correct
 streaming; minimal config.
 
-**Non-Goals:** routing, multiple upstreams, auth, persistence, OpenAI Responses endpoint.
+**Non-Goals:** routing, multiple upstreams, auth, persistence, stateful Responses features
+(`previous_response_id`, stored responses, built-in tools), which are rejected with a clear 400.
 
 ## Decisions
 
@@ -20,6 +21,8 @@ streaming; minimal config.
   and it would diverge from the libsy `Request` that phase 2 needs.
 - **Pipeline as a function over the IR**: handler decodes, calls `dispatch(ir_request) -> stream of
   IR events`, then encodes in the client's format. Phase 2 inserts routing between decode and dispatch.
+- **Responses endpoint uses the same IR pipeline**: `switchyard-translation` already has an OpenAI
+  Responses codec, so `/v1/responses` is a third decode/encode pair, not a separate code path.
 - **Upstream protocol fixed to OpenAI Chat** in this phase (broadest compatibility with free/local
   providers). Anthropic-native upstreams are a later change.
 - **axum + reqwest (rustls, stream)**; SSE via axum's `Sse` with the translation crate's per-event
@@ -37,4 +40,4 @@ streaming; minimal config.
 
 ## Open Questions
 
-- Whether to expose the OpenAI Responses endpoint (Codex clients) soon after this change.
+- Whether to support `previous_response_id` by keeping server-side response state in a later change.

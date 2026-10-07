@@ -12,7 +12,7 @@
 
 ## 3. Translation and error layer
 
-- [ ] 3.1 Add a `translate` module wrapping decode/encode for OpenAI Chat and Anthropic Messages; fixture tests cover plain, tool-call and streaming payloads
+- [ ] 3.1 Add a `translate` module wrapping decode/encode for OpenAI Chat, OpenAI Responses and Anthropic Messages; fixture tests cover OpenAI Responses, plain, tool-call and streaming payloads
 - [ ] 3.2 Implement the error enum with per-endpoint rendering; tests cover 400, 404, 429, 502, 504 shapes
 
 ## 4. Gateway endpoints
@@ -21,7 +21,8 @@
 - [ ] 4.2 Implement non-streaming `/v1/chat/completions` against a mock upstream; test asserts bearer header and response shape
 - [ ] 4.3 Implement streaming path with incremental forwarding and `[DONE]`; test asserts first chunk arrives before upstream completes
 - [ ] 4.4 Implement `/v1/messages` (stream and non-stream) over the same pipeline; tests assert Anthropic-format output from an OpenAI upstream
-- [ ] 4.5 Cancel upstream on client disconnect; test asserts mock upstream observes the drop
+- [ ] 4.5 Implement `/v1/responses` (stream and non-stream, function tools) over the same pipeline; tests assert Responses SSE event order and `function_call` output from an OpenAI Chat upstream, and a 400 for `previous_response_id`
+- [ ] 4.6 Cancel upstream on client disconnect; test asserts mock upstream observes the drop
 
 ## 5. Logging and docs
 

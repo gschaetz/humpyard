@@ -8,8 +8,8 @@ the answer back. Building it first, without routing, gives us a testable foundat
 
 ## What Changes
 
-- Add an axum HTTP server exposing OpenAI Chat Completions (`/v1/chat/completions`), Anthropic
-  Messages (`/v1/messages`), and `/v1/models`, plus `/healthz`.
+- Add an axum HTTP server exposing OpenAI Chat Completions (`/v1/chat/completions`), OpenAI
+  Responses (`/v1/responses`, for Codex-style clients), Anthropic Messages (`/v1/messages`), and `/v1/models`, plus `/healthz`.
 - Decode inbound requests into Switchyard's neutral IR (`switchyard-protocol`) and encode them for
   one configured OpenAI-compatible upstream (`switchyard-translation`).
 - Stream upstream SSE back to the client in the client's own protocol, and return buffered JSON
