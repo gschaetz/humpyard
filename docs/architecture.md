@@ -16,8 +16,9 @@ Last updated: 2026-10-07 (`add-switchyard-routing` complete: routes, provider po
 | Switchyard routing: passthrough, random, stage_router, llm_classifier; per-session state; whole-target fallbacks | Implemented | `add-switchyard-routing` (group 4) |
 | Provider pool: multi-provider targets with ordered-endpoint failover | Implemented | `add-switchyard-routing` (group 3) |
 | Routing-policy seam (eligibility hook, tier substitution, 503 when none eligible) | Implemented | `add-switchyard-routing` (group 5) |
-| Budget / cost tracking, virtual keys | Planned | not yet proposed |
+| Budget / cost tracking, virtual keys, usage ledger | Proposed | `add-cost-tracking` |
 | Provider health + telemetry feeding policy | Planned | not yet proposed |
+| Database-managed keys + admin API | Planned (designed for in `add-cost-tracking`) | not yet proposed |
 | `migrate-modelrelay` command + bundled catalog | Planned | not yet proposed |
 
 ## Current: request flow (implemented)
