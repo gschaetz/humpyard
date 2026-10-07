@@ -9,6 +9,9 @@ See [README.md](README.md) and [docs/background.md](docs/background.md) for desi
   `openspec/specs/`, active changes in `openspec/changes/`. Write specs before code.
 - Project constraints for OpenSpec artifacts live in `openspec/config.yaml`.
 
+- Keep [docs/architecture.md](docs/architecture.md) current: any PR that changes structure, request
+  flow or component status updates its diagrams and status table, and its "Last updated" line.
+
 ## Gotchas
 - Sibling repo `../modelrelay` is the Node.js fork (LTS); this repo is the long-term successor.
   Migration is a one-shot `migrate-modelrelay` command, not a runtime reader of

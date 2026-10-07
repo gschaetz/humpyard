@@ -8,6 +8,9 @@ context: |
   (switchyard-libsy, in-process) -> modelrelay-style provider dispatch.
   Cost tracking must stay off the streaming critical path (mpsc -> async writer -> SQLite).
   Accept OpenAI and Anthropic protocols inbound; OpenAI-compatible outbound.
+rules:
+  tasks:
+    - When a change alters structure, request flow or component status, include a task to update docs/architecture.md and verify its Mermaid diagrams still match the code
 # Project context (optional)
 # Add only constraints that should guide OpenSpec artifacts and workflows.
 # Include constraints an agent cannot infer by reading the code.
