@@ -7,9 +7,9 @@
 
 ## 2. Client authentication
 
-- [ ] 2.1 Define the async `KeyStore` trait and the config-backed implementation keyed by SHA-256 hash; unit tests cover lookup and unknown keys
-- [ ] 2.2 Authenticate inference endpoints via `Authorization: Bearer` or `x-api-key`, 401 in each endpoint's error shape, open mode without keys, route allowlist with 403; integration tests cover all client-auth scenarios and that no upstream call happens on 401/403
-- [ ] 2.3 Add `keygen <id>` and verify the printed hash authenticates the printed key; add a test that logs contain neither key nor hash
+- [x] 2.1 Define the async `KeyStore` trait and the config-backed implementation keyed by SHA-256 hash; unit tests cover lookup and unknown keys
+- [x] 2.2 Authenticate inference endpoints via `Authorization: Bearer` or `x-api-key`, 401 in each endpoint's error shape, open mode without keys, route allowlist with 403; integration tests cover all client-auth scenarios and that no upstream call happens on 401/403
+- [x] 2.3 Add `keygen <id>` and verify the printed hash authenticates the printed key; add a test that logs contain neither key nor hash
 
 ## 3. Usage ledger
 

@@ -22,6 +22,8 @@ enum Command {
     },
     /// Validate a config file without starting the server.
     CheckConfig { path: PathBuf },
+    /// Create a virtual key: prints the key once and the config block holding its hash.
+    Keygen { id: String },
 }
 
 #[tokio::main]
@@ -45,6 +47,13 @@ async fn run(command: Command) -> Result<(), String> {
         Command::CheckConfig { path } => {
             Config::load(&path).map_err(|e| e.to_string())?;
             println!("config ok");
+            Ok(())
+        }
+        Command::Keygen { id } => {
+            let (key, hash) = switchyard_conductor::auth::generate_key()
+                .map_err(|e| format!("cannot gather randomness: {e}"))?;
+            println!("Key (shown once; store it securely): {key}\n");
+            println!("Add to your config:\n\n[keys.{id}]\nsha256 = \"{hash}\"");
             Ok(())
         }
         Command::Serve { config } => {

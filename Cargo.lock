@@ -1907,6 +1907,7 @@ dependencies = [
  "bytes",
  "clap",
  "futures",
+ "getrandom 0.4.3",
  "hex",
  "http",
  "http-body-util",
