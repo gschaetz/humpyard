@@ -13,5 +13,6 @@ See [README.md](README.md) and [docs/background.md](docs/background.md) for desi
 - Sibling repo `../modelrelay` is the Node.js fork (LTS); this repo is the long-term successor.
   Must import its `~/.modelrelay.json` format.
 - Pipeline order (budget -> Switchyard -> dispatch) is deliberate; don't reorder.
-- The code sketches in docs/background.md came from an LLM chat and are illustrative; verify
-  `switchyard-libsy` APIs against the real crate before using.
+- Switchyard crates (`switchyard-libsy`, `-protocol`, `-translation`, ...) are on crates.io, Apache-2.0.
+  Findings on their real API are in docs/background.md; the original chat's code sketches were
+  illustrative and wrong in places (e.g. no budget/telemetry input, targets are model ids not tags).

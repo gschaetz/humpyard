@@ -40,6 +40,37 @@ the code in the original discussion was illustrative).
 3. Provider registry port + health pinger + legacy `.modelrelay.json` import
 4. Cost tracking, virtual keys, budgets feeding Switchyard
 
+## Switchyard findings (verified 2026-10-06 against NVIDIA-NeMo/Switchyard v0.3.0)
+- **Availability/license:** all crates are on crates.io at 0.3.0 (`switchyard-libsy`,
+  `switchyard-protocol`, `switchyard-translation`, `switchyard-llm-client`, `switchyard-runner`,
+  `switchyard-server`). Apache-2.0, so compatible with a public repo. Edition 2024, MSRV 1.96.1.
+- **Embedding:** libsy makes no network calls. `Algorithm::run_stream(request, Arc<RuntimeModels>)`
+  yields `Step::CallModel` items (classifier/judge calls) that the host serves, then `Step::Done`
+  with a `RoutingOutcome { selected_model_ids (best first, rest = fallbacks), request, response?, metadata }`.
+  `switchyard-llm-client::run` is a ready-made HTTP driver; we can use it or write our own driver
+  so judge calls also go through our provider dispatch.
+- **Built-in algorithms:** `Passthrough`, `Random`, `LlmTaskClassifier`, `StageRouter`, plus
+  escalation, composite, fall-through, plan-execute, advisor-gate, subagent.
+- **Custom algorithms:** `Algorithm` is a public async trait (`name`, `route(driver, request)`),
+  so budget/telemetry-aware routing can be a custom algorithm wrapping the built-ins.
+- **No generic "external signals" input.** There is no budget or telemetry field. Practical
+  injection points: (a) build a per-request `RuntimeModels` that only lists targets allowed by
+  budget tier and provider health (clean, no fork); (b) wrap built-ins in our own `Algorithm`
+  that reorders/filters `selected_model_ids`; (c) post-process `RoutingOutcome`.
+- **Targets are bare model ids, not tags.** Switchyard picks a model id; our provider layer must
+  map ids (or tag-like categories) to concrete endpoints. Fallback list maps naturally to
+  modelrelay-style failover.
+- **Session state:** `State` (turn_count, tool_signals, `extra` map) is per session;
+  `Metadata.session_id` comes from `x-switchyard-session-id`. Who stores `State` between requests
+  (runner vs host) still needs confirming in `switchyard-runner`.
+- **Own translation layer:** `switchyard-translation` converts OpenAI Chat, OpenAI Responses and
+  Anthropic Messages to/from a neutral IR. Reuse it instead of hand-writing protocol structs
+  (this changes phase 1: serde types come from `switchyard-protocol`).
+- **Known upstream issue:** buffered upstream work continues after client disconnect (can incur cost).
+- **Upstream contribution rules** (if we send PRs): Conventional Commits, DCO sign-off (`-s`).
+
 ## Open questions
-- Verify `switchyard-libsy` public API and license; the examples in the source chat were invented.
+- Where `State` persists across requests, and whether a host can supply/own it.
+- Is the Switchyard server/runner better reused as-is (with our provider layer behind it) or do we
+  embed only `libsy` + `translation` and own the driver? Leaning: embed libsy + translation + protocol.
 - Postgres support for team-gateway deployments (after SQLite).
