@@ -1,7 +1,6 @@
 //! HTTP surface: inference endpoints in three client protocols, served through Switchyard's
 //! `run` over the provider pool.
 
-use std::collections::HashMap;
 use std::convert::Infallible;
 use std::sync::Arc;
 
@@ -14,9 +13,9 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use futures::{Stream, StreamExt};
 use serde_json::{Value, json};
-use switchyard_libsy::{Algorithm, Passthrough, RuntimeModels};
+
 use switchyard_llm_client::{ClientRouter, run};
-use switchyard_protocol::{Category, LlmResponse, Metadata, ModelId, Request, WireFormat};
+use switchyard_protocol::{LlmResponse, Metadata, Request, WireFormat};
 use switchyard_translation::{
     LlmStreamError, RawEventStream, decode_request, encode_aggregated_response_with_extensions,
     encode_stream_with_extensions, util::SWITCHYARD_METADATA_KEY,
@@ -25,21 +24,23 @@ use switchyard_translation::{
 use crate::config::Config;
 use crate::error::GatewayError;
 use crate::pool::{self, PROVIDER_HEADER};
+use crate::routing::Routes;
 
 const TARGET_HEADER: &str = "x-conductor-target";
 
 pub struct AppState {
     config: Config,
     clients: ClientRouter,
-    passthrough: Arc<dyn Algorithm>,
+    routes: Routes,
 }
 
 pub fn router(config: Config) -> Result<Router, String> {
     let clients = pool::build(&config)?;
+    let routes = Routes::build(&config)?;
     let state = Arc::new(AppState {
         config,
         clients,
-        passthrough: Arc::new(Passthrough),
+        routes,
     });
     Ok(Router::new()
         .route("/healthz", get(|| async { StatusCode::OK }))
@@ -127,16 +128,10 @@ async fn handle(
             "`previous_response_id` is not supported: stateful responses are unavailable".into(),
         ));
     }
-    // Routes are accepted in config but not served until the routing layer lands; only direct
-    // targets are requestable for now.
-    if !state.config.targets.contains_key(&model) {
-        if state.config.routes.contains_key(&model) {
-            return Err(GatewayError::BadRequest(format!(
-                "route `{model}` is configured but routing is not enabled yet; request a target directly"
-            )));
-        }
-        return Err(GatewayError::ModelNotFound(model));
-    }
+    let route = state
+        .routes
+        .get(&model)
+        .ok_or_else(|| GatewayError::ModelNotFound(model.clone()))?;
 
     let extensions = llm_request.extensions.clone();
     // `wire_format` stays unset: setting it pins the backend to the client's protocol, but every
@@ -147,13 +142,10 @@ async fn handle(
         raw_request: Some(body),
         metadata: Some(metadata),
     };
-    let models = Arc::new(RuntimeModels::new(HashMap::from([(
-        Category::Any,
-        vec![ModelId::from(model.as_str())],
-    )])));
+    let models = Arc::new(route.models.clone());
 
     let (selected, mut response) = run(
-        state.passthrough.clone(),
+        route.algorithm.clone(),
         state.clients.clone(),
         request,
         models,

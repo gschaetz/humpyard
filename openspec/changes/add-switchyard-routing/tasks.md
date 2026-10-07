@@ -20,12 +20,12 @@
 
 ## 4. Routing
 
-- [ ] 4.1 Build `passthrough` and `random` routes and direct-target implicit routes at startup; tests assert requests reach the expected target
-- [ ] 4.2 Build `stage_router` routes; test with failing tool-result history that the capable target is chosen per config
-- [ ] 4.3 Build `llm_classifier` routes with the judge served through the pool; test that judge calls reach the judge target and are invisible to the client
-- [ ] 4.4 Wire session ids from `x-switchyard-session-id`; test that state persists across two requests of one session and not across sessions
-- [ ] 4.5 Apply ordered Switchyard fallbacks across whole targets; test the capable-unavailable scenario
-- [ ] 4.6 Set `x-conductor-target` and `x-conductor-provider` for streaming and buffered responses and add them to the request log; tests assert both
+- [x] 4.1 Build `passthrough` and `random` routes and direct-target implicit routes at startup; tests assert requests reach the expected target
+- [x] 4.2 Build `stage_router` routes; test with failing tool-result history that the capable target is chosen per config
+- [x] 4.3 Build `llm_classifier` routes with the judge served through the pool; test that judge calls reach the judge target and are invisible to the client
+- [x] 4.4 Wire session ids from `x-switchyard-session-id`; test that state persists across two requests of one session and not across sessions
+- [x] 4.5 Apply ordered Switchyard fallbacks across whole targets; test the capable-unavailable scenario
+- [x] 4.6 Set `x-conductor-target` and `x-conductor-provider` for streaming and buffered responses and add them to the request log; tests assert both
 
 ## 5. Routing policy seam
 

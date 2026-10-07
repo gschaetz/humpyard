@@ -62,6 +62,23 @@ pub enum PickerMode {
     CapableFirst,
 }
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum ClassifyTrigger {
+    #[default]
+    EveryRequest,
+    UserTurn,
+    NewSession,
+}
+
+fn default_threshold_step() -> f64 {
+    0.1
+}
+
+fn default_confirmations() -> u32 {
+    2
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum ClassifierMode {
@@ -94,6 +111,18 @@ pub enum RouteSpec {
         efficient: Vec<String>,
         capable: Vec<String>,
         judge: Vec<String>,
+        /// Capability mode: lowest solve probability that routes a supported task to `efficient`.
+        #[serde(default = "default_confidence")]
+        base_threshold: f64,
+        /// Capability mode: threshold added per capability-boundary step.
+        #[serde(default = "default_threshold_step")]
+        threshold_step: f64,
+        /// Capability mode: how often the judge re-decides a session's target.
+        #[serde(default)]
+        classify_trigger: ClassifyTrigger,
+        /// Escalation mode: consecutive escalate verdicts before the session latches to `capable`.
+        #[serde(default = "default_confirmations")]
+        confirmations: u32,
     },
 }
 
@@ -303,11 +332,25 @@ impl Config {
                 efficient,
                 capable,
                 judge,
+                base_threshold,
+                threshold_step,
+                confirmations,
                 ..
             } => {
                 non_empty("efficient", efficient)?;
                 non_empty("capable", capable)?;
-                non_empty("judge", judge)
+                non_empty("judge", judge)?;
+                if !(0.0..=1.0).contains(base_threshold) || *threshold_step < 0.0 {
+                    return Err(invalid(format!(
+                        "route `{id}`: `base_threshold` must be between 0 and 1 and `threshold_step` must not be negative"
+                    )));
+                }
+                if *confirmations == 0 {
+                    return Err(invalid(format!(
+                        "route `{id}`: `confirmations` must be at least 1"
+                    )));
+                }
+                Ok(())
             }
         }
     }
