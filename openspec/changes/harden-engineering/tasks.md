@@ -31,5 +31,5 @@
 ## 6. Property tests and ADRs
 
 - [ ] 6.1 Add property tests for pricing and budget state/rollover; verify they run in CI and shrink a deliberately injected bug locally
-- [ ] 6.2 Write the ADRs (the six existing decisions plus the linter choice) in `docs/adr/` from `docs/adr/template.md`, following the adr step's rules; verify each links to its OpenSpec change and to the invariant it supports and that numbers are sequential
+- [x] 6.2 Write the ADRs in `docs/adr/` from `docs/adr/template.md`, following the adr step's rules: the eight durable decisions made so far (Switchyard in-process, dispatch on its client, config-first keys, no plaintext secrets, SQLite ledger, integer micro-USD, one-shot migration, policy seam); verify each links to its OpenSpec change and to the invariant it supports, that numbers are sequential, and that every relative link resolves
 - [ ] 6.3 Update `AGENTS.md` and `docs/architecture.md` to point to the invariants, the architecture tests and the ADRs; verify the links resolve
