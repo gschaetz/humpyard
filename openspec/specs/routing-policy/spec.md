@@ -25,11 +25,15 @@ The gateway SHALL return HTTP 503 in the endpoint's error format when the policy
 - **THEN** the client receives 503 naming the route and the reason
 
 ### Requirement: Policy context
-The policy SHALL receive the requested route, session id and request metadata so it can decide per caller.
+The policy SHALL receive the requested route, session id and request metadata, and, when the caller is authenticated, the key id and its budget state, so it can decide per caller.
 
 #### Scenario: Session-aware policy
 - **WHEN** a policy decides by session
 - **THEN** it can read the session id of the current request
+
+#### Scenario: Budget-aware policy
+- **WHEN** an authenticated key is in the restricted state
+- **THEN** the policy can read the key id and that state
 
 ### Requirement: Degrade instead of fail
 When a policy removes every target of a routing tier but other targets remain eligible, the gateway SHALL serve the request from the remaining eligible targets rather than failing.
