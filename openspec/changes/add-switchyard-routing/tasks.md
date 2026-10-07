@@ -29,12 +29,12 @@
 
 ## 5. Routing policy seam
 
-- [ ] 5.1 Define the policy trait, `PolicyContext`, and the allow-all default; wire eligibility into the per-request runtime model set (remove from every category, rebuild `Any`, substitute emptied tiers); tests cover default, removal and tier-substitution scenarios
-- [ ] 5.2 Return 503 in the endpoint's error shape when no target is eligible; test all three protocols
-- [ ] 5.3 Update `/v1/models` to list routes and targets; test the listing
+- [x] 5.1 Define the policy trait, `PolicyContext`, and the allow-all default; wire eligibility into the per-request runtime model set (remove from every category, rebuild `Any`, substitute emptied tiers); tests cover default, removal and tier-substitution scenarios
+- [x] 5.2 Return 503 in the endpoint's error shape when no target is eligible; test all three protocols
+- [x] 5.3 Update `/v1/models` to list routes and targets; test the listing
 
 ## 6. Docs and integration
 
-- [ ] 6.1 Document routes, targets, failover and the policy seam in README and `docs/`, and verify the documented config runs against mock providers
-- [ ] 6.2 Update docs/architecture.md (status table and both diagrams) to match the code and verify the diagrams against the module list
-- [ ] 6.3 End-to-end test: Claude-Code-style Anthropic client with tool-error history escalates from efficient to capable through the full stack
+- [x] 6.1 Document routes, targets, failover and the policy seam in README and `docs/`, and verify the documented config runs against mock providers
+- [x] 6.2 Update docs/architecture.md (status table and both diagrams) to match the code and verify the diagrams against the module list
+- [x] 6.3 End-to-end test: Claude-Code-style Anthropic client with tool-error history escalates from efficient to capable through the full stack

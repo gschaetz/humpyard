@@ -3,7 +3,7 @@
 Living document. Update it in the same PR as any change that alters structure, request flow or
 component status (see [AGENTS.md](../AGENTS.md)). Diagrams are Mermaid and render on GitHub.
 
-Last updated: 2026-10-07 (`add-switchyard-routing` in progress: routes and the provider pool are live; the policy seam is next).
+Last updated: 2026-10-07 (`add-switchyard-routing` complete: routes, provider pool and the policy seam are live; budget and health policies are next).
 
 ## Component status
 
@@ -15,7 +15,7 @@ Last updated: 2026-10-07 (`add-switchyard-routing` in progress: routes and the p
 | TOML config (providers, targets, routes) + CLI (`serve`, `check-config`) | Implemented | `add-core-gateway`, `add-switchyard-routing` (group 2) |
 | Switchyard routing: passthrough, random, stage_router, llm_classifier; per-session state; whole-target fallbacks | Implemented | `add-switchyard-routing` (group 4) |
 | Provider pool: multi-provider targets with ordered-endpoint failover | Implemented | `add-switchyard-routing` (group 3) |
-| Routing-policy seam (eligibility hook) | Proposed | `add-switchyard-routing` (group 5) |
+| Routing-policy seam (eligibility hook, tier substitution, 503 when none eligible) | Implemented | `add-switchyard-routing` (group 5) |
 | Budget / cost tracking, virtual keys | Planned | not yet proposed |
 | Provider health + telemetry feeding policy | Planned | not yet proposed |
 | `migrate-modelrelay` command + bundled catalog | Planned | not yet proposed |
@@ -29,7 +29,8 @@ flowchart LR
     C3[Anthropic client] --> API
     subgraph GW[switchyard-conductor]
         API[axum endpoints<br/>decode to Switchyard IR] --> RT[Routes<br/>built-in algorithm per route]
-        RT --> RUN[Switchyard run<br/>selected target + fallbacks]
+        RT --> POL[Routing policy<br/>allow-all today]
+        POL --> RUN[Switchyard run<br/>selected target + fallbacks]
         RUN --> TC[Target client<br/>ordered endpoint failover]
         TC --> EC[TranslatingLlmClient<br/>per endpoint]
         EC -->|IR response or stream| ENC[Encode to client protocol<br/>SSE framing]
@@ -45,7 +46,7 @@ flowchart LR
 flowchart TD
     IN[Inbound request<br/>OpenAI / Responses / Anthropic] --> DEC[Decode to Switchyard IR]
     DEC --> BUD[1. Budget middleware<br/>planned]
-    BUD --> POL[2. Routing policy<br/>eligible targets<br/>proposed seam]
+    BUD --> POL[2. Routing policy<br/>eligible targets<br/>seam implemented, allow-all default]
     POL --> ALG[3. Switchyard algorithm<br/>passthrough / random /<br/>stage_router / llm_classifier<br/>implemented]
     ALG --> POOL[4. Provider pool<br/>endpoint choice + failover<br/>implemented]
     POOL --> UPS[(Providers)]
@@ -66,7 +67,8 @@ Switchyard decides the macro question (which target); the provider pool answers 
 |---|---|
 | `config.rs` | TOML schema, env-var key loading, validation |
 | `error.rs` | Gateway errors rendered per client protocol |
-| `routing.rs` | Builds one long-lived Switchyard algorithm (and target groups) per route and per bare target |
+| `policy.rs` | `RoutingPolicy` trait, `PolicyContext`, allow-all default |
+| `routing.rs` | Builds one long-lived Switchyard algorithm (and target groups) per route and per bare target; applies policy eligibility, tier substitution and random-weight realignment |
 | `pool.rs` | Per-target `RoutedLlmClient`: ordered endpoints, failover, provider attribution header |
 | `server.rs` | Router, handlers: decode, `run`, encode/SSE framing, attribution headers |
 | `main.rs` / `lib.rs` | CLI and library root |

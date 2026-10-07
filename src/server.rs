@@ -23,6 +23,7 @@ use switchyard_translation::{
 
 use crate::config::Config;
 use crate::error::GatewayError;
+use crate::policy::{AllowAll, PolicyContext, RoutingPolicy};
 use crate::pool::{self, PROVIDER_HEADER};
 use crate::routing::Routes;
 
@@ -32,15 +33,25 @@ pub struct AppState {
     config: Config,
     clients: ClientRouter,
     routes: Routes,
+    policy: Arc<dyn RoutingPolicy>,
 }
 
 pub fn router(config: Config) -> Result<Router, String> {
+    router_with_policy(config, Arc::new(AllowAll))
+}
+
+/// Like [`router`], with a custom policy deciding which targets are eligible per request.
+pub fn router_with_policy(
+    config: Config,
+    policy: Arc<dyn RoutingPolicy>,
+) -> Result<Router, String> {
     let clients = pool::build(&config)?;
     let routes = Routes::build(&config)?;
     let state = Arc::new(AppState {
         config,
         clients,
         routes,
+        policy,
     });
     Ok(Router::new()
         .route("/healthz", get(|| async { StatusCode::OK }))
@@ -137,21 +148,27 @@ async fn handle(
     // `wire_format` stays unset: setting it pins the backend to the client's protocol, but every
     // endpoint speaks OpenAI Chat and the IR is translated for it.
     let metadata = Metadata::from_headers(headers);
+    let context = PolicyContext {
+        route: &model,
+        session_id: metadata.session_id.as_deref().filter(|s| !s.is_empty()),
+        metadata: &metadata,
+    };
+    let plan = route
+        .plan(&model, |target| state.policy.is_eligible(&context, target))
+        .ok_or_else(|| {
+            GatewayError::Unavailable(format!(
+                "no eligible target for route `{model}`: all are excluded by routing policy"
+            ))
+        })?;
+    let models = Arc::new(plan.models);
     let request = Request {
         llm_request,
         raw_request: Some(body),
         metadata: Some(metadata),
     };
-    let models = Arc::new(route.models.clone());
 
-    let (selected, mut response) = run(
-        route.algorithm.clone(),
-        state.clients.clone(),
-        request,
-        models,
-        None,
-    )
-    .await?;
+    let (selected, mut response) =
+        run(plan.algorithm, state.clients.clone(), request, models, None).await?;
 
     let served = response.served_model().unwrap_or(&selected).to_string();
     let upstream_headers = std::mem::take(&mut response.upstream_headers);
