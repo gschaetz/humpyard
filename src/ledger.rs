@@ -125,7 +125,10 @@ impl Ledger {
             let mut batch = Vec::with_capacity(BATCH);
             while rx.recv_many(&mut batch, BATCH).await > 0 {
                 if let Err(error) = insert_batch(&writer_pool, &batch).await {
-                    writer_failed.fetch_add(batch.len() as u64, Ordering::Relaxed);
+                    writer_failed.fetch_add(
+                        u64::try_from(batch.len()).unwrap_or(u64::MAX),
+                        Ordering::Relaxed,
+                    );
                     tracing::error!(%error, entries = batch.len(), "ledger write failed; entries lost");
                 }
                 batch.clear();
