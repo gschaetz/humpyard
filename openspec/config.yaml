@@ -7,13 +7,6 @@ context: |
   (switchyard-libsy, in-process) -> modelrelay-style provider dispatch.
   Cost tracking must stay off the streaming critical path (mpsc -> async writer -> SQLite).
   Accept OpenAI and Anthropic protocols inbound; OpenAI-compatible outbound.
-context: |
-  Rust (tokio/axum/reqwest/serde) single-binary LLM gateway. Successor to the Node.js
-  modelrelay fork (gschaetz/modelrelay, stays as LTS); must read legacy ~/.modelrelay.json.
-  Request pipeline order is fixed: budget/cost middleware -> NVIDIA NeMo Switchyard
-  (switchyard-libsy, in-process) -> modelrelay-style provider dispatch.
-  Cost tracking must stay off the streaming critical path (mpsc -> async writer -> SQLite).
-  Accept OpenAI and Anthropic protocols inbound; OpenAI-compatible outbound.
 # Project context (optional)
 # Add only constraints that should guide OpenSpec artifacts and workflows.
 # Include constraints an agent cannot infer by reading the code.
