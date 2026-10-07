@@ -81,7 +81,8 @@ to change next time.
   This change itself started under `spec-driven`, so its ADRs are written by task 6.2:
   use Switchyard in-process; dispatch on Switchyard's client; config-first keys behind a
   `KeyStore` trait; SQLite ledger with async writer; integer micro-USD; one-shot modelrelay
-  migration; and the architecture-linter choice from task 1.2.
+  migration; and the routing-policy seam. Process decisions (OpenSpec workflow, the architecture
+  test over `mille`) are recorded in design docs and `docs/invariants.md`, not as ADRs.
 
 ## Risks / Trade-offs
 

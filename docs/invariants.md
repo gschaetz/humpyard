@@ -39,4 +39,4 @@ in an ADR (`docs/adr/`) in the same change.
    lints and property tests are planned (`harden-engineering` groups 3 and 6).
 10. **The ledger refers to key ids, never hashes.** Identity changes (for example database-managed
     keys) must not require a ledger migration. *Enforced by* review and the ledger schema; see
-    ADR-0003 once written.
+    [ADR-0003](adr/0003-config-first-virtual-keys-behind-keystore.md).
