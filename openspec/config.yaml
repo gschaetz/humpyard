@@ -1,4 +1,4 @@
-schema: spec-driven
+schema: spec-driven-adr
 
 context: |
   Rust (tokio/axum/reqwest/serde) single-binary LLM gateway. Successor to the Node.js
