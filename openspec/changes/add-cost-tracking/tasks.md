@@ -13,8 +13,8 @@
 
 ## 3. Usage ledger
 
-- [ ] 3.1 Create the SQLite schema with `user_version` migrations and the asynchronous batching writer (bounded channel, failure counting); tests cover insert, batching and an unavailable database not failing requests
-- [ ] 3.2 Implement startup hydration query for the current UTC day and month per key; test spend after a simulated restart
+- [x] 3.1 Create the SQLite schema with `user_version` migrations and the asynchronous batching writer (bounded channel, failure counting); tests cover insert, batching and an unavailable database not failing requests
+- [x] 3.2 Implement startup hydration query for the current UTC day and month per key; test spend after a simulated restart
 
 ## 4. Usage capture
 

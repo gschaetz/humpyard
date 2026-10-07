@@ -1,0 +1,12 @@
+switchyard-conductor
+Copyright 2026 Gary Schaetz
+
+This product includes software developed by third parties:
+
+- modelrelay (https://github.com/gschaetz/modelrelay fork), MIT License
+  Copyright (c) 2026 Elliptic Marketing
+  The provider pool, health-ping and tag-routing design is ported to Rust from this project.
+  The MIT license text is reproduced in THIRD_PARTY_LICENSES.md.
+
+- NVIDIA NeMo Switchyard crates (switchyard-libsy, switchyard-protocol,
+  switchyard-translation, switchyard-llm-client), Apache License 2.0, used as dependencies.
