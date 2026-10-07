@@ -17,7 +17,7 @@ export GROQ_API_KEY=... OPENROUTER_API_KEY=...   # one key per provider in the c
 ./target/release/switchyard-conductor serve --config examples/config.toml
 ```
 
-Clients can speak any of three protocols; the upstream is always OpenAI Chat Completions:
+Clients can speak any of three protocols; providers are reached over OpenAI Chat Completions:
 
 ```sh
 # OpenAI Chat Completions
@@ -42,7 +42,9 @@ See [examples/config.toml](examples/config.toml). Three kinds of entries:
 - `[providers.<name>]`: an OpenAI-compatible endpoint. The API key is read from the environment
   variable named by `api_key_env`; an inline key is rejected.
 - `[targets.<name>]`: a model served by an ordered list of `{ provider, model }` endpoints.
-  Clients may request a target by name today (served by its first endpoint).
+  Clients may request a target by name; endpoints are tried in order, failing over on
+  connection errors, timeouts, HTTP 429 and 5xx (not on other 4xx, and not once a stream has begun).
+  Responses carry `x-conductor-target` and `x-conductor-provider` headers.
 - `[routes.<name>]`: a built-in Switchyard algorithm (`passthrough`, `random`, `stage_router`,
   `llm_classifier`) over targets. Parsed and validated now; served once routing lands
   (`add-switchyard-routing` change).
@@ -50,7 +52,7 @@ See [examples/config.toml](examples/config.toml). Three kinds of entries:
 Logging is controlled by `RUST_LOG` (default `info`). `check-config` validates a file and reports
 dangling provider/target references and missing key variables.
 
-Not supported yet: routing, endpoint failover, `previous_response_id` (returns 400), inbound auth.
+Not supported yet: serving routes (routing), `previous_response_id` (returns 400), inbound auth.
 
 ## Development
 

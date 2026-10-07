@@ -3,7 +3,7 @@
 Living document. Update it in the same PR as any change that alters structure, request flow or
 component status (see [AGENTS.md](../AGENTS.md)). Diagrams are Mermaid and render on GitHub.
 
-Last updated: 2026-10-06 (after `add-core-gateway`; `add-switchyard-routing` is proposed).
+Last updated: 2026-10-07 (`add-switchyard-routing` in progress: provider pool and dispatch on Switchyard's client landed; routing algorithms and policy seam not yet).
 
 ## Component status
 
@@ -11,11 +11,11 @@ Last updated: 2026-10-06 (after `add-core-gateway`; `add-switchyard-routing` is 
 |---|---|---|
 | Inbound endpoints (OpenAI Chat, Responses, Anthropic) | Implemented | `add-core-gateway` |
 | Protocol translation (Switchyard IR/codecs) | Implemented | `add-core-gateway` |
-| Single-upstream proxy with SSE streaming | Implemented | `add-core-gateway` |
-| TOML config + CLI (`serve`, `check-config`) | Implemented | `add-core-gateway` |
-| Switchyard routing (built-in algorithms) | Proposed | `add-switchyard-routing` |
-| Provider pool with failover | Proposed | `add-switchyard-routing` |
-| Routing-policy seam (eligibility hook) | Proposed | `add-switchyard-routing` |
+| Streaming proxy over Switchyard's `run` + `TranslatingLlmClient` | Implemented | `add-switchyard-routing` (group 3) |
+| TOML config (providers, targets, routes) + CLI (`serve`, `check-config`) | Implemented | `add-core-gateway`, `add-switchyard-routing` (group 2) |
+| Switchyard routing (built-in algorithms); today every request runs `Passthrough` on the requested target | In progress | `add-switchyard-routing` (group 4) |
+| Provider pool: multi-provider targets with ordered-endpoint failover | Implemented | `add-switchyard-routing` (group 3) |
+| Routing-policy seam (eligibility hook) | Proposed | `add-switchyard-routing` (group 5) |
 | Budget / cost tracking, virtual keys | Planned | not yet proposed |
 | Provider health + telemetry feeding policy | Planned | not yet proposed |
 | `migrate-modelrelay` command + bundled catalog | Planned | not yet proposed |
@@ -28,13 +28,14 @@ flowchart LR
     C2[Codex / Responses client] --> API
     C3[Anthropic client] --> API
     subgraph GW[switchyard-conductor]
-        API[axum endpoints<br/>/v1/chat/completions<br/>/v1/responses<br/>/v1/messages]
-        TR[Translator<br/>switchyard-translation]
-        UP[Upstream client<br/>reqwest + SSE relay]
-        API --> TR --> UP
-        UP -->|events translated back| API
+        API[axum endpoints<br/>decode to Switchyard IR] --> RUN[Switchyard run<br/>Passthrough on requested target]
+        RUN --> TC[Target client<br/>ordered endpoint failover]
+        TC --> EC[TranslatingLlmClient<br/>per endpoint]
+        EC -->|IR response or stream| ENC[Encode to client protocol<br/>SSE framing]
+        ENC --> API
     end
-    UP --> P[(One OpenAI-compatible provider)]
+    EC --> P1[(Provider A)]
+    EC --> P2[(Provider B)]
 ```
 
 ## Target: full pipeline (planned order is fixed)
@@ -45,7 +46,7 @@ flowchart TD
     DEC --> BUD[1. Budget middleware<br/>planned]
     BUD --> POL[2. Routing policy<br/>eligible targets<br/>proposed seam]
     POL --> ALG[3. Switchyard algorithm<br/>passthrough / random /<br/>stage_router / llm_classifier<br/>proposed]
-    ALG --> POOL[4. Provider pool<br/>endpoint choice + failover<br/>proposed]
+    ALG --> POOL[4. Provider pool<br/>endpoint choice + failover<br/>implemented]
     POOL --> UPS[(Providers)]
     UPS --> ENC[Encode to client protocol]
     ENC --> OUT[Response / SSE]
@@ -64,13 +65,13 @@ Switchyard decides the macro question (which target); the provider pool answers 
 |---|---|
 | `config.rs` | TOML schema, env-var key loading, validation |
 | `error.rs` | Gateway errors rendered per client protocol |
-| `translate.rs` | Only importer of `switchyard-translation` |
-| `server.rs` | Router, handlers, SSE relay |
+| `pool.rs` | Per-target `RoutedLlmClient`: ordered endpoints, failover, provider attribution header |
+| `server.rs` | Router, handlers: decode, `run`, encode/SSE framing, attribution headers |
 | `main.rs` / `lib.rs` | CLI and library root |
 
 ## Key decisions
 
 - Reuse Switchyard's IR and codecs instead of hand-written provider types.
-- Embed `switchyard-libsy`; the provider pool will implement its `RoutedLlmClient`.
+- Embed `switchyard-libsy`; the provider pool implements its `RoutedLlmClient` over `TranslatingLlmClient`, and dispatch runs through `switchyard-llm-client::run`.
 - Config references API keys by env var only; modelrelay config comes in via a one-shot migration.
 - Details and evidence: [background.md](background.md) and `openspec/`.

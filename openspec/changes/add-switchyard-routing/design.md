@@ -35,6 +35,14 @@ deserializable, but its builder is crate-private.
 - **`TranslatingLlmClient` is a ready-made `RoutedLlmClient`**: per-model HTTP backends for
   OpenAI Chat, Responses and Anthropic, with retries, timeouts, streaming and translation.
 
+- **Published 0.3.0 differs slightly from Switchyard's main branch**: no `failure_cooldown`,
+  `omit_body_fields` or `TemporarilyUnavailable` yet, and `run` falls back on transport errors,
+  403/408/429/5xx, context window and content-policy 400 (not on timeouts). Pin to 0.3.0 and
+  re-check on upgrade.
+- **Do not set `Metadata.wire_format`.** It pins the backend to the client's protocol and fails
+  with `no backend for format` when the endpoint only has an OpenAI Chat backend; leaving it unset
+  uses the default backend and translates the IR.
+
 ## Goals / Non-Goals
 
 **Goals:** built-in algorithms driving real routing; provider failover; a policy seam that later
