@@ -1,8 +1,10 @@
 //! Route behavior end to end: built-in Switchyard algorithms over a mock provider.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // integration tests fail loudly on purpose
 
-use std::net::SocketAddr;
-use std::sync::{Arc, Mutex, OnceLock};
+mod common;
+
+use common::{chat_request, logs, serve, tool_turn};
+use std::sync::{Arc, Mutex};
 
 use axum::Router;
 use axum::extract::State;
@@ -53,13 +55,6 @@ async fn completions(
     .into_response()
 }
 
-async fn serve(app: Router) -> SocketAddr {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-    addr
-}
-
 struct Harness {
     url: String,
     mock: Arc<Mock>,
@@ -101,21 +96,7 @@ endpoints = [{{ provider = "mock", model = "b-m" }}]
 }
 
 fn plain(model: &str) -> Value {
-    json!({"model": model, "messages": [{"role": "user", "content": "hello"}]})
-}
-
-/// An agent turn: a task, a Bash tool call, and its result (failed or fine).
-fn tool_turn(model: &str, failed: bool) -> Value {
-    let result = if failed {
-        "fatal runtime error: out of memory"
-    } else {
-        "ok"
-    };
-    json!({"model": model, "messages": [
-        {"role": "user", "content": "fix the build"},
-        {"role": "assistant", "content": null, "tool_calls": [{"id": "call_1", "type": "function",
-            "function": {"name": "Bash", "arguments": "{\"command\":\"cargo test\"}"}}]},
-        {"role": "tool", "tool_call_id": "call_1", "content": result}]})
+    chat_request(model, false)
 }
 
 struct Reply {
@@ -249,38 +230,6 @@ async fn streaming_responses_carry_attribution_headers() {
         .unwrap();
     assert_eq!(resp.headers()["x-humpyard-target"], "fast");
     assert_eq!(resp.headers()["x-humpyard-provider"], "mock");
-}
-
-#[derive(Clone, Default)]
-struct LogBuf(Arc<Mutex<Vec<u8>>>);
-impl std::io::Write for LogBuf {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        self.0.lock().unwrap().extend_from_slice(buf);
-        Ok(buf.len())
-    }
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
-}
-impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for LogBuf {
-    type Writer = LogBuf;
-    fn make_writer(&'a self) -> LogBuf {
-        self.clone()
-    }
-}
-
-/// One process-wide subscriber: per-test subscribers race on tracing's callsite cache.
-fn logs() -> &'static LogBuf {
-    static LOGS: OnceLock<LogBuf> = OnceLock::new();
-    LOGS.get_or_init(|| {
-        let buf = LogBuf::default();
-        tracing_subscriber::fmt()
-            .with_max_level(tracing::Level::INFO)
-            .with_ansi(false)
-            .with_writer(buf.clone())
-            .init();
-        buf
-    })
 }
 
 #[tokio::test]

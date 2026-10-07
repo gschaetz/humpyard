@@ -7,7 +7,9 @@
     clippy::assert_is_empty
 )] // test scaffolding: fail loudly, favor readability
 
-use std::net::SocketAddr;
+mod common;
+
+use common::{chat_request, serve, tool_turn};
 use std::sync::{Arc, Mutex};
 
 use axum::Router;
@@ -39,13 +41,6 @@ async fn completions(
     axum::Json(json!({"id": "c", "object": "chat.completion", "created": 1, "model": model,
         "choices": [{"index": 0, "message": {"role": "assistant", "content": content}, "finish_reason": "stop"}]}))
     .into_response()
-}
-
-async fn serve(app: Router) -> SocketAddr {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-    addr
 }
 
 /// Excludes a fixed set of targets and records what it was asked about.
@@ -136,21 +131,15 @@ async fn harness(policy: Arc<dyn RoutingPolicy>) -> Harness {
 }
 
 fn plain(model: &str) -> Value {
-    json!({"model": model, "messages": [{"role": "user", "content": "hello"}]})
+    chat_request(model, false)
 }
 
 fn failing_turn(model: &str) -> Value {
-    json!({"model": model, "messages": [
-        {"role": "user", "content": "fix the build"},
-        {"role": "assistant", "content": null, "tool_calls": [{"id": "call_1", "type": "function",
-            "function": {"name": "Bash", "arguments": "{\"command\":\"cargo test\"}"}}]},
-        {"role": "tool", "tool_call_id": "call_1", "content": "fatal runtime error: out of memory"}]})
+    tool_turn(model, true)
 }
 
 fn clean_turn(model: &str) -> Value {
-    let mut body = failing_turn(model);
-    body["messages"][2]["content"] = json!("ok");
-    body
+    tool_turn(model, false)
 }
 
 async fn post_json(

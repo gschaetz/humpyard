@@ -6,6 +6,9 @@
     clippy::format_push_string
 )] // test scaffolding: fail loudly, favor readability
 
+mod common;
+
+use common::{serve, tool_turn};
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -36,13 +39,6 @@ async fn completions(
         "choices": [{"index": 0, "message": {"role": "assistant", "content": model}, "finish_reason": "stop"}],
         "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}}))
     .into_response()
-}
-
-async fn serve(app: Router) -> SocketAddr {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-    addr
 }
 
 struct TestClock(AtomicI64);
@@ -196,20 +192,16 @@ impl Gateway {
     }
 }
 
+/// A tool turn whose result failed, so the stage router escalates.
+fn failing_turn(model: &str) -> Value {
+    tool_turn(model, true)
+}
+
 fn target(resp: &reqwest::Response) -> String {
     resp.headers()
         .get("x-humpyard-target")
         .map(|v| v.to_str().unwrap().to_string())
         .unwrap_or_default()
-}
-
-/// A tool turn whose result failed, so the stage router escalates.
-fn failing_turn(model: &str) -> Value {
-    json!({"model": model, "messages": [
-        {"role": "user", "content": "fix the build"},
-        {"role": "assistant", "content": null, "tool_calls": [{"id": "call_1", "type": "function",
-            "function": {"name": "Bash", "arguments": "{\"command\":\"cargo test\"}"}}]},
-        {"role": "tool", "tool_call_id": "call_1", "content": "fatal runtime error: out of memory"}]})
 }
 
 #[tokio::test]

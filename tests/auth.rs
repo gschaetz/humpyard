@@ -6,9 +6,11 @@
     clippy::unnecessary_wraps
 )] // test scaffolding: fail loudly, favor readability
 
-use std::net::SocketAddr;
+mod common;
+
+use common::{chat_request, logs, serve};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
 
 use axum::Router;
 use axum::extract::State;
@@ -33,13 +35,6 @@ async fn completions(
     axum::Json(json!({"id": "c", "object": "chat.completion", "created": 1, "model": model,
         "choices": [{"index": 0, "message": {"role": "assistant", "content": "hi"}, "finish_reason": "stop"}]}))
     .into_response()
-}
-
-async fn serve(app: Router) -> SocketAddr {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-    addr
 }
 
 struct Harness {
@@ -97,10 +92,6 @@ endpoints = [{{ provider = "mock", model = "smart-m" }}]
     }
 }
 
-fn chat(model: &str) -> Value {
-    json!({"model": model, "messages": [{"role": "user", "content": "hi"}]})
-}
-
 async fn post_with(
     h: &Harness,
     path: &str,
@@ -114,6 +105,10 @@ async fn post_with(
         req = req.header(name, value);
     }
     req.send().await.unwrap()
+}
+
+fn chat(model: &str) -> Value {
+    chat_request(model, false)
 }
 
 fn bearer(key: &str) -> Option<(&'static str, String)> {
@@ -236,38 +231,6 @@ async fn models_list_needs_a_key_and_respects_the_allowlist() {
         .map(|m| m["id"].as_str().unwrap())
         .collect();
     assert_eq!(ids, ["fast"]);
-}
-
-#[derive(Clone, Default)]
-struct LogBuf(Arc<Mutex<Vec<u8>>>);
-impl std::io::Write for LogBuf {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        self.0.lock().unwrap().extend_from_slice(buf);
-        Ok(buf.len())
-    }
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
-}
-impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for LogBuf {
-    type Writer = LogBuf;
-    fn make_writer(&'a self) -> LogBuf {
-        self.clone()
-    }
-}
-
-/// One process-wide subscriber: per-test subscribers race on tracing's callsite cache.
-fn logs() -> &'static LogBuf {
-    static LOGS: OnceLock<LogBuf> = OnceLock::new();
-    LOGS.get_or_init(|| {
-        let buf = LogBuf::default();
-        tracing_subscriber::fmt()
-            .with_max_level(tracing::Level::TRACE)
-            .with_ansi(false)
-            .with_writer(buf.clone())
-            .init();
-        buf
-    })
 }
 
 #[tokio::test]

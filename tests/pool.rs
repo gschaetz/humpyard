@@ -6,7 +6,9 @@
     clippy::assert_is_empty
 )] // test scaffolding: fail loudly, favor readability
 
-use std::net::SocketAddr;
+mod common;
+
+use common::serve;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -48,10 +50,9 @@ impl Upstream {
     }
 }
 
+/// One streamed chunk carrying `text`, as an SSE data payload.
 fn chunk(text: &str) -> String {
-    json!({"id": "c", "object": "chat.completion.chunk", "created": 1, "model": "m",
-           "choices": [{"index": 0, "delta": {"role": "assistant", "content": text}, "finish_reason": null}]})
-    .to_string()
+    common::chunk(json!({"role": "assistant", "content": text}), None).to_string()
 }
 
 async fn completions(
@@ -90,13 +91,6 @@ async fn completions(
             "choices": [{"index": 0, "message": {"role": "assistant", "content": "hi"}, "finish_reason": "stop"}]}))
         .into_response(),
     }
-}
-
-async fn serve(app: Router) -> SocketAddr {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-    addr
 }
 
 async fn upstream(up: &Arc<Upstream>) -> String {
