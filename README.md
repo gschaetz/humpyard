@@ -62,3 +62,8 @@ Not supported yet: budget/health-aware policy, `previous_response_id` (returns 4
 ## Development
 
 Specs live in `openspec/` (OpenSpec). `cargo test`, `cargo clippy --all-targets -- -D warnings`.
+
+## License
+
+Apache-2.0, see [LICENSE](LICENSE) and [NOTICE](NOTICE). Contributions require a DCO sign-off,
+see [CONTRIBUTING.md](CONTRIBUTING.md).

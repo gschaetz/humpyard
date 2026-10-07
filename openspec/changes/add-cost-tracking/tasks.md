@@ -13,15 +13,15 @@
 
 ## 3. Usage ledger
 
-- [ ] 3.1 Create the SQLite schema with `user_version` migrations and the asynchronous batching writer (bounded channel, failure counting); tests cover insert, batching and an unavailable database not failing requests
-- [ ] 3.2 Implement startup hydration query for the current UTC day and month per key; test spend after a simulated restart
+- [x] 3.1 Create the SQLite schema with `user_version` migrations and the asynchronous batching writer (bounded channel, failure counting); tests cover insert, batching and an unavailable database not failing requests
+- [x] 3.2 Implement startup hydration query for the current UTC day and month per key; test spend after a simulated restart
 
 ## 4. Usage capture
 
-- [ ] 4.1 Wrap the route's target clients per request in a metered client with a call context; the inner target client reports the serving endpoint; test that attribution matches the served endpoint after failover
-- [ ] 4.2 Record buffered calls and mark the returned call as answer and the others as judge; tests with a judge route assert two entries charged to the same key
-- [ ] 4.3 Tap streamed responses: record at the terminal event, and on drop with the missing-usage marker; tests cover normal end, no-usage stream and client disconnect in all three protocols
-- [ ] 4.4 Record entries for failed runs as judge spend; test a classifier route whose answer call fails
+- [x] 4.1 Wrap the route's target clients per request in a metered client with a call context; the inner target client reports the serving endpoint; test that attribution matches the served endpoint after failover
+- [x] 4.2 Record buffered calls and mark the returned call as answer and the others as judge; tests with a judge route assert two entries charged to the same key
+- [x] 4.3 Tap streamed responses: record at the terminal event, and on drop with the missing-usage marker; tests cover normal end, no-usage stream and client disconnect in all three protocols
+- [x] 4.4 Record entries for failed runs as judge spend; test a classifier route whose answer call fails
 
 ## 5. Budget enforcement
 

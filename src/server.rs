@@ -1,6 +1,7 @@
 //! HTTP surface: inference endpoints in three client protocols, served through Switchyard's
 //! `run` over the provider pool.
 
+use std::collections::HashMap;
 use std::convert::Infallible;
 use std::sync::Arc;
 
@@ -14,45 +15,55 @@ use axum::routing::{get, post};
 use futures::{Stream, StreamExt};
 use serde_json::{Value, json};
 
-use switchyard_llm_client::{ClientRouter, run};
-use switchyard_protocol::{LlmResponse, Metadata, Request, WireFormat};
+use switchyard_llm_client::run;
+use switchyard_protocol::{Category, LlmResponse, Metadata, ModelId, Request, WireFormat};
 use switchyard_translation::{
     LlmStreamError, RawEventStream, decode_request, encode_aggregated_response_with_extensions,
     encode_stream_with_extensions, util::SWITCHYARD_METADATA_KEY,
 };
 
 use crate::auth::{ConfigKeyStore, KeyRecord, KeyStore, hash_key, presented_key};
+use crate::clock::SystemClock;
 use crate::config::Config;
 use crate::error::GatewayError;
+use crate::ledger::Ledger;
+use crate::metering::{Accounting, CALL_ID_HEADER, CallContext};
 use crate::policy::{AllowAll, PolicyContext, RoutingPolicy};
-use crate::pool::{self, PROVIDER_HEADER};
+use crate::pool::{self, PROVIDER_HEADER, TargetClient};
 use crate::routing::Routes;
 
 const TARGET_HEADER: &str = "x-conductor-target";
 
 pub struct AppState {
     config: Config,
-    clients: ClientRouter,
+    targets: HashMap<ModelId, Arc<TargetClient>>,
+    accounting: Arc<Accounting>,
     routes: Routes,
     policy: Arc<dyn RoutingPolicy>,
     keys: Arc<dyn KeyStore>,
 }
 
-pub fn router(config: Config) -> Result<Router, String> {
-    router_with_policy(config, Arc::new(AllowAll))
+pub async fn router(config: Config) -> Result<Router, String> {
+    router_with_policy(config, Arc::new(AllowAll)).await
 }
 
 /// Like [`router`], with a custom policy deciding which targets are eligible per request.
-pub fn router_with_policy(
+pub async fn router_with_policy(
     config: Config,
     policy: Arc<dyn RoutingPolicy>,
 ) -> Result<Router, String> {
-    let clients = pool::build(&config)?;
+    let targets = pool::build(&config)?;
+    let ledger = match &config.ledger {
+        Some(path) => Some(Ledger::open(path).await.map_err(|e| e.to_string())?),
+        None => None,
+    };
+    let accounting = Arc::new(Accounting::new(ledger, Arc::new(SystemClock)));
     let routes = Routes::build(&config)?;
     let keys: Arc<dyn KeyStore> = Arc::new(ConfigKeyStore::new(&config.keys));
     let state = Arc::new(AppState {
         config,
-        clients,
+        targets,
+        accounting,
         routes,
         policy,
         keys,
@@ -193,6 +204,7 @@ async fn handle(
     // `wire_format` stays unset: setting it pins the backend to the client's protocol, but every
     // endpoint speaks OpenAI Chat and the IR is translated for it.
     let metadata = Metadata::from_headers(headers);
+    let session_id = metadata.session_id.clone().filter(|s| !s.is_empty());
     let context = PolicyContext {
         route: &model,
         session_id: metadata.session_id.as_deref().filter(|s| !s.is_empty()),
@@ -205,15 +217,33 @@ async fn handle(
                 "no eligible target for route `{model}`: all are excluded by routing policy"
             ))
         })?;
+    let names: Vec<ModelId> = plan.models.models_for(&Category::Any).to_vec();
     let models = Arc::new(plan.models);
+    let ctx = CallContext::new(
+        state.accounting.clone(),
+        caller.map(|k| k.id.clone()),
+        session_id,
+        model.clone(),
+    );
+    let clients = ctx.router(&state.targets, &names);
     let request = Request {
         llm_request,
         raw_request: Some(body),
         metadata: Some(metadata),
     };
 
-    let (selected, mut response) =
-        run(plan.algorithm, state.clients.clone(), request, models, None).await?;
+    let (selected, mut response) = match run(plan.algorithm, clients, request, models, None).await {
+        Ok(done) => done,
+        Err(error) => {
+            ctx.finish_err();
+            return Err(error.into());
+        }
+    };
+    let answer_id = response
+        .upstream_headers
+        .remove(CALL_ID_HEADER)
+        .and_then(|v| v.to_str().ok()?.parse::<u64>().ok());
+    let stream_template = ctx.finish_ok(answer_id);
 
     let served = response.served_model().unwrap_or(&selected).to_string();
     let upstream_headers = std::mem::take(&mut response.upstream_headers);
@@ -229,6 +259,10 @@ async fn handle(
             axum::Json(body).into_response()
         }
         LlmResponse::Stream(stream) => {
+            let stream = match stream_template {
+                Some(template) => ctx.tap(stream, template),
+                None => stream,
+            };
             let events =
                 encode_stream_with_extensions(stream, format, Some(served.clone()), &extensions)
                     .map_err(|e| GatewayError::Internal(e.to_string()))?;

@@ -6,12 +6,10 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use http::{HeaderName, HeaderValue, StatusCode};
-use switchyard_llm_client::{
-    Backend, ClientRouter, HttpBackendConfig, ModelConfig, TranslatingLlmClient,
-};
+use switchyard_llm_client::{Backend, HttpBackendConfig, ModelConfig, TranslatingLlmClient};
 use switchyard_protocol::{LlmClientError, ModelId, Request, Response, RoutedLlmClient};
 
-use crate::config::{Config, Endpoint, Provider};
+use crate::config::{Config, Endpoint, Price, Provider};
 
 /// Response header naming the provider endpoint that served a request.
 pub const PROVIDER_HEADER: &str = "x-conductor-provider";
@@ -19,7 +17,16 @@ pub const PROVIDER_HEADER: &str = "x-conductor-provider";
 struct EndpointClient {
     provider: String,
     model: String,
+    price: Option<Price>,
     client: TranslatingLlmClient,
+}
+
+/// Which endpoint served a call, so usage can be attributed and priced.
+#[derive(Clone, Debug)]
+pub struct Served {
+    pub provider: String,
+    pub model: String,
+    pub price: Option<Price>,
 }
 
 /// Serves one target by trying its endpoints in order.
@@ -44,6 +51,18 @@ fn fails_over(error: &LlmClientError) -> bool {
 #[async_trait]
 impl RoutedLlmClient for TargetClient {
     async fn call(&self, request: Request) -> Result<Response, LlmClientError> {
+        self.call_detailed(request)
+            .await
+            .map(|(response, _)| response)
+    }
+}
+
+impl TargetClient {
+    /// Like `call`, also reporting which endpoint served the response.
+    pub async fn call_detailed(
+        &self,
+        request: Request,
+    ) -> Result<(Response, Served), LlmClientError> {
         let mut last_error = None;
         for (index, endpoint) in self.endpoints.iter().enumerate() {
             let mut attempt = request.clone();
@@ -55,7 +74,12 @@ impl RoutedLlmClient for TargetClient {
                             .upstream_headers
                             .insert(HeaderName::from_static(PROVIDER_HEADER), value);
                     }
-                    return Ok(response);
+                    let served = Served {
+                        provider: endpoint.provider.clone(),
+                        model: endpoint.model.clone(),
+                        price: endpoint.price,
+                    };
+                    return Ok((response, served));
                 }
                 Err(error) if fails_over(&error) && index + 1 < self.endpoints.len() => {
                     tracing::warn!(
@@ -94,25 +118,26 @@ fn endpoint_client(provider: &Provider, endpoint: &Endpoint) -> Result<TargetEnd
     Ok(TargetEndpoint {
         provider: endpoint.provider.clone(),
         model: endpoint.model.clone(),
+        price: endpoint.price,
         client,
     })
 }
 
 type TargetEndpoint = EndpointClient;
 
-/// Builds the router that maps every configured target to its client.
-pub fn build(config: &Config) -> Result<ClientRouter, String> {
-    let mut by_model: HashMap<ModelId, Arc<dyn RoutedLlmClient>> = HashMap::new();
+/// Builds one client per configured target.
+pub fn build(config: &Config) -> Result<HashMap<ModelId, Arc<TargetClient>>, String> {
+    let mut targets = HashMap::new();
     for (id, endpoints) in &config.targets {
         let clients = endpoints
             .iter()
             .map(|endpoint| endpoint_client(&config.providers[&endpoint.provider], endpoint))
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| format!("target `{id}`: {e}"))?;
-        by_model.insert(
+        targets.insert(
             ModelId::from(id.as_str()),
             Arc::new(TargetClient { endpoints: clients }),
         );
     }
-    Ok(ClientRouter::new(by_model))
+    Ok(targets)
 }

@@ -8,7 +8,7 @@ One Rust binary uniting:
 1. **Cost/budget tracking** (LiteLLM-like): virtual keys, daily/monthly caps, token + $ ledger.
 2. **Intelligence layer**: NVIDIA NeMo Switchyard (`switchyard-libsy`) for escalation/cascade/stage
    routing, consuming budget state and live provider telemetry as decision inputs.
-3. **Provider gateway** (modelrelay port): provider pool, health pings, tag routing
+3. **Provider gateway** (original implementation, modelrelay-style concepts): provider pool, health pings, tag routing
    (`tag:fast`, `tag:reasoning`, `min_ctx:`), load-balancing, failover, request translation, SSE.
 
 ## Pipeline (fixed order)
@@ -37,7 +37,7 @@ the code in the original discussion was illustrative).
 ## Phases
 1. Core gateway + serde types + SSE streaming proxy to one provider
 2. Switchyard coupling (in-process)
-3. Provider registry port + health pinger + `migrate-modelrelay` one-shot migration (see below)
+3. Provider registry + health pinger + `migrate-modelrelay` one-shot migration (see below)
 4. Cost tracking, virtual keys, budgets feeding Switchyard
 
 ## Switchyard findings (verified 2026-10-06 against NVIDIA-NeMo/Switchyard v0.3.0)
@@ -78,8 +78,8 @@ Checked against the fork's `docs/configuration.md` and a live `~/.modelrelay.jso
   plaintext, which conflicts with our env-var-only key rule.
 - Decision: no runtime reader. Provide a re-runnable `migrate-modelrelay` command that reads the
   JSON plus env vars and writes our TOML. Keys become `api_key_env` references with a printed list
-  of variables to set; plaintext keys are never copied. The built-in catalog is ported once as
-  bundled data. Custom endpoints, bans, tags and pinning carry over.
+  of variables to set; plaintext keys are never copied. The built-in catalog is compiled independently as
+  bundled data (facts only, no copied files). Custom endpoints, bans, tags and pinning carry over.
 
 ## Open questions
 - Resolved: session `State` lives inside long-lived algorithm instances keyed by `Metadata.session_id`
