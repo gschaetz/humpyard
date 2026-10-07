@@ -94,7 +94,7 @@ pub fn presented_key(headers: &HeaderMap) -> Option<&str> {
 pub fn generate_key() -> Result<(String, String), getrandom::Error> {
     let mut bytes = [0u8; 32];
     getrandom::fill(&mut bytes)?;
-    let key = format!("sk-conductor-{}", hex::encode(bytes));
+    let key = format!("sk-humpyard-{}", hex::encode(bytes));
     let hash = format!("sha256:{}", hex::encode(hash_key(&key)));
     Ok((key, hash))
 }
@@ -140,7 +140,7 @@ mod tests {
     #[test]
     fn generated_key_matches_its_hash_and_is_unique() {
         let (key, hash) = generate_key().unwrap();
-        assert!(key.starts_with("sk-conductor-"));
+        assert!(key.starts_with("sk-humpyard-"));
         assert_eq!(hash, format!("sha256:{}", hex::encode(hash_key(&key))));
         assert_ne!(key, generate_key().unwrap().0);
     }
@@ -178,12 +178,7 @@ mod tests {
         let store = ConfigKeyStore::new(&keys);
         assert!(store.enforces_auth());
         assert_eq!(store.lookup(&hash_key(&key)).await.unwrap().id, "alice");
-        assert!(
-            store
-                .lookup(&hash_key("sk-conductor-wrong"))
-                .await
-                .is_none()
-        );
+        assert!(store.lookup(&hash_key("sk-humpyard-wrong")).await.is_none());
         assert!(!ConfigKeyStore::new(&Default::default()).enforces_auth());
     }
 }

@@ -34,7 +34,7 @@ session with the `x-switchyard-session-id` header; without it, state-dependent b
 - If everything fails, the client gets the last error: 429/4xx pass through, unreachable is 502,
   timeout is 504.
 
-Responses carry `x-conductor-target` (who served) and `x-conductor-provider` (which endpoint).
+Responses carry `x-humpyard-target` (who served) and `x-humpyard-provider` (which endpoint).
 
 ## Routing policy
 
@@ -48,6 +48,6 @@ every group the algorithm sees, including its fallbacks.
 - If **nothing** is eligible, the request fails with HTTP 503 naming the route.
 
 The shipped policy (`AllowAll`) allows everything. Embedders implement
-`switchyard_conductor::policy::RoutingPolicy` and start the server with
+`humpyard::policy::RoutingPolicy` and start the server with
 `server::router_with_policy`. A policy receives the route, the session id and request metadata.
 Budget- and health-aware policies are planned changes built on this seam.

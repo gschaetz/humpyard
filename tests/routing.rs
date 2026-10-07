@@ -8,9 +8,9 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::post;
+use humpyard::config::Config;
+use humpyard::server;
 use serde_json::{Value, json};
-use switchyard_conductor::config::Config;
-use switchyard_conductor::server;
 
 /// Records every upstream model called. The judge model answers with `judge_reply`; every other
 /// model answers with its own name so tests can see who served. Models listed in `broken` fail.
@@ -134,7 +134,7 @@ async fn send(h: &Harness, body: Value, session: Option<&str>) -> Reply {
     let status = resp.status().as_u16();
     let target = resp
         .headers()
-        .get("x-conductor-target")
+        .get("x-humpyard-target")
         .map(|v| v.to_str().unwrap().to_string())
         .unwrap_or_default();
     Reply {
@@ -246,8 +246,8 @@ async fn streaming_responses_carry_attribution_headers() {
         .send()
         .await
         .unwrap();
-    assert_eq!(resp.headers()["x-conductor-target"], "fast");
-    assert_eq!(resp.headers()["x-conductor-provider"], "mock");
+    assert_eq!(resp.headers()["x-humpyard-target"], "fast");
+    assert_eq!(resp.headers()["x-humpyard-provider"], "mock");
 }
 
 #[derive(Clone, Default)]
@@ -328,7 +328,7 @@ async fn anthropic_agent_escalates_after_a_failing_tool_result() {
                 .send()
                 .await
                 .unwrap();
-            let target = resp.headers()["x-conductor-target"]
+            let target = resp.headers()["x-humpyard-target"]
                 .to_str()
                 .unwrap()
                 .to_string();

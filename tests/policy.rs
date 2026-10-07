@@ -7,10 +7,10 @@ use axum::Router;
 use axum::extract::State;
 use axum::response::{IntoResponse, Response};
 use axum::routing::post;
+use humpyard::config::Config;
+use humpyard::policy::{PolicyContext, RoutingPolicy};
+use humpyard::server;
 use serde_json::{Value, json};
-use switchyard_conductor::config::Config;
-use switchyard_conductor::policy::{PolicyContext, RoutingPolicy};
-use switchyard_conductor::server;
 
 /// Records every upstream model called; the judge answers with a fixed, usable verdict.
 #[derive(Default)]
@@ -165,7 +165,7 @@ async fn served(h: &Harness, body: Value) -> (u16, String) {
     let resp = post_json(h, "/v1/chat/completions", body, None).await;
     let target = resp
         .headers()
-        .get("x-conductor-target")
+        .get("x-humpyard-target")
         .map(|v| v.to_str().unwrap().to_string())
         .unwrap_or_default();
     (resp.status().as_u16(), target)
@@ -173,7 +173,7 @@ async fn served(h: &Harness, body: Value) -> (u16, String) {
 
 #[tokio::test]
 async fn default_policy_allows_every_target() {
-    let h = harness(Arc::new(switchyard_conductor::policy::AllowAll)).await;
+    let h = harness(Arc::new(humpyard::policy::AllowAll)).await;
     assert_eq!(
         served(&h, failing_turn("auto")).await,
         (200, "smart".to_string())

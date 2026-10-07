@@ -30,7 +30,7 @@ flowchart LR
     C1[OpenAI Chat client] --> API
     C2[Codex / Responses client] --> API
     C3[Anthropic client] --> API
-    subgraph GW[switchyard-conductor]
+    subgraph GW[humpyard]
         API[axum endpoints<br/>decode to Switchyard IR] --> AUTH[Auth<br/>virtual keys, allowlist]
         AUTH --> BUD[Budget check<br/>402 when exhausted]
         BUD --> RT[Routes<br/>built-in algorithm per route]

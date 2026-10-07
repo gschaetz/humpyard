@@ -9,8 +9,8 @@ Clients authenticate with gateway-issued keys. Keys are stored **only as SHA-256
 config; the key itself is shown once when you mint it:
 
 ```sh
-switchyard-conductor keygen alice
-# Key (shown once; store it securely): sk-conductor-…
+humpyard keygen alice
+# Key (shown once; store it securely): sk-humpyard-…
 # [keys.alice]
 # sha256 = "sha256:…"
 ```

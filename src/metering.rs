@@ -25,7 +25,7 @@ use crate::pricing::cost_micro_usd;
 
 /// Internal response header carrying a call's id from the metered client back to the handler.
 /// It never reaches the client: the handler removes it.
-pub const CALL_ID_HEADER: &str = "x-conductor-call-id";
+pub const CALL_ID_HEADER: &str = "x-humpyard-call-id";
 
 /// Where finished entries go: the ledger (when configured).
 pub struct Accounting {

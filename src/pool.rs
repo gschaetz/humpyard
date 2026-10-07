@@ -12,7 +12,7 @@ use switchyard_protocol::{LlmClientError, ModelId, Request, Response, RoutedLlmC
 use crate::config::{Config, Endpoint, Price, Provider};
 
 /// Response header naming the provider endpoint that served a request.
-pub const PROVIDER_HEADER: &str = "x-conductor-provider";
+pub const PROVIDER_HEADER: &str = "x-humpyard-provider";
 
 struct EndpointClient {
     provider: String,

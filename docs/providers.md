@@ -11,7 +11,7 @@ Base URL `https://opencode.ai/zen/go/v1`, OpenAI Chat Completions, bearer key.
 [providers.opencode]
 base_url = "https://opencode.ai/zen/go/v1"
 api_key_env = "OPENCODE_API_KEY"
-headers = { "x-opencode-session" = "switchyard-conductor", "user-agent" = "switchyard-conductor/0.1" }
+headers = { "x-opencode-session" = "humpyard", "user-agent" = "humpyard/0.1" }
 ```
 
 - **`x-opencode-session` is required** (HTTP 400 without it). The provider wants a stable id per
@@ -34,7 +34,7 @@ Against real models, with a dead first endpoint to force failover:
 - Chat Completions, Anthropic Messages and Responses, buffered and streaming (event shapes
   complete for all three).
 - Failover from a refused connection to the working endpoint on every call, with
-  `x-conductor-target` and `x-conductor-provider` set.
+  `x-humpyard-target` and `x-humpyard-provider` set.
 - A tool call and a tool-result round trip.
 - `stage_router`: a failing tool result escalated to the capable target; clean turns stayed on
   the efficient one. A clean test pass clears the capable hold early (Switchyard behavior).

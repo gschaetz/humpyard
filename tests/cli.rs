@@ -1,7 +1,7 @@
 use std::process::Command;
 
 fn run(args: &[&str], key: Option<&str>) -> std::process::Output {
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_switchyard-conductor"));
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_humpyard"));
     cmd.args(args).env_remove("CLI_TEST_KEY");
     if let Some(key) = key {
         cmd.env("CLI_TEST_KEY", key);
@@ -55,7 +55,7 @@ fn serve_refuses_invalid_config() {
 
 #[test]
 fn the_documented_budget_example_is_a_valid_config() {
-    let out = Command::new(env!("CARGO_BIN_EXE_switchyard-conductor"))
+    let out = Command::new(env!("CARGO_BIN_EXE_humpyard"))
         .args([
             "check-config",
             concat!(env!("CARGO_MANIFEST_DIR"), "/examples/budgets.toml"),
@@ -75,7 +75,7 @@ fn keygen_prints_a_key_and_the_matching_hash_and_stores_nothing() {
     use sha2::{Digest, Sha256};
     let dir = std::env::temp_dir().join(format!("sc-keygen-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    let out = Command::new(env!("CARGO_BIN_EXE_switchyard-conductor"))
+    let out = Command::new(env!("CARGO_BIN_EXE_humpyard"))
         .args(["keygen", "alice"])
         .current_dir(&dir)
         .output()
@@ -84,7 +84,7 @@ fn keygen_prints_a_key_and_the_matching_hash_and_stores_nothing() {
     let text = String::from_utf8_lossy(&out.stdout);
     let key = text
         .split_whitespace()
-        .find(|w| w.starts_with("sk-conductor-"))
+        .find(|w| w.starts_with("sk-humpyard-"))
         .expect("key printed");
     assert!(text.contains("[keys.alice]"));
     let expected = format!("sha256:{}", hex::encode(Sha256::digest(key.as_bytes())));

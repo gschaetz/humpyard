@@ -37,7 +37,7 @@ use crate::policy::{
 use crate::pool::{self, PROVIDER_HEADER, TargetClient};
 use crate::routing::Routes;
 
-const TARGET_HEADER: &str = "x-conductor-target";
+const TARGET_HEADER: &str = "x-humpyard-target";
 
 pub struct AppState {
     config: Config,
@@ -133,7 +133,7 @@ async fn list_models(State(state): State<Arc<AppState>>, headers: HeaderMap) -> 
         .model_names()
         .into_iter()
         .filter(|id| caller.as_ref().is_none_or(|key| key.may_use(id)))
-        .map(|id| json!({"id": id, "object": "model", "created": 0, "owned_by": "switchyard-conductor"}))
+        .map(|id| json!({"id": id, "object": "model", "created": 0, "owned_by": "humpyard"}))
         .collect();
     axum::Json(json!({"object": "list", "data": data})).into_response()
 }

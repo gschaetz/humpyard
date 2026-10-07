@@ -10,9 +10,9 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::sse::{Event, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::routing::post;
+use humpyard::config::Config;
+use humpyard::server;
 use serde_json::{Value, json};
-use switchyard_conductor::config::Config;
-use switchyard_conductor::server;
 
 #[derive(Clone, Copy)]
 enum Mode {
@@ -148,8 +148,8 @@ async fn first_endpoint_serves_with_its_own_model_and_key() {
     let g = gateway(&upstream(&a).await, &upstream(&b).await, 5).await;
     let resp = chat(&g, false).await;
     assert_eq!(resp.status(), 200);
-    assert_eq!(header(&resp, "x-conductor-provider"), "p1");
-    assert_eq!(header(&resp, "x-conductor-target"), "t");
+    assert_eq!(header(&resp, "x-humpyard-provider"), "p1");
+    assert_eq!(header(&resp, "x-humpyard-target"), "t");
     assert_eq!(
         a.calls(),
         [("alpha".to_string(), "Bearer key-K1".to_string())]
@@ -164,7 +164,7 @@ async fn rate_limit_and_server_errors_fail_over_with_the_next_endpoints_model_an
         let g = gateway(&upstream(&a).await, &upstream(&b).await, 5).await;
         let resp = chat(&g, false).await;
         assert_eq!(resp.status(), 200, "first endpoint status {code}");
-        assert_eq!(header(&resp, "x-conductor-provider"), "p2");
+        assert_eq!(header(&resp, "x-humpyard-provider"), "p2");
         assert_eq!(
             b.calls(),
             [("beta".to_string(), "Bearer key-K2".to_string())]
@@ -181,7 +181,7 @@ async fn unreachable_endpoint_fails_over() {
     let g = gateway(&dead, &upstream(&b).await, 5).await;
     let resp = chat(&g, false).await;
     assert_eq!(resp.status(), 200);
-    assert_eq!(header(&resp, "x-conductor-provider"), "p2");
+    assert_eq!(header(&resp, "x-humpyard-provider"), "p2");
 }
 
 #[tokio::test]

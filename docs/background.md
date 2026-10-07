@@ -1,5 +1,8 @@
 # Background & design intent
 
+> Written when the project was called `switchyard-conductor`; it is now **humpyard**. Historical
+> names in this file are left as written.
+
 Seed notes from the initial design discussion (2026-10-05). Authoritative requirements
 live in `openspec/`; this is context only.
 
