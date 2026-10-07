@@ -41,3 +41,14 @@ Each endpoint SHALL carry the model name sent to its provider, which may differ 
 #### Scenario: Different upstream names
 - **WHEN** target `fast` has endpoint A with model `llama-3.3-70b` and endpoint B with model `llama3.3`
 - **THEN** each provider receives its own model name
+
+### Requirement: Configured provider headers are sent
+The gateway SHALL send each provider's configured headers on every upstream call to that provider, and only to that provider.
+
+#### Scenario: Header on every call
+- **WHEN** a provider configures `x-app = "conductor"` and a request is routed to it
+- **THEN** the upstream request carries `x-app: conductor`
+
+#### Scenario: Not sent to other providers
+- **WHEN** a request fails over from provider A (with headers) to provider B (without)
+- **THEN** provider B's request does not carry A's headers
