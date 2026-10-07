@@ -3,7 +3,7 @@
 Living document. Update it in the same PR as any change that alters structure, request flow or
 component status (see [AGENTS.md](../AGENTS.md)). Diagrams are Mermaid and render on GitHub.
 
-Last updated: 2026-10-07 (`add-switchyard-routing` complete: routes, provider pool and the policy seam are live; budget and health policies are next).
+Last updated: 2026-10-07 (`add-cost-tracking` implemented: keys, ledger and budgets feed the policy seam; health-aware policy and managed keys are next).
 
 ## Component status
 
@@ -16,7 +16,8 @@ Last updated: 2026-10-07 (`add-switchyard-routing` complete: routes, provider po
 | Switchyard routing: passthrough, random, stage_router, llm_classifier; per-session state; whole-target fallbacks | Implemented | `add-switchyard-routing` (group 4) |
 | Provider pool: multi-provider targets with ordered-endpoint failover | Implemented | `add-switchyard-routing` (group 3) |
 | Routing-policy seam (eligibility hook, tier substitution, 503 when none eligible) | Implemented | `add-switchyard-routing` (group 5) |
-| Budget / cost tracking, virtual keys, usage ledger | Proposed | `add-cost-tracking` |
+| Virtual keys (hashed, `KeyStore` trait), usage ledger (SQLite, async), per-endpoint pricing | Implemented | `add-cost-tracking` |
+| Budgets: UTC daily/monthly USD+token limits, restricted/exhausted states, 402, free-only, `/v1/key/info` | Implemented | `add-cost-tracking` |
 | Provider health + telemetry feeding policy | Planned | not yet proposed |
 | Database-managed keys + admin API | Planned (designed for in `add-cost-tracking`) | not yet proposed |
 | `migrate-modelrelay` command + bundled catalog | Planned | not yet proposed |
@@ -29,13 +30,24 @@ flowchart LR
     C2[Codex / Responses client] --> API
     C3[Anthropic client] --> API
     subgraph GW[switchyard-conductor]
-        API[axum endpoints<br/>decode to Switchyard IR] --> RT[Routes<br/>built-in algorithm per route]
-        RT --> POL[Routing policy<br/>allow-all today]
+        API[axum endpoints<br/>decode to Switchyard IR] --> AUTH[Auth<br/>virtual keys, allowlist]
+        AUTH --> BUD[Budget check<br/>402 when exhausted]
+        BUD --> RT[Routes<br/>built-in algorithm per route]
+        RT --> POL[Routing policy<br/>budget + custom]
         POL --> RUN[Switchyard run<br/>selected target + fallbacks]
-        RUN --> TC[Target client<br/>ordered endpoint failover]
+        RUN --> MET[Metered client<br/>per request]
+        MET --> TC[Target client<br/>ordered endpoint failover]
         TC --> EC[TranslatingLlmClient<br/>per endpoint]
-        EC -->|IR response or stream| ENC[Encode to client protocol<br/>SSE framing]
+        EC -->|IR response or stream| TAP[Stream tap<br/>usage at end]
+        TAP --> ENC[Encode to client protocol<br/>SSE framing]
         ENC --> API
+        MET -. entries .-> ACC[Accounting]
+        TAP -. entries .-> ACC
+        ACC --> TRK[Budget tracker<br/>live counters]
+        ACC --> LED[(SQLite ledger<br/>async writer)]
+        LED -. hydrate on start .-> TRK
+        TRK -.-> BUD
+        TRK -.-> POL
     end
     EC --> P1[(Provider A)]
     EC --> P2[(Provider B)]
@@ -46,14 +58,14 @@ flowchart LR
 ```mermaid
 flowchart TD
     IN[Inbound request<br/>OpenAI / Responses / Anthropic] --> DEC[Decode to Switchyard IR]
-    DEC --> BUD[1. Budget middleware<br/>planned]
+    DEC --> BUD[1. Auth + budget<br/>implemented]
     BUD --> POL[2. Routing policy<br/>eligible targets<br/>seam implemented, allow-all default]
     POL --> ALG[3. Switchyard algorithm<br/>passthrough / random /<br/>stage_router / llm_classifier<br/>implemented]
     ALG --> POOL[4. Provider pool<br/>endpoint choice + failover<br/>implemented]
     POOL --> UPS[(Providers)]
     UPS --> ENC[Encode to client protocol]
     ENC --> OUT[Response / SSE]
-    POOL -. usage events .-> LEDGER[(Async ledger<br/>SQLite)]
+    POOL -. usage events .-> LEDGER[(Async ledger<br/>SQLite, implemented)]
     LEDGER -. refresh .-> BUD
     HEALTH[Health + telemetry<br/>planned] -.-> POL
     BUD -. budget state .-> POL
@@ -69,6 +81,11 @@ Switchyard decides the macro question (which target); the provider pool answers 
 | `config.rs` | TOML schema, env-var key loading, validation |
 | `error.rs` | Gateway errors rendered per client protocol |
 | `policy.rs` | `RoutingPolicy` trait, `PolicyContext`, allow-all default |
+| `auth.rs` | `KeyStore` trait, config-backed store, key hashing, `keygen` support |
+| `budget.rs` | Live per-key counters (UTC day/month), budget states, `BudgetPolicy` |
+| `ledger.rs` | SQLite usage ledger with async batching writer and period queries |
+| `metering.rs` | Per-request metered clients, stream tap, answer/judge classification, `Accounting` |
+| `pricing.rs` / `clock.rs` | micro-USD cost from usage; clock and UTC periods |
 | `routing.rs` | Builds one long-lived Switchyard algorithm (and target groups) per route and per bare target; applies policy eligibility, tier substitution and random-weight realignment |
 | `pool.rs` | Per-target `RoutedLlmClient`: ordered endpoints, failover, provider attribution header |
 | `server.rs` | Router, handlers: decode, `run`, encode/SSE framing, attribution headers |

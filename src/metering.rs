@@ -16,6 +16,7 @@ use switchyard_protocol::{
     RoutedLlmClient, Usage,
 };
 
+use crate::budget::BudgetTracker;
 use crate::clock::Clock;
 use crate::config::Price;
 use crate::ledger::{Entry, Kind, Ledger};
@@ -30,11 +31,20 @@ pub const CALL_ID_HEADER: &str = "x-conductor-call-id";
 pub struct Accounting {
     ledger: Option<Ledger>,
     clock: Arc<dyn Clock>,
+    tracker: Option<Arc<BudgetTracker>>,
 }
 
 impl Accounting {
-    pub fn new(ledger: Option<Ledger>, clock: Arc<dyn Clock>) -> Self {
-        Self { ledger, clock }
+    pub fn new(
+        ledger: Option<Ledger>,
+        clock: Arc<dyn Clock>,
+        tracker: Option<Arc<BudgetTracker>>,
+    ) -> Self {
+        Self {
+            ledger,
+            clock,
+            tracker,
+        }
     }
 
     pub fn ledger(&self) -> Option<&Ledger> {
@@ -45,9 +55,13 @@ impl Accounting {
         self.clock.now_ms()
     }
 
-    /// Finalizes an entry: stamps the time and queues it for the ledger.
+    /// Finalizes an entry: stamps the time, counts it against the key's budget immediately, and
+    /// queues it for the ledger.
     pub fn complete(&self, mut entry: Entry) {
         entry.ts_ms = self.clock.now_ms();
+        if let (Some(tracker), Some(key)) = (&self.tracker, &entry.key_id) {
+            tracker.record(key, entry.cost_micro_usd, entry.total_tokens());
+        }
         if let Some(ledger) = &self.ledger {
             ledger.record(entry);
         }

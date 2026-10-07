@@ -54,6 +54,23 @@ fn serve_refuses_invalid_config() {
 }
 
 #[test]
+fn the_documented_budget_example_is_a_valid_config() {
+    let out = Command::new(env!("CARGO_BIN_EXE_switchyard-conductor"))
+        .args([
+            "check-config",
+            concat!(env!("CARGO_MANIFEST_DIR"), "/examples/budgets.toml"),
+        ])
+        .env("OPENROUTER_API_KEY", "k")
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
 fn keygen_prints_a_key_and_the_matching_hash_and_stores_nothing() {
     use sha2::{Digest, Sha256};
     let dir = std::env::temp_dir().join(format!("sc-keygen-{}", std::process::id()));

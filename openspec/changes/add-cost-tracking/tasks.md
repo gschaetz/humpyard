@@ -25,13 +25,13 @@
 
 ## 5. Budget enforcement
 
-- [ ] 5.1 Implement the budget tracker (daily and monthly counters, injectable clock, lazy rollover, hydrated from the ledger); unit tests cover rollover at UTC midnight and month end
-- [ ] 5.2 Enforce exhausted budgets: 402 before any upstream call in each endpoint's error shape; `free_only` mode serves zero-priced targets; tests cover both and the no-free-target 402
-- [ ] 5.3 Extend `PolicyContext` with the key id and budget state and implement `BudgetPolicy` (restricted ceiling, free-only, conservative target price); tests assert tier substitution near the limit
-- [ ] 5.4 Add `GET /v1/key/info`; test it reflects spend immediately after a request
+- [x] 5.1 Implement the budget tracker (daily and monthly counters, injectable clock, lazy rollover, hydrated from the ledger); unit tests cover rollover at UTC midnight and month end
+- [x] 5.2 Enforce exhausted budgets: 402 before any upstream call in each endpoint's error shape; `free_only` mode serves zero-priced targets; tests cover both and the no-free-target 402
+- [x] 5.3 Extend `PolicyContext` with the key id and budget state and implement `BudgetPolicy` (restricted ceiling, free-only, conservative target price); tests assert tier substitution near the limit
+- [x] 5.4 Add `GET /v1/key/info`; test it reflects spend immediately after a request
 
 ## 6. Docs and integration
 
-- [ ] 6.1 Document keys, prices, budgets, `keygen`, the overshoot bound and the managed-keys migration path in `docs/budgets.md` and README; verify the documented config loads and a documented request flow works against mock providers
-- [ ] 6.2 Update `docs/architecture.md` (status table, request-flow diagram with auth, metering and the ledger writer, module list) and verify against the code
-- [ ] 6.3 End-to-end test: a key spends past its daily limit through an escalating route, is restricted, then blocked with 402; after a restart its spend is recovered from the ledger
+- [x] 6.1 Document keys, prices, budgets, `keygen`, the overshoot bound and the managed-keys migration path in `docs/budgets.md` and README; verify the documented config loads and a documented request flow works against mock providers
+- [x] 6.2 Update `docs/architecture.md` (status table, request-flow diagram with auth, metering and the ledger writer, module list) and verify against the code
+- [x] 6.3 End-to-end test: a key spends past its daily limit through an escalating route, is restricted, then blocked with 402; after a restart its spend is recovered from the ledger

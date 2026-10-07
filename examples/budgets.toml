@@ -1,0 +1,43 @@
+# Keys, prices, ledger and budgets. Mint a key with:  switchyard-conductor keygen alice
+listen = "127.0.0.1:8080"
+
+# Where every upstream call is recorded. Required when any key has a limit.
+[ledger]
+path = "conductor.db"
+
+# Past this fraction of any limit a key is "restricted": targets whose output price is above the
+# ceiling are skipped (tiers degrade, e.g. capable -> efficient).
+[budget]
+restricted_at = 0.8
+restricted_max_output_price = 5.0      # USD per million output tokens; omit for no price ceiling
+
+[keys.alice]
+sha256 = "sha256:0000000000000000000000000000000000000000000000000000000000000001"
+allowed_routes = ["auto"]              # omit to allow everything
+daily_usd = 5.0
+monthly_usd = 50.0
+over_budget = "block"                  # HTTP 402 at the limit
+
+[keys.ci]
+sha256 = "sha256:0000000000000000000000000000000000000000000000000000000000000002"
+daily_tokens = 2000000
+over_budget = "free_only"              # keep going on zero-priced targets only
+
+[providers.openrouter]
+base_url = "https://openrouter.ai/api/v1"
+api_key_env = "OPENROUTER_API_KEY"
+
+# Every endpoint needs a price when any key has a USD budget (0 is fine for free models).
+[targets.fast]
+endpoints = [{ provider = "openrouter", model = "meta-llama/llama-3.3-70b-instruct", price = { input = 0.1, output = 0.3 } }]
+
+[targets.smart]
+endpoints = [{ provider = "openrouter", model = "anthropic/claude-sonnet-4.5", price = { input = 3.0, output = 15.0, cached_input = 0.3 }}]
+
+[targets.free]
+endpoints = [{ provider = "openrouter", model = "meta-llama/llama-3.3-70b-instruct:free", price = { input = 0.0, output = 0.0 } }]
+
+[routes.auto]
+type = "stage_router"
+efficient = ["fast"]
+capable = ["smart"]
