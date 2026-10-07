@@ -1,7 +1,30 @@
 listen = "127.0.0.1:8080"
-models = ["llama-3.3-70b-versatile"]
 
-[upstream]
+# Providers: OpenAI-compatible endpoints. Keys come from environment variables only.
+[providers.groq]
 base_url = "https://api.groq.com/openai/v1"
 api_key_env = "GROQ_API_KEY"
 timeout_secs = 120
+max_retries = 1          # extra attempts on this provider before failing over
+
+[providers.openrouter]
+base_url = "https://openrouter.ai/api/v1"
+api_key_env = "OPENROUTER_API_KEY"
+
+# Targets: a named model served by an ordered list of endpoints (failover order).
+[targets.fast]
+endpoints = [
+  { provider = "groq", model = "llama-3.3-70b-versatile" },
+  { provider = "openrouter", model = "meta-llama/llama-3.3-70b-instruct" },
+]
+
+[targets.smart]
+endpoints = [{ provider = "openrouter", model = "anthropic/claude-sonnet-4.5" }]
+
+# Routes: what clients request as `model`. Types: passthrough, random, stage_router, llm_classifier.
+[routes.auto]
+type = "stage_router"
+efficient = ["fast"]
+capable = ["smart"]
+mode = "efficient_first"
+confidence_threshold = 0.5

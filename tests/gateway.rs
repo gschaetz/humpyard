@@ -102,14 +102,19 @@ struct Harness {
 
 async fn harness_with_upstream(upstream: &str, mock: Arc<Mock>) -> Harness {
     logs();
+    let targets: String = ["m", "limited", "slow", "tools"]
+        .iter()
+        .map(|t| {
+            format!("[targets.{t}]\nendpoints = [{{ provider = \"mock\", model = \"{t}\" }}]\n")
+        })
+        .collect();
     let toml = format!(
         r#"listen = "127.0.0.1:0"
-models = ["m", "limited", "slow", "tools"]
-[upstream]
+[providers.mock]
 base_url = "{upstream}"
 api_key_env = "KEY"
 timeout_secs = 5
-"#
+{targets}"#
     );
     let config = Config::from_toml(&toml, |_| Some(KEY.to_string())).unwrap();
     let gateway = serve(server::router(config)).await;
@@ -169,7 +174,7 @@ async fn health_and_models() {
         .iter()
         .map(|m| m["id"].as_str().unwrap())
         .collect();
-    assert_eq!(ids, ["m", "limited", "slow", "tools"]);
+    assert_eq!(ids, ["limited", "m", "slow", "tools"]);
 }
 
 #[tokio::test]

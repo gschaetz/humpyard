@@ -57,8 +57,8 @@ pub fn router(config: Config) -> Router {
 async fn list_models(State(state): State<Arc<AppState>>) -> Response {
     let data: Vec<Value> = state
         .config
-        .models
-        .iter()
+        .model_names()
+        .into_iter()
         .map(|id| json!({"id": id, "object": "model", "created": 0, "owned_by": "switchyard-conductor"}))
         .collect();
     axum::Json(json!({"object": "list", "data": data})).into_response()
@@ -91,9 +91,18 @@ async fn handle(
         .and_then(Value::as_str)
         .ok_or_else(|| GatewayError::BadRequest("`model` is required".into()))?
         .to_string();
-    if !state.config.models.contains(&model) {
-        return Err(GatewayError::ModelNotFound(model));
-    }
+    // Routes are accepted in config but not served until the routing layer lands; only direct
+    // targets are requestable for now, via their first endpoint.
+    let endpoint = match state.config.targets.get(&model) {
+        Some(endpoints) => &endpoints[0],
+        None if state.config.routes.contains_key(&model) => {
+            return Err(GatewayError::BadRequest(format!(
+                "route `{model}` is configured but routing is not enabled yet; request a target directly"
+            )));
+        }
+        None => return Err(GatewayError::ModelNotFound(model)),
+    };
+    let provider = &state.config.providers[&endpoint.provider];
     if format == WireFormat::OpenAiResponses
         && body
             .get("previous_response_id")
@@ -106,17 +115,17 @@ async fn handle(
     let stream = body.get("stream").and_then(Value::as_bool).unwrap_or(false);
 
     let mut upstream_body = state.translator.request_to_upstream(format, &body)?;
+    upstream_body["model"] = Value::String(endpoint.model.clone());
     upstream_body["stream"] = Value::Bool(stream);
     if stream {
         upstream_body["stream_options"] = json!({"include_usage": true});
     }
 
-    let upstream = &state.config.upstream;
     let response = state
         .client
-        .post(format!("{}/chat/completions", upstream.base_url))
-        .bearer_auth(&upstream.api_key)
-        .timeout(Duration::from_secs(upstream.timeout_secs))
+        .post(format!("{}/chat/completions", provider.base_url))
+        .bearer_auth(&provider.api_key)
+        .timeout(Duration::from_secs(provider.timeout_secs))
         .json(&upstream_body)
         .send()
         .await

@@ -16,10 +16,11 @@ fn write_config(name: &str, body: &str) -> String {
 }
 
 const GOOD: &str = r#"listen = "127.0.0.1:0"
-models = ["m"]
-[upstream]
+[providers.p]
 base_url = "http://127.0.0.1:1"
 api_key_env = "CLI_TEST_KEY"
+[targets.m]
+endpoints = [{ provider = "p", model = "m" }]
 "#;
 
 #[test]
