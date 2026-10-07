@@ -1,8 +1,12 @@
-# switchyard-conductor — agent context
+# humpyard — agent context
 
 Rust single-binary LLM gateway combining budget/cost tracking, NVIDIA NeMo Switchyard routing
 (in-process via `switchyard-libsy`), and an original provider pool (modelrelay-style concepts, no shared code).
 See [README.md](README.md) and [docs/background.md](docs/background.md) for design intent.
+
+Naming: formerly `switchyard-conductor`, renamed to humpyard on 2026-10-07 (a hump yard is the railroad
+yard that classifies cars onto the right track). Archived OpenSpec changes and ADR 0008 (immutable)
+keep the old `x-conductor-*` header names as history; living specs and code use `x-humpyard-*`.
 
 ## Workflow
 - Spec-driven with **OpenSpec** (`openspec/`): propose changes with `/opsx:propose`, specs in

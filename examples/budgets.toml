@@ -1,9 +1,9 @@
-# Keys, prices, ledger and budgets. Mint a key with:  switchyard-conductor keygen alice
+# Keys, prices, ledger and budgets. Mint a key with:  humpyard keygen alice
 listen = "127.0.0.1:8080"
 
 # Where every upstream call is recorded. Required when any key has a limit.
 [ledger]
-path = "conductor.db"
+path = "humpyard.db"
 
 # Past this fraction of any limit a key is "restricted": targets whose output price is above the
 # ceiling are skipped (tiers degrade, e.g. capable -> efficient).

@@ -3,8 +3,8 @@ use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
 
-use switchyard_conductor::config::Config;
-use switchyard_conductor::server;
+use humpyard::config::Config;
+use humpyard::server;
 
 #[derive(Parser)]
 #[command(version, about = "Unified LLM gateway")]
@@ -50,7 +50,7 @@ async fn run(command: Command) -> Result<(), String> {
             Ok(())
         }
         Command::Keygen { id } => {
-            let (key, hash) = switchyard_conductor::auth::generate_key()
+            let (key, hash) = humpyard::auth::generate_key()
                 .map_err(|e| format!("cannot gather randomness: {e}"))?;
             println!("Key (shown once; store it securely): {key}\n");
             println!("Add to your config:\n\n[keys.{id}]\nsha256 = \"{hash}\"");

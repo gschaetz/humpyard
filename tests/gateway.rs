@@ -12,9 +12,9 @@ use axum::http::HeaderMap;
 use axum::response::sse::{Event, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::routing::post;
+use humpyard::config::Config;
+use humpyard::server;
 use serde_json::{Value, json};
-use switchyard_conductor::config::Config;
-use switchyard_conductor::server;
 
 const KEY: &str = "sk-test-secret-key";
 

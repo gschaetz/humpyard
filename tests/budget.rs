@@ -10,12 +10,12 @@ use axum::Router;
 use axum::extract::State;
 use axum::response::{IntoResponse, Response};
 use axum::routing::post;
+use humpyard::auth::generate_key;
+use humpyard::clock::Clock;
+use humpyard::config::Config;
+use humpyard::ledger::Ledger;
+use humpyard::server::{self, Options};
 use serde_json::{Value, json};
-use switchyard_conductor::auth::generate_key;
-use switchyard_conductor::clock::Clock;
-use switchyard_conductor::config::Config;
-use switchyard_conductor::ledger::Ledger;
-use switchyard_conductor::server::{self, Options};
 
 async fn completions(
     State(calls): State<Arc<AtomicUsize>>,
@@ -192,7 +192,7 @@ impl Gateway {
 
 fn target(resp: &reqwest::Response) -> String {
     resp.headers()
-        .get("x-conductor-target")
+        .get("x-humpyard-target")
         .map(|v| v.to_str().unwrap().to_string())
         .unwrap_or_default()
 }

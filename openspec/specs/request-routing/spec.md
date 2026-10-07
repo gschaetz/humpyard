@@ -42,7 +42,7 @@ Routing-time judge calls made by `llm_classifier` routes SHALL be served through
 - **THEN** the call goes to its configured judge target and only the final answer reaches the client
 
 ### Requirement: Serving attribution
-The gateway SHALL report the target and provider that served each non-streaming and streaming response in `x-conductor-target` and `x-conductor-provider` response headers, and in the request log.
+The gateway SHALL report the target and provider that served each non-streaming and streaming response in `x-humpyard-target` and `x-humpyard-provider` response headers, and in the request log.
 
 #### Scenario: Header present
 - **WHEN** a request is served

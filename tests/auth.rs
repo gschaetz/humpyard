@@ -8,10 +8,10 @@ use axum::Router;
 use axum::extract::State;
 use axum::response::{IntoResponse, Response};
 use axum::routing::post;
+use humpyard::auth::generate_key;
+use humpyard::config::Config;
+use humpyard::server;
 use serde_json::{Value, json};
-use switchyard_conductor::auth::generate_key;
-use switchyard_conductor::config::Config;
-use switchyard_conductor::server;
 
 #[derive(Default)]
 struct Mock {
@@ -152,7 +152,7 @@ async fn invalid_key_is_401() {
         &h,
         "/v1/chat/completions",
         chat("fast"),
-        bearer("sk-conductor-nope"),
+        bearer("sk-humpyard-nope"),
     )
     .await;
     assert_eq!(resp.status(), 401);
@@ -272,7 +272,7 @@ async fn logs_name_the_key_id_but_never_the_key_or_its_hash() {
         &h,
         "/v1/chat/completions",
         chat("fast"),
-        bearer("sk-conductor-bad-attempt"),
+        bearer("sk-humpyard-bad-attempt"),
     )
     .await;
     let captured = String::from_utf8(logs().0.lock().unwrap().clone()).unwrap();
@@ -282,7 +282,7 @@ async fn logs_name_the_key_id_but_never_the_key_or_its_hash() {
     );
     assert!(!captured.contains(&h.alice), "key leaked into logs");
     assert!(
-        !captured.contains("sk-conductor-bad-attempt"),
+        !captured.contains("sk-humpyard-bad-attempt"),
         "rejected key leaked into logs"
     );
     let hash_hex = h.alice_hash.trim_start_matches("sha256:");

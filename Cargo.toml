@@ -1,11 +1,12 @@
 [package]
-name = "switchyard-conductor"
+name = "humpyard"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.96.1"
-description = "Single-binary LLM gateway: budget/cost tracking, Switchyard routing, and multi-provider dispatch"
+description = "A gateway that sorts each LLM request onto the right model: protocol translation, Switchyard routing, failover and budgets"
 license = "Apache-2.0"
-repository = "https://github.com/gschaetz/switchyard-conductor"
+repository = "https://github.com/gschaetz/humpyard"
+homepage = "https://humpyard.dev"
 readme = "README.md"
 
 [dependencies]

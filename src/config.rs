@@ -877,7 +877,7 @@ judge = ["fast"]
                 "[{ provider = \"groq\", model = \"big-model\" }]",
                 "[{ provider = \"groq\", model = \"big-model\", price = { input = 3.0, output = 15.0, cached_input = 0.3 } }]",
             );
-        format!("{priced}\n[ledger]\npath = \"conductor.db\"\n{extra}")
+        format!("{priced}\n[ledger]\npath = \"humpyard.db\"\n{extra}")
     }
 
     #[test]
@@ -891,7 +891,7 @@ judge = ["fast"]
         assert_eq!(alice.over_budget, OverBudget::FreeOnly);
         assert_eq!(alice.limits.daily_usd, Some(5.0));
         assert_eq!(alice.limits.monthly_tokens, Some(1_000_000));
-        assert_eq!(config.ledger.as_deref(), Some(Path::new("conductor.db")));
+        assert_eq!(config.ledger.as_deref(), Some(Path::new("humpyard.db")));
         assert_eq!(config.budget.restricted_at, 0.9);
         assert_eq!(
             config.targets["smart"][0].price.unwrap().cached_input,

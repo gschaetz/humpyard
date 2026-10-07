@@ -1,10 +1,18 @@
-# switchyard-conductor
+# humpyard
 
-A unified Rust LLM gateway: cost/budget tracking, NVIDIA NeMo Switchyard intelligent routing,
-and modelrelay-style multi-provider dispatch in one binary.
+A gateway that sorts each LLM request onto the right model, in one Rust binary: OpenAI Chat,
+OpenAI Responses and Anthropic Messages in; routing by NVIDIA NeMo Switchyard's algorithms;
+multi-provider failover; virtual keys, a usage ledger and budgets.
 
-Status: pre-alpha. Today it is a protocol-translating proxy to one OpenAI-compatible upstream.
-Routing, multiple providers and budgets are next. See [docs/background.md](docs/background.md).
+*Why the name:* a hump yard is the railroad yard where cars are classified and sent down the right
+track, one by one. That is the job here, with requests and models. Home: https://humpyard.dev.
+(Formerly `switchyard-conductor`.)
+
+Status: pre-alpha. Working today: the three client protocols with streaming, routes backed by
+Switchyard's `passthrough`, `random`, `stage_router` and `llm_classifier`, ordered-endpoint
+failover, a routing-policy seam, virtual keys, a SQLite usage ledger and per-key budgets. Planned:
+provider-health-aware routing, database-managed keys, the modelrelay migration command. Design
+background in [docs/background.md](docs/background.md).
 
 See [docs/architecture.md](docs/architecture.md) for diagrams and component status and
 [docs/routing.md](docs/routing.md) for routes, failover and the routing policy, and
@@ -15,8 +23,8 @@ See [docs/architecture.md](docs/architecture.md) for diagrams and component stat
 ```sh
 cargo build --release
 export GROQ_API_KEY=... OPENROUTER_API_KEY=...   # one key per provider in the config
-./target/release/switchyard-conductor check-config examples/config.toml
-./target/release/switchyard-conductor serve --config examples/config.toml
+./target/release/humpyard check-config examples/config.toml
+./target/release/humpyard serve --config examples/config.toml
 ```
 
 Clients can speak any of three protocols; providers are reached over OpenAI Chat Completions:
@@ -47,7 +55,7 @@ See [examples/config.toml](examples/config.toml). Three kinds of entries:
 - `[targets.<name>]`: a model served by an ordered list of `{ provider, model }` endpoints.
   Clients may request a target by name; endpoints are tried in order, failing over on
   connection errors, timeouts, HTTP 429 and 5xx (not on other 4xx, and not once a stream has begun).
-  Responses carry `x-conductor-target` and `x-conductor-provider` headers.
+  Responses carry `x-humpyard-target` and `x-humpyard-provider` headers.
 - `[routes.<name>]`: a built-in Switchyard algorithm over targets, requested by clients as the
   `model`: `passthrough`, `random` (weights, seed), `stage_router` (tool-result signals pick
   efficient vs capable), or `llm_classifier` (`capability` judges task difficulty, `escalation`
