@@ -96,6 +96,12 @@ to change next time.
   (`format_push_string`, `assert_is_empty`, ...), because `allow-*-in-tests` in `clippy.toml` does not
   cover helper functions in integration-test files.
 - Existing behavior is unchanged: all 139 tests pass, with `clippy -D warnings` clean.
+- Structure (group 4): shared test scaffolding in `tests/common`; `config.rs` is now
+  `config/{mod,schema,validate,tests}.rs`; `server::handle` is 31 lines composing six stages
+  (`decode`, `authorize`, `check_budget`, `plan_route`, `execute`, `encode`) with unchanged error
+  precedence, the temporary `too_many_lines` allowance removed. The architecture test now scans
+  nested modules and fails when a rule names a module that no longer exists (caught while
+  splitting `config`).
 
 ## Risks / Trade-offs
 
