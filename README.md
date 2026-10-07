@@ -45,14 +45,17 @@ See [examples/config.toml](examples/config.toml). Three kinds of entries:
   Clients may request a target by name; endpoints are tried in order, failing over on
   connection errors, timeouts, HTTP 429 and 5xx (not on other 4xx, and not once a stream has begun).
   Responses carry `x-conductor-target` and `x-conductor-provider` headers.
-- `[routes.<name>]`: a built-in Switchyard algorithm (`passthrough`, `random`, `stage_router`,
-  `llm_classifier`) over targets. Parsed and validated now; served once routing lands
-  (`add-switchyard-routing` change).
+- `[routes.<name>]`: a built-in Switchyard algorithm over targets, requested by clients as the
+  `model`: `passthrough`, `random` (weights, seed), `stage_router` (tool-result signals pick
+  efficient vs capable), or `llm_classifier` (`capability` judges task difficulty, `escalation`
+  latches to capable after repeated judge verdicts; both need a `judge` target). Send
+  `x-switchyard-session-id` so per-session state (latches, holds) persists across requests.
+  If the selected target fails entirely, the next target the algorithm returned is tried.
 
 Logging is controlled by `RUST_LOG` (default `info`). `check-config` validates a file and reports
 dangling provider/target references and missing key variables.
 
-Not supported yet: serving routes (routing), `previous_response_id` (returns 400), inbound auth.
+Not supported yet: budget/health-aware policy, `previous_response_id` (returns 400), inbound auth.
 
 ## Development
 

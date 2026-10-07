@@ -28,3 +28,11 @@ efficient = ["fast"]
 capable = ["smart"]
 mode = "efficient_first"
 confidence_threshold = 0.5
+
+# An escalation route additionally needs a judge target:
+# [routes.agent]
+# type = "llm_classifier"
+# mode = "escalation"      # or "capability"
+# efficient = ["fast"]
+# capable = ["smart"]
+# judge = ["fast"]
