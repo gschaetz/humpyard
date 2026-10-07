@@ -178,6 +178,39 @@ impl Ledger {
             .collect())
     }
 
+    /// Every entry from `since_ms` (inclusive), oldest first. For reports and tests.
+    pub async fn entries_since(&self, since_ms: i64) -> Result<Vec<Entry>, LedgerError> {
+        let rows = sqlx::query("SELECT * FROM usage WHERE ts_ms >= ?1 ORDER BY id")
+            .bind(since_ms)
+            .fetch_all(&self.pool)
+            .await?;
+        Ok(rows
+            .into_iter()
+            .map(|row| Entry {
+                ts_ms: row.get("ts_ms"),
+                key_id: row.get("key_id"),
+                session_id: row.get("session_id"),
+                route: row.get("route"),
+                target: row.get("target"),
+                provider: row.get("provider"),
+                model: row.get("model"),
+                kind: if row.get::<String, _>("kind") == "answer" {
+                    Kind::Answer
+                } else {
+                    Kind::Judge
+                },
+                input_tokens: row.get::<i64, _>("input_tokens") as u64,
+                cached_input_tokens: row.get::<i64, _>("cached_input_tokens") as u64,
+                cache_creation_tokens: row.get::<i64, _>("cache_creation_tokens") as u64,
+                output_tokens: row.get::<i64, _>("output_tokens") as u64,
+                reasoning_tokens: row.get::<i64, _>("reasoning_tokens") as u64,
+                cost_micro_usd: row.get::<i64, _>("cost_micro_usd") as u64,
+                outcome: row.get("outcome"),
+                usage_missing: row.get("usage_missing"),
+            })
+            .collect())
+    }
+
     /// Stops accepting entries and waits for queued ones to be written.
     pub async fn shutdown(mut self) {
         let Self { tx, writer, .. } = &mut self;
@@ -227,9 +260,11 @@ async fn migrate(pool: &SqlitePool) -> Result<(), sqlx::Error> {
             .execute(pool)
             .await?;
         // PRAGMA does not take bound parameters; the value is a compile-time constant.
-        sqlx::query(sqlx::AssertSqlSafe(format!("PRAGMA user_version = {SCHEMA_VERSION}")))
-            .execute(pool)
-            .await?;
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "PRAGMA user_version = {SCHEMA_VERSION}"
+        )))
+        .execute(pool)
+        .await?;
     }
     Ok(())
 }

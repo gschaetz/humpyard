@@ -121,7 +121,7 @@ async fn harness(policy: Arc<dyn RoutingPolicy>) -> Harness {
     }
     toml += ROUTES;
     let config = Config::from_toml(&toml, |_| Some("key".into())).unwrap();
-    let gateway = serve(server::router_with_policy(config, policy).unwrap()).await;
+    let gateway = serve(server::router_with_policy(config, policy).await.unwrap()).await;
     Harness {
         url: format!("http://{gateway}"),
         mock,

@@ -81,7 +81,7 @@ endpoints = [{{ provider = "mock", model = "smart-m" }}]
 {keys}"#
     );
     let config = Config::from_toml(&toml, |_| Some("key".into())).unwrap();
-    let gateway = serve(server::router(config).unwrap()).await;
+    let gateway = serve(server::router(config).await.unwrap()).await;
     Harness {
         url: format!("http://{gateway}"),
         mock,

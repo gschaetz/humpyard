@@ -66,6 +66,16 @@ later without touching the ledger or budget logic.
   counts as expensive; "free" means every endpoint is priced zero.
 - **Key info** (`GET /v1/key/info`) reads the tracker; it never queries SQLite.
 
+## Findings during implementation
+
+- `Category::Any` holds every target of a route, and Switchyard falls back across all of them, so a
+  route's **judge target can end up serving the user's answer** as a last resort when every answer
+  candidate fails. Such a call is recorded (and charged) as an answer. Operators who do not want
+  this should give the judge a model that is also acceptable as a fallback, or avoid sharing it.
+- Switchyard's OpenAI Chat client requests `stream_options.include_usage`, so streamed usage
+  arrives as a final usage chunk after the terminal event; the tap therefore records at stream end
+  (or on drop) rather than at the terminal event.
+
 ## Risks / Trade-offs
 
 - **In-flight overshoot**: spend is known only at completion, so concurrent requests can pass a

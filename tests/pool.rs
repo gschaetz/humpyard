@@ -120,7 +120,10 @@ endpoints = [{{ provider = "p1", model = "alpha" }}, {{ provider = "p2", model =
 "#
     );
     let config = Config::from_toml(&toml, |name| Some(format!("key-{name}"))).unwrap();
-    format!("http://{}", serve(server::router(config).unwrap()).await)
+    format!(
+        "http://{}",
+        serve(server::router(config).await.unwrap()).await
+    )
 }
 
 async fn chat(gateway: &str, stream: bool) -> reqwest::Response {
