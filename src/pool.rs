@@ -79,7 +79,7 @@ fn endpoint_client(provider: &Provider, endpoint: &Endpoint) -> Result<TargetEnd
         base_url: provider.base_url.clone(),
         api_key: Some(provider.api_key.clone()),
         forward_auth: false,
-        extra_headers: Default::default(),
+        extra_headers: provider.headers.clone(),
         extra_body: Default::default(),
         reasoning_effort: None,
         max_retries: provider.max_retries,

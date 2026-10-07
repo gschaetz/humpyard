@@ -6,6 +6,7 @@ base_url = "https://api.groq.com/openai/v1"
 api_key_env = "GROQ_API_KEY"
 timeout_secs = 120
 max_retries = 1          # extra attempts on this provider before failing over
+# headers = { "x-app" = "conductor" }   # optional static headers on every call
 
 [providers.openrouter]
 base_url = "https://openrouter.ai/api/v1"
