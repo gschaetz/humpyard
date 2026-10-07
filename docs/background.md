@@ -82,7 +82,10 @@ Checked against the fork's `docs/configuration.md` and a live `~/.modelrelay.jso
   bundled data. Custom endpoints, bans, tags and pinning carry over.
 
 ## Open questions
-- Where `State` persists across requests, and whether a host can supply/own it.
+- Resolved: session `State` lives inside long-lived algorithm instances keyed by `Metadata.session_id`
+  (e.g. `FallThrough` session map); the host only needs to keep instances alive and pass the session id.
+- Resolved: embed libsy + llm-client (`run`, `ClientRouter`, `RoutedLlmClient`); our provider pool
+  implements `RoutedLlmClient`. `AlgorithmSpec` is public but its builder is crate-private.
 - Is the Switchyard server/runner better reused as-is (with our provider layer behind it) or do we
   embed only `libsy` + `translation` and own the driver? Leaning: embed libsy + translation + protocol.
 - Postgres support for team-gateway deployments (after SQLite).
