@@ -15,4 +15,3 @@ See [README.md](README.md) and [docs/background.md](docs/background.md) for desi
 - Pipeline order (budget -> Switchyard -> dispatch) is deliberate; don't reorder.
 - The code sketches in docs/background.md came from an LLM chat and are illustrative; verify
   `switchyard-libsy` APIs against the real crate before using.
-- Repo is private for now.
