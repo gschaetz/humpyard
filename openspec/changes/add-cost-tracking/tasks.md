@@ -2,8 +2,8 @@
 
 ## 1. Configuration and pricing
 
-- [ ] 1.1 Add `[keys.*]`, `[ledger]`, `[budget]` and endpoint `price` to the config with validation (hashes well formed, limits non-negative, `restricted_at` in 0 to 1, budget needs a ledger, USD budgets need every endpoint priced); unit tests cover each gateway-config scenario
-- [ ] 1.2 Implement the cost calculator in integer micro-USD from `Usage` and endpoint prices (input, cached input, output); unit tests include the $0.003 example and cached-token handling
+- [x] 1.1 Add `[keys.*]`, `[ledger]`, `[budget]` and endpoint `price` to the config with validation (hashes well formed, limits non-negative, `restricted_at` in 0 to 1, budget needs a ledger, USD budgets need every endpoint priced); unit tests cover each gateway-config scenario
+- [x] 1.2 Implement the cost calculator in integer micro-USD from `Usage` and endpoint prices (input, cached input, output); unit tests include the $0.003 example and cached-token handling
 
 ## 2. Client authentication
 
