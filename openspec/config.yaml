@@ -2,7 +2,8 @@ schema: spec-driven
 
 context: |
   Rust (tokio/axum/reqwest/serde) single-binary LLM gateway. Successor to the Node.js
-  modelrelay fork (gschaetz/modelrelay, stays as LTS); must read legacy ~/.modelrelay.json.
+  modelrelay fork (gschaetz/modelrelay, stays as LTS); provide a one-time `migrate-modelrelay` command
+  (never a runtime reader of ~/.modelrelay.json); migrated configs reference API keys by env var.
   Request pipeline order is fixed: budget/cost middleware -> NVIDIA NeMo Switchyard
   (switchyard-libsy, in-process) -> modelrelay-style provider dispatch.
   Cost tracking must stay off the streaming critical path (mpsc -> async writer -> SQLite).
