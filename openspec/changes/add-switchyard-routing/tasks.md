@@ -13,10 +13,10 @@
 
 ## 3. Provider pool
 
-- [ ] 3.0 Move dispatch onto `run` with one implicit passthrough route and `TranslatingLlmClient` backends, replacing the hand-written relay; verify all existing `tests/gateway.rs` tests still pass
-- [ ] 3.1 Implement the per-target wrapper `RoutedLlmClient` that walks endpoints with per-endpoint model name and key; integration tests with mock providers cover ordering and model-name mapping
-- [ ] 3.2 Implement failover rules (429/5xx/connect/timeout fail over; other 4xx do not; none after first streamed byte); tests cover every failover scenario in provider-pool
-- [ ] 3.3 Keep error mapping per spec when failover is exhausted; tests assert last-error semantics for 429, 502, 504
+- [x] 3.0 Move dispatch onto `run` with one implicit passthrough route and `TranslatingLlmClient` backends, replacing the hand-written relay; verify all existing `tests/gateway.rs` tests still pass
+- [x] 3.1 Implement the per-target wrapper `RoutedLlmClient` that walks endpoints with per-endpoint model name and key; integration tests with mock providers cover ordering and model-name mapping
+- [x] 3.2 Implement failover rules (429/5xx/connect/timeout fail over; other 4xx do not; none after first streamed byte); tests cover every failover scenario in provider-pool
+- [x] 3.3 Keep error mapping per spec when failover is exhausted; tests assert last-error semantics for 429, 502, 504
 
 ## 4. Routing
 

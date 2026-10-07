@@ -1,57 +1,62 @@
-//! HTTP surface: inference endpoints in three client protocols, all proxied to one upstream.
+//! HTTP surface: inference endpoints in three client protocols, served through Switchyard's
+//! `run` over the provider pool.
 
+use std::collections::HashMap;
 use std::convert::Infallible;
 use std::sync::Arc;
-use std::time::Duration;
 
 use axum::Router;
 use axum::body::Bytes;
 use axum::extract::State;
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, HeaderName, HeaderValue, StatusCode};
 use axum::response::sse::{Event, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
-use futures::StreamExt;
+use futures::{Stream, StreamExt};
 use serde_json::{Value, json};
-use switchyard_protocol::WireFormat;
-use switchyard_translation::StreamTranslationState;
+use switchyard_libsy::{Algorithm, Passthrough, RuntimeModels};
+use switchyard_llm_client::{ClientRouter, run};
+use switchyard_protocol::{Category, LlmResponse, Metadata, ModelId, Request, WireFormat};
+use switchyard_translation::{
+    LlmStreamError, RawEventStream, decode_request, encode_aggregated_response_with_extensions,
+    encode_stream_with_extensions, util::SWITCHYARD_METADATA_KEY,
+};
 
 use crate::config::Config;
 use crate::error::GatewayError;
-use crate::translate::Translator;
+use crate::pool::{self, PROVIDER_HEADER};
+
+const TARGET_HEADER: &str = "x-conductor-target";
 
 pub struct AppState {
     config: Config,
-    client: reqwest::Client,
-    translator: Translator,
+    clients: ClientRouter,
+    passthrough: Arc<dyn Algorithm>,
 }
 
-pub fn router(config: Config) -> Router {
-    let client = reqwest::Client::builder()
-        .connect_timeout(Duration::from_secs(10))
-        .build()
-        .expect("reqwest client builds with default TLS");
+pub fn router(config: Config) -> Result<Router, String> {
+    let clients = pool::build(&config)?;
     let state = Arc::new(AppState {
         config,
-        client,
-        translator: Translator::default(),
+        clients,
+        passthrough: Arc::new(Passthrough),
     });
-    Router::new()
+    Ok(Router::new()
         .route("/healthz", get(|| async { StatusCode::OK }))
         .route("/v1/models", get(list_models))
         .route(
             "/v1/chat/completions",
-            post(|s, b| infer(s, WireFormat::OpenAiChat, b)),
+            post(|s, h, b| infer(s, WireFormat::OpenAiChat, h, b)),
         )
         .route(
             "/v1/responses",
-            post(|s, b| infer(s, WireFormat::OpenAiResponses, b)),
+            post(|s, h, b| infer(s, WireFormat::OpenAiResponses, h, b)),
         )
         .route(
             "/v1/messages",
-            post(|s, b| infer(s, WireFormat::AnthropicMessages, b)),
+            post(|s, h, b| infer(s, WireFormat::AnthropicMessages, h, b)),
         )
-        .with_state(state)
+        .with_state(state))
 }
 
 async fn list_models(State(state): State<Arc<AppState>>) -> Response {
@@ -64,12 +69,27 @@ async fn list_models(State(state): State<Arc<AppState>>) -> Response {
     axum::Json(json!({"object": "list", "data": data})).into_response()
 }
 
-async fn infer(State(state): State<Arc<AppState>>, format: WireFormat, body: Bytes) -> Response {
+async fn infer(
+    State(state): State<Arc<AppState>>,
+    format: WireFormat,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
     let started = std::time::Instant::now();
-    let result = handle(&state, format, &body).await;
-    match result {
-        Ok((model, response)) => {
-            tracing::info!(%format, model, status = response.status().as_u16(), elapsed_ms = started.elapsed().as_millis() as u64, "request");
+    match handle(&state, format, &headers, &body).await {
+        Ok((target, response)) => {
+            tracing::info!(
+                %format,
+                target,
+                provider = response
+                    .headers()
+                    .get(PROVIDER_HEADER)
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or(""),
+                status = response.status().as_u16(),
+                elapsed_ms = started.elapsed().as_millis() as u64,
+                "request"
+            );
             response
         }
         Err(error) => {
@@ -82,27 +102,22 @@ async fn infer(State(state): State<Arc<AppState>>, format: WireFormat, body: Byt
 async fn handle(
     state: &AppState,
     format: WireFormat,
+    headers: &HeaderMap,
     raw: &[u8],
 ) -> Result<(String, Response), GatewayError> {
-    let body: Value = serde_json::from_slice(raw)
+    let mut body: Value = serde_json::from_slice(raw)
         .map_err(|e| GatewayError::BadRequest(format!("invalid JSON body: {e}")))?;
-    let model = body
-        .get("model")
-        .and_then(Value::as_str)
-        .ok_or_else(|| GatewayError::BadRequest("`model` is required".into()))?
-        .to_string();
-    // Routes are accepted in config but not served until the routing layer lands; only direct
-    // targets are requestable for now, via their first endpoint.
-    let endpoint = match state.config.targets.get(&model) {
-        Some(endpoints) => &endpoints[0],
-        None if state.config.routes.contains_key(&model) => {
-            return Err(GatewayError::BadRequest(format!(
-                "route `{model}` is configured but routing is not enabled yet; request a target directly"
-            )));
-        }
-        None => return Err(GatewayError::ModelNotFound(model)),
-    };
-    let provider = &state.config.providers[&endpoint.provider];
+    // Only trusted translation hops may supply preservation state; strip any from clients.
+    if let Some(metadata) = body.get_mut("metadata").and_then(Value::as_object_mut) {
+        metadata.remove(SWITCHYARD_METADATA_KEY);
+    }
+    let llm_request = decode_request(format, &body)
+        .map_err(|e| GatewayError::BadRequest(format!("cannot translate request: {e}")))?;
+    let model = llm_request
+        .model
+        .clone()
+        .filter(|m| !m.trim().is_empty())
+        .ok_or_else(|| GatewayError::BadRequest("`model` is required".into()))?;
     if format == WireFormat::OpenAiResponses
         && body
             .get("previous_response_id")
@@ -112,131 +127,128 @@ async fn handle(
             "`previous_response_id` is not supported: stateful responses are unavailable".into(),
         ));
     }
-    let stream = body.get("stream").and_then(Value::as_bool).unwrap_or(false);
-
-    let mut upstream_body = state.translator.request_to_upstream(format, &body)?;
-    upstream_body["model"] = Value::String(endpoint.model.clone());
-    upstream_body["stream"] = Value::Bool(stream);
-    if stream {
-        upstream_body["stream_options"] = json!({"include_usage": true});
+    // Routes are accepted in config but not served until the routing layer lands; only direct
+    // targets are requestable for now.
+    if !state.config.targets.contains_key(&model) {
+        if state.config.routes.contains_key(&model) {
+            return Err(GatewayError::BadRequest(format!(
+                "route `{model}` is configured but routing is not enabled yet; request a target directly"
+            )));
+        }
+        return Err(GatewayError::ModelNotFound(model));
     }
 
-    let response = state
-        .client
-        .post(format!("{}/chat/completions", provider.base_url))
-        .bearer_auth(&provider.api_key)
-        .timeout(Duration::from_secs(provider.timeout_secs))
-        .json(&upstream_body)
-        .send()
-        .await
-        .map_err(send_error)?;
+    let extensions = llm_request.extensions.clone();
+    // `wire_format` stays unset: setting it pins the backend to the client's protocol, but every
+    // endpoint speaks OpenAI Chat and the IR is translated for it.
+    let metadata = Metadata::from_headers(headers);
+    let request = Request {
+        llm_request,
+        raw_request: Some(body),
+        metadata: Some(metadata),
+    };
+    let models = Arc::new(RuntimeModels::new(HashMap::from([(
+        Category::Any,
+        vec![ModelId::from(model.as_str())],
+    )])));
 
-    let status = response.status();
-    if !status.is_success() {
-        let text = response.text().await.unwrap_or_default();
-        return Err(upstream_error(status, &text));
-    }
+    let (selected, mut response) = run(
+        state.passthrough.clone(),
+        state.clients.clone(),
+        request,
+        models,
+        None,
+    )
+    .await?;
 
-    if stream {
-        return Ok((model, stream_response(format, response)));
+    let served = response.served_model().unwrap_or(&selected).to_string();
+    let upstream_headers = std::mem::take(&mut response.upstream_headers);
+    let mut http_response = match response.llm_response {
+        LlmResponse::Agg(agg) => {
+            let body = encode_aggregated_response_with_extensions(
+                &agg,
+                format,
+                Some(&served),
+                &extensions,
+            )
+            .map_err(|e| GatewayError::Internal(format!("cannot encode response: {e}")))?;
+            axum::Json(body).into_response()
+        }
+        LlmResponse::Stream(stream) => {
+            let events =
+                encode_stream_with_extensions(stream, format, Some(served.clone()), &extensions)
+                    .map_err(|e| GatewayError::Internal(e.to_string()))?;
+            frame_stream(events, format).into_response()
+        }
+    };
+    set_header(&mut http_response, TARGET_HEADER, &served);
+    if let Some(provider) = upstream_headers
+        .get(PROVIDER_HEADER)
+        .and_then(|v| v.to_str().ok())
+    {
+        set_header(&mut http_response, PROVIDER_HEADER, provider);
     }
-    let upstream_json: Value = response.json().await.map_err(send_error)?;
-    let client_json = state
-        .translator
-        .response_to_client(format, &upstream_json)?;
-    Ok((model, axum::Json(client_json).into_response()))
+    Ok((served, http_response))
 }
 
-fn send_error(error: reqwest::Error) -> GatewayError {
-    if error.is_timeout() {
-        GatewayError::UpstreamTimeout
-    } else {
-        // Strip the URL so nothing configuration-specific leaks into client errors.
-        GatewayError::UpstreamUnreachable(error.without_url().to_string())
+fn set_header(response: &mut Response, name: &'static str, value: &str) {
+    if let Ok(value) = HeaderValue::from_str(value) {
+        response
+            .headers_mut()
+            .insert(HeaderName::from_static(name), value);
     }
 }
 
-fn upstream_error(status: StatusCode, text: &str) -> GatewayError {
-    let message = serde_json::from_str::<Value>(text)
-        .ok()
-        .and_then(|v| v["error"]["message"].as_str().map(str::to_string))
-        .unwrap_or_else(|| {
-            if text.is_empty() {
-                format!("upstream returned {status}")
-            } else {
-                text.chars().take(500).collect()
-            }
-        });
-    if status.is_client_error() {
-        GatewayError::Upstream { status, message }
-    } else {
-        GatewayError::UpstreamUnreachable(format!("upstream returned {status}: {message}"))
-    }
-}
+type SseStream = std::pin::Pin<Box<dyn Stream<Item = Result<Event, Infallible>> + Send>>;
 
-/// Relays the upstream SSE stream, translating each event. Dropping the returned body drops the
-/// upstream connection, which cancels the upstream request.
-fn stream_response(format: WireFormat, response: reqwest::Response) -> Response {
-    // The translator is stateless apart from `StreamTranslationState`, so a fresh one is cheap
-    // and keeps the stream `'static` without sharing `AppState`.
-    let translator = Translator::default();
-    let mut upstream = response.bytes_stream();
-    let events = async_stream::stream! {
-        let mut state = StreamTranslationState::default();
-        let mut buffer = String::new();
-        while let Some(chunk) = upstream.next().await {
-            let chunk = match chunk {
-                Ok(chunk) => chunk,
-                Err(error) => {
-                    yield Ok::<Event, Infallible>(error_event(format, &error.without_url().to_string()));
-                    return;
+/// Frames translated events as SSE for the client's protocol. Dropping the returned body drops
+/// the upstream stream, which cancels the upstream request.
+fn frame_stream(stream: RawEventStream, format: WireFormat) -> Sse<SseStream> {
+    let framed = async_stream::stream! {
+        let mut stream = stream;
+        let mut failed = false;
+        while let Some(item) = stream.next().await {
+            let event = match item {
+                Ok(value) => frame_event(format, &value),
+                Err(LlmStreamError::Upstream(value)) => {
+                    failed = true;
+                    frame_event(format, &value)
+                }
+                Err(LlmStreamError::Client(error)) => {
+                    tracing::warn!("stream iteration failed");
+                    failed = true;
+                    error_event(format, &error.to_string())
                 }
             };
-            buffer.push_str(&String::from_utf8_lossy(&chunk).replace("\r\n", "\n"));
-            while let Some(end) = buffer.find("\n\n") {
-                let block: String = buffer.drain(..end + 2).collect();
-                let Some(data) = sse_data(&block) else { continue };
-                if data == "[DONE]" {
-                    continue;
-                }
-                let Ok(value) = serde_json::from_str::<Value>(&data) else { continue };
-                match translator.event_to_client(&mut state, format, &value) {
-                    Ok(out) => for v in out { yield Ok(to_event(format, &v)); },
-                    Err(error) => { yield Ok(error_event(format, &error.to_string())); return; }
-                }
+            yield Ok(event);
+            if failed {
+                break;
             }
         }
-        match translator.finish_stream(&mut state, format) {
-            Ok(out) => for v in out { yield Ok(to_event(format, &v)); },
-            Err(error) => { yield Ok(error_event(format, &error.to_string())); return; }
-        }
-        if format == WireFormat::OpenAiChat {
+        // `[DONE]` marks a successful OpenAI Chat stream; it must not follow a failed turn.
+        if !failed && format == WireFormat::OpenAiChat {
             yield Ok(Event::default().data("[DONE]"));
         }
     };
-    Sse::new(events).into_response()
-}
-
-fn sse_data(block: &str) -> Option<String> {
-    let lines: Vec<&str> = block
-        .lines()
-        .filter_map(|l| l.strip_prefix("data:"))
-        .map(|l| l.strip_prefix(' ').unwrap_or(l))
-        .collect();
-    (!lines.is_empty()).then(|| lines.join("\n"))
+    Sse::new(Box::pin(framed) as SseStream)
 }
 
 /// Anthropic and Responses clients expect a named SSE event matching the payload's `type`.
-fn to_event(format: WireFormat, value: &Value) -> Event {
-    let event = Event::default();
-    let event = match (format, value["type"].as_str()) {
-        (WireFormat::OpenAiChat, _) | (_, None) => event,
-        (_, Some(name)) => event.event(name),
-    };
-    event.data(value.to_string())
+fn frame_event(format: WireFormat, value: &Value) -> Event {
+    let data = value.to_string();
+    match format {
+        WireFormat::OpenAiChat => Event::default().data(data),
+        WireFormat::AnthropicMessages | WireFormat::OpenAiResponses => {
+            let name = value["type"].as_str().unwrap_or("message");
+            Event::default().event(name).data(data)
+        }
+    }
 }
 
 fn error_event(format: WireFormat, message: &str) -> Event {
     let body = GatewayError::UpstreamUnreachable(message.to_string()).body(format);
-    to_event(format, &body).event("error")
+    match format {
+        WireFormat::OpenAiChat => Event::default().data(body.to_string()),
+        _ => Event::default().event("error").data(body.to_string()),
+    }
 }

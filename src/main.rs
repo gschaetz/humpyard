@@ -53,7 +53,7 @@ async fn run(command: Command) -> Result<(), String> {
                 .await
                 .map_err(|e| format!("cannot bind {}: {e}", config.listen))?;
             tracing::info!(listen = %config.listen, "serving");
-            axum::serve(listener, server::router(config))
+            axum::serve(listener, server::router(config).map_err(|e| e.to_string())?)
                 .await
                 .map_err(|e| e.to_string())
         }

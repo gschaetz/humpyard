@@ -117,7 +117,7 @@ timeout_secs = 5
 {targets}"#
     );
     let config = Config::from_toml(&toml, |_| Some(KEY.to_string())).unwrap();
-    let gateway = serve(server::router(config)).await;
+    let gateway = serve(server::router(config).unwrap()).await;
     Harness {
         gateway: format!("http://{gateway}"),
         mock,
@@ -211,7 +211,7 @@ async fn anthropic_client_gets_anthropic_shape() {
         .json()
         .await
         .unwrap();
-    assert_eq!(resp["type"], "message");
+    assert_eq!(resp["type"], "message", "{resp}");
     assert_eq!(resp["content"][0]["text"], "Hello");
 
     let mut streaming = body;
@@ -237,7 +237,7 @@ async fn responses_client_gets_responses_shape() {
         .json()
         .await
         .unwrap();
-    assert_eq!(resp["object"], "response");
+    assert_eq!(resp["object"], "response", "{resp}");
 
     let mut streaming = body;
     streaming["stream"] = json!(true);
