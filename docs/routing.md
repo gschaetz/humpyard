@@ -6,7 +6,9 @@ the selected target (failing over across its endpoints), then encode the answer 
 
 ## Providers, targets, routes
 
-- A **provider** is an OpenAI-compatible endpoint with an API key from an environment variable.
+- A **provider** is an OpenAI-compatible endpoint with an API key from an environment variable
+  and optional static `headers` sent on every call (some providers require identifying headers).
+  Per-conversation header values, such as a session id, are not supported yet.
 - A **target** is a named model served by an ordered list of `{ provider, model }` endpoints.
 - A **route** is what clients request as `model`. It wraps a built-in Switchyard algorithm over
   targets. A bare target name also works: it behaves as a passthrough route.

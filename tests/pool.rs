@@ -25,6 +25,8 @@ enum Mode {
 struct Upstream {
     mode: Mode,
     calls: Mutex<Vec<(String, String)>>,
+    /// Value of the `x-app` header on each call, if present.
+    app_headers: Mutex<Vec<Option<String>>>,
 }
 
 impl Upstream {
@@ -32,6 +34,7 @@ impl Upstream {
         Arc::new(Self {
             mode,
             calls: Mutex::new(vec![]),
+            app_headers: Mutex::new(vec![]),
         })
     }
     fn calls(&self) -> Vec<(String, String)> {
@@ -50,6 +53,11 @@ async fn completions(
     headers: HeaderMap,
     axum::Json(body): axum::Json<Value>,
 ) -> Response {
+    up.app_headers.lock().unwrap().push(
+        headers
+            .get("x-app")
+            .map(|v| v.to_str().unwrap().to_string()),
+    );
     up.calls.lock().unwrap().push((
         body["model"].as_str().unwrap().to_string(),
         headers["authorization"].to_str().unwrap().to_string(),
@@ -99,6 +107,7 @@ async fn gateway(p1_url: &str, p2_url: &str, timeout_secs: u64) -> String {
 [providers.p1]
 base_url = "{p1_url}"
 api_key_env = "K1"
+headers = {{ "x-app" = "conductor" }}
 max_retries = 0
 timeout_secs = {timeout_secs}
 [providers.p2]
@@ -234,4 +243,17 @@ async fn no_failover_after_the_stream_has_started() {
         "a failed turn must not look finished: {text}"
     );
     assert!(b.calls().is_empty());
+}
+
+#[tokio::test]
+async fn configured_headers_go_only_to_their_provider() {
+    // p1 (with the header) fails over to p2 (without it).
+    let (a, b) = (Upstream::new(Mode::Status(500)), Upstream::new(Mode::Ok));
+    let g = gateway(&upstream(&a).await, &upstream(&b).await, 5).await;
+    assert_eq!(chat(&g, false).await.status(), 200);
+    assert_eq!(
+        *a.app_headers.lock().unwrap(),
+        [Some("conductor".to_string())]
+    );
+    assert_eq!(*b.app_headers.lock().unwrap(), [None]);
 }

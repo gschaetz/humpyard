@@ -41,7 +41,8 @@ Also: `GET /v1/models`, `GET /healthz`. Set `"stream": true` for SSE.
 See [examples/config.toml](examples/config.toml). Three kinds of entries:
 
 - `[providers.<name>]`: an OpenAI-compatible endpoint. The API key is read from the environment
-  variable named by `api_key_env`; an inline key is rejected.
+  variable named by `api_key_env`; an inline key is rejected. Optional `headers = { ... }` adds
+  static HTTP headers to every call (authentication headers are rejected).
 - `[targets.<name>]`: a model served by an ordered list of `{ provider, model }` endpoints.
   Clients may request a target by name; endpoints are tried in order, failing over on
   connection errors, timeouts, HTTP 429 and 5xx (not on other 4xx, and not once a stream has begun).

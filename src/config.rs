@@ -27,6 +27,9 @@ struct RawProvider {
     /// Extra attempts on the same provider before failing over to the next endpoint.
     #[serde(default = "default_max_retries")]
     max_retries: u32,
+    /// Extra HTTP headers sent on every call to this provider.
+    #[serde(default)]
+    headers: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -178,6 +181,7 @@ pub struct Provider {
     pub api_key: String,
     pub timeout_secs: u64,
     pub max_retries: u32,
+    pub headers: BTreeMap<String, String>,
 }
 
 impl std::fmt::Debug for Provider {
@@ -187,6 +191,7 @@ impl std::fmt::Debug for Provider {
             .field("api_key", &"<redacted>")
             .field("timeout_secs", &self.timeout_secs)
             .field("max_retries", &self.max_retries)
+            .field("header_names", &self.headers.keys().collect::<Vec<_>>())
             .finish()
     }
 }
@@ -237,6 +242,7 @@ impl Config {
                     api_key,
                     timeout_secs: p.timeout_secs,
                     max_retries: p.max_retries,
+                    headers: p.headers,
                 },
             );
         }
@@ -258,6 +264,9 @@ impl Config {
         }
         if raw.targets.is_empty() {
             return Err(invalid("at least one target is required"));
+        }
+        for (name, provider) in &raw.providers {
+            Self::validate_headers(name, &provider.headers)?;
         }
         for (id, target) in &raw.targets {
             if target.endpoints.is_empty() {
@@ -286,6 +295,29 @@ impl Config {
                 }
             }
             Self::validate_route(id, route)?;
+        }
+        Ok(())
+    }
+
+    /// Headers must be valid HTTP and must not carry credentials: keys come from `api_key_env`.
+    fn validate_headers(
+        provider: &str,
+        headers: &BTreeMap<String, String>,
+    ) -> Result<(), ConfigError> {
+        const AUTH_HEADERS: [&str; 3] = ["authorization", "x-api-key", "proxy-authorization"];
+        for (name, value) in headers {
+            if http::HeaderName::from_bytes(name.as_bytes()).is_err()
+                || http::HeaderValue::from_str(value).is_err()
+            {
+                return Err(invalid(format!(
+                    "providers.{provider}.headers: `{name}` is not a valid HTTP header"
+                )));
+            }
+            if AUTH_HEADERS.contains(&name.to_ascii_lowercase().as_str()) {
+                return Err(invalid(format!(
+                    "providers.{provider}.headers: `{name}` would override authentication; use `api_key_env`"
+                )));
+            }
         }
         Ok(())
     }
@@ -521,6 +553,48 @@ judge = ["fast"]
         );
         let config = Config::from_toml(&text, env).unwrap();
         assert_eq!(config.routes.len(), 4);
+    }
+
+    #[test]
+    fn provider_headers_load() {
+        let text = VALID.replacen(
+            "api_key_env = \"GROQ_KEY\"",
+            "api_key_env = \"GROQ_KEY\"\nheaders = { \"x-app\" = \"conductor\" }",
+            1,
+        );
+        let config = Config::from_toml(&text, env).unwrap();
+        assert_eq!(config.providers["groq"].headers["x-app"], "conductor");
+        assert!(config.providers["local"].headers.is_empty());
+    }
+
+    #[test]
+    fn authentication_headers_are_rejected() {
+        for name in ["authorization", "X-Api-Key"] {
+            let text = VALID.replacen(
+                "api_key_env = \"GROQ_KEY\"",
+                &format!("api_key_env = \"GROQ_KEY\"\nheaders = {{ \"{name}\" = \"x\" }}"),
+                1,
+            );
+            let message = err(&text);
+            assert!(
+                message.contains("groq") && message.contains(name),
+                "{message}"
+            );
+        }
+    }
+
+    #[test]
+    fn invalid_header_names_are_rejected() {
+        let text = VALID.replacen(
+            "api_key_env = \"GROQ_KEY\"",
+            "api_key_env = \"GROQ_KEY\"\nheaders = { \"bad name\" = \"x\" }",
+            1,
+        );
+        let message = err(&text);
+        assert!(
+            message.contains("groq") && message.contains("bad name"),
+            "{message}"
+        );
     }
 
     #[test]
