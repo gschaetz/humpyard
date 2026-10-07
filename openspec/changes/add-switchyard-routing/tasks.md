@@ -8,8 +8,8 @@
 
 ## 2. Configuration
 
-- [ ] 2.1 Implement `[[providers]]`, `[[targets]]` (ordered endpoints) and `[[routes]]` config with `deny_unknown_fields`, dangling-reference and duplicate-name checks; unit tests cover each spec scenario
-- [ ] 2.2 Update `check-config`, `examples/config.toml` and README for the new shape and verify the example passes `check-config`
+- [x] 2.1 Implement `[[providers]]`, `[[targets]]` (ordered endpoints) and `[[routes]]` config with `deny_unknown_fields`, dangling-reference and duplicate-name checks; unit tests cover each spec scenario
+- [x] 2.2 Update `check-config`, `examples/config.toml` and README for the new shape and verify the example passes `check-config`
 
 ## 3. Provider pool
 
