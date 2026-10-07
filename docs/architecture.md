@@ -19,6 +19,7 @@ Last updated: 2026-10-07 (`add-cost-tracking` implemented: keys, ledger and budg
 | Virtual keys (hashed, `KeyStore` trait), usage ledger (SQLite, async), per-endpoint pricing | Implemented | `add-cost-tracking` |
 | Budgets: UTC daily/monthly USD+token limits, restricted/exhausted states, 402, free-only, `/v1/key/info` | Implemented | `add-cost-tracking` |
 | Provider health + telemetry feeding policy | Planned | not yet proposed |
+| Engineering hardening: invariants + architecture tests, lints, refactors, CI, property tests, ADRs | Proposed | `harden-engineering` |
 | Database-managed keys + admin API | Planned (designed for in `add-cost-tracking`) | not yet proposed |
 | `migrate-modelrelay` command + bundled catalog | Planned | not yet proposed |
 
