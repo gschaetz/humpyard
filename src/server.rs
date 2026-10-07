@@ -31,7 +31,9 @@ use crate::config::OverBudget;
 use crate::error::GatewayError;
 use crate::ledger::Ledger;
 use crate::metering::{Accounting, CALL_ID_HEADER, CallContext};
-use crate::policy::{All, AllowAll, BudgetState, KeyContext, PolicyContext, RoutingPolicy};
+use crate::policy::{
+    All, AllowAll, BudgetState, KeyContext, PolicyContext, RequestMeta, RoutingPolicy,
+};
 use crate::pool::{self, PROVIDER_HEADER, TargetClient};
 use crate::routing::Routes;
 
@@ -288,6 +290,12 @@ async fn handle(
     // endpoint speaks OpenAI Chat and the IR is translated for it.
     let metadata = Metadata::from_headers(headers);
     let session_id = metadata.session_id.clone().filter(|s| !s.is_empty());
+    let request_meta = RequestMeta {
+        agent_id: metadata.agent_id.clone(),
+        parent_agent_id: metadata.parent_agent_id.clone(),
+        is_subagent: metadata.is_subagent,
+        task_id: metadata.task_id.clone(),
+    };
     let budget = caller
         .zip(state.tracker.as_ref())
         .map(|(key, tracker)| (key, tracker.status(&key.id, &key.limits)));
@@ -305,7 +313,7 @@ async fn handle(
     let context = PolicyContext {
         route: &model,
         session_id: session_id.as_deref(),
-        metadata: &metadata,
+        metadata: &request_meta,
         key: caller.map(|key| KeyContext {
             id: &key.id,
             budget: budget_state.unwrap_or(BudgetState::Healthy),

@@ -2,13 +2,13 @@
 
 ## 1. Invariants and architecture tests
 
-- [ ] 1.1 Write `docs/invariants.md` (pipeline order, engine boundary, layering, secrets, money as integer micro-USD, ledger keyed by key id, no I/O on the response path) and verify each invariant names the test or CI check that enforces it
-- [ ] 1.2 Spike `mille`: express the boundary, layering, `sqlx` confinement and `println!`/`dbg!` rules in `mille.toml`, run it locally, and verify it flags today's `policy.rs` and an injected violation; if it is unusable or flaky, write the same rules as a plain Rust architecture test instead; record the outcome and reasoning in design.md
-- [ ] 1.3 Wire the chosen linter into CI (pinned and locked if `mille`) and verify a deliberate violation on a scratch branch fails the job; expected to fail on `policy.rs` until task 2.1 lands, so merge them together
+- [x] 1.1 Write `docs/invariants.md` (pipeline order, engine boundary, layering, secrets, money as integer micro-USD, ledger keyed by key id, no I/O on the response path) and verify each invariant names the test or CI check that enforces it
+- [x] 1.2 Spike `mille` against a plain-Rust scanner on the same injected-violation matrix and record the outcome in design.md; implement the chosen enforcement as `tests/architecture.rs`, verified to flag today's `policy.rs` before task 2.1 and every injected form of violation
+- [x] 1.3 Run the chosen enforcement in CI and verify a violation fails the job. Outcome: the plain-Rust test runs under `cargo test`, which CI already runs, so no new job is needed; it failed on `policy.rs` until task 2.1 landed in the same PR
 
 ## 2. Decoupling
 
-- [ ] 2.1 Replace `Metadata` in `PolicyContext` with gateway-owned fields and update `policy`, `server` and the policy tests; verify the import-boundary test passes and all tests are green
+- [x] 2.1 Replace `Metadata` in `PolicyContext` with gateway-owned fields and update `policy`, `server` and the policy tests; verify the import-boundary test passes and all tests are green
 
 ## 3. Lints
 

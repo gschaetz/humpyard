@@ -11,4 +11,4 @@ in force is found by following `Supersedes:` links. Files are named `NNNN-kebab-
 numbers are monotonic and never reused. Start from [template.md](template.md).
 
 How decisions relate to enforcement: invariants that must hold mechanically are listed in
-[../invariants.md](../invariants.md) (once written) and checked by tests and CI.
+[../invariants.md](../invariants.md) and checked by tests and CI.

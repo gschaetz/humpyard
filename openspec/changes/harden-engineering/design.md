@@ -28,7 +28,24 @@ to change next time.
   gateway-owned types. `PolicyContext` therefore drops `Metadata` for `route`, `session_id`, `key`
   and a small `agent` summary. Alternative considered: a full facade crate re-exporting Switchyard;
   rejected as more indirection than the current size warrants, revisit if the allowed set grows.
-- **Architecture linter: try `mille` first, keep a plain-Rust test as the fallback.** `mille`
+- **Architecture linter: a plain Rust test (`tests/architecture.rs`), decided by a spike.** The
+  spike result is recorded below; the original plan text follows it for context.
+
+  *Spike result (2026-10-07, `mille` 0.0.14 vs a ~250-line scanner test).* `mille` is fast
+  (0.02s), has clean output (terminal, JSON, GitHub annotations) and its external-crate rules
+  were reliable in every import form (plain, grouped, aliased, `pub use`). Its internal layering
+  rules were not: with our flat-file modules a layer needed both `src/x.rs` and `src/x/**` paths
+  to match at all, and even then it caught only `use crate::module::Item;` and `pub use`; it
+  **missed** `use crate::module::{A, B};`, `use crate::{a, b};`, `use crate::module;` and inline
+  paths such as `crate::pool::X` or `switchyard_protocol::Usage` used without a `use`. That is a
+  false sense of security for the rule we care most about. The scanner test caught every one of
+  those forms (and nested groups), flagged the single real violation (`policy.rs`), checks that
+  every module has a layer (a new file fails closed), and doubles as its own regression suite
+  because it scans source text passed in as strings. It adds no CI tooling or install time. We
+  revisit `mille` if it reaches 1.0 with grouped-import resolution, or if rules become
+  structural (crate-level) rather than name-based.
+
+  *Original plan:* try `mille` first, keep a plain-Rust test as the fallback. `mille`
   (github.com/makinzm/mille, `cargo install mille`, `mille.toml`) is a tree-sitter based linter
   with path-glob layers, per-layer allow/deny between layers, and per-layer `external_allow`/
   `external_deny` for crates, which matches our rules directly. It is 0.0.x, so we spike it before

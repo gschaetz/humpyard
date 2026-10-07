@@ -3,8 +3,6 @@
 
 use std::sync::Arc;
 
-use switchyard_protocol::Metadata;
-
 /// How close an authenticated key is to its budget.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BudgetState {
@@ -21,14 +19,24 @@ pub struct KeyContext<'a> {
     pub budget: BudgetState,
 }
 
+/// The request metadata a policy may use, as the gateway understands it (not Switchyard's type).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RequestMeta {
+    pub agent_id: Option<String>,
+    pub parent_agent_id: Option<String>,
+    /// The harness marked this request as coming from a child agent.
+    pub is_subagent: bool,
+    pub task_id: Option<String>,
+}
+
 /// What a policy may know about the request it is deciding for.
 pub struct PolicyContext<'a> {
     /// The route (or bare target) the client requested.
     pub route: &'a str,
     /// Session id from `x-switchyard-session-id`, when the client sent one.
     pub session_id: Option<&'a str>,
-    /// All request metadata (agent ids, task ids, headers Switchyard understands).
-    pub metadata: &'a Metadata,
+    /// Agent and task identifiers the client supplied.
+    pub metadata: &'a RequestMeta,
     /// The authenticated key and its budget state; `None` when the gateway is open.
     pub key: Option<KeyContext<'a>>,
 }
