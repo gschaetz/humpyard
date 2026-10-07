@@ -1,0 +1,7 @@
+listen = "127.0.0.1:8080"
+models = ["llama-3.3-70b-versatile"]
+
+[upstream]
+base_url = "https://api.groq.com/openai/v1"
+api_key_env = "GROQ_API_KEY"
+timeout_secs = 120
