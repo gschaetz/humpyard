@@ -1,0 +1,236 @@
+//! The TOML schema: the shapes serde reads, plus the public enums and value types that
+//! describe providers, targets, routes and prices.
+
+use std::collections::BTreeMap;
+use std::net::SocketAddr;
+use std::path::PathBuf;
+
+use serde::Deserialize;
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct RawConfig {
+    pub(super) listen: SocketAddr,
+    pub(super) providers: BTreeMap<String, RawProvider>,
+    pub(super) targets: BTreeMap<String, RawTarget>,
+    #[serde(default)]
+    pub(super) routes: BTreeMap<String, RouteSpec>,
+    #[serde(default)]
+    pub(super) keys: BTreeMap<String, RawKey>,
+    pub(super) ledger: Option<RawLedger>,
+    #[serde(default)]
+    pub(super) budget: RawBudget,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct RawKey {
+    /// `sha256:<64 hex>` of the key, from `keygen`. Plaintext keys are never accepted.
+    pub(super) sha256: String,
+    pub(super) allowed_routes: Option<Vec<String>>,
+    #[serde(default)]
+    pub(super) over_budget: OverBudget,
+    pub(super) daily_usd: Option<f64>,
+    pub(super) monthly_usd: Option<f64>,
+    pub(super) daily_tokens: Option<u64>,
+    pub(super) monthly_tokens: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct RawLedger {
+    pub(super) path: PathBuf,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct RawBudget {
+    #[serde(default = "default_restricted_at")]
+    pub(super) restricted_at: f64,
+    /// USD per million output tokens above which a target is ineligible while a key is restricted.
+    pub(super) restricted_max_output_price: Option<f64>,
+}
+
+impl Default for RawBudget {
+    fn default() -> Self {
+        Self {
+            restricted_at: default_restricted_at(),
+            restricted_max_output_price: None,
+        }
+    }
+}
+
+fn default_restricted_at() -> f64 {
+    0.8
+}
+
+/// What happens when a key reaches a limit.
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum OverBudget {
+    /// Refuse with HTTP 402.
+    #[default]
+    Block,
+    /// Keep serving, from zero-priced targets only.
+    FreeOnly,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct RawProvider {
+    pub(super) base_url: String,
+    pub(super) api_key_env: String,
+    #[serde(default = "default_timeout_secs")]
+    pub(super) timeout_secs: u64,
+    /// Extra attempts on the same provider before failing over to the next endpoint.
+    #[serde(default = "default_max_retries")]
+    pub(super) max_retries: u32,
+    /// Extra HTTP headers sent on every call to this provider.
+    #[serde(default)]
+    pub(super) headers: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct RawTarget {
+    pub(super) endpoints: Vec<Endpoint>,
+}
+
+fn default_timeout_secs() -> u64 {
+    120
+}
+
+fn default_max_retries() -> u32 {
+    1
+}
+
+fn default_confidence() -> f64 {
+    0.5
+}
+
+/// One provider serving a target, with the model name that provider knows it by.
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct Endpoint {
+    pub provider: String,
+    pub model: String,
+    /// USD per million tokens. Required on every endpoint when any key has a USD budget.
+    #[serde(default)]
+    pub price: Option<Price>,
+}
+
+/// Token prices in USD per million tokens (numerically equal to micro-USD per token).
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct Price {
+    pub input: f64,
+    pub output: f64,
+    /// Price of input tokens served from the provider's cache; defaults to `input`.
+    pub cached_input: Option<f64>,
+}
+
+impl Price {
+    pub const FREE: Price = Price {
+        input: 0.0,
+        output: 0.0,
+        cached_input: None,
+    };
+
+    pub fn is_free(&self) -> bool {
+        self.input == 0.0 && self.output == 0.0 && self.cached_input.unwrap_or(0.0) == 0.0
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum PickerMode {
+    EfficientFirst,
+    CapableFirst,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum ClassifyTrigger {
+    #[default]
+    EveryRequest,
+    UserTurn,
+    NewSession,
+}
+
+fn default_threshold_step() -> f64 {
+    0.1
+}
+
+fn default_confirmations() -> u32 {
+    2
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum ClassifierMode {
+    Capability,
+    Escalation,
+}
+
+/// A built-in Switchyard algorithm over named targets.
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum RouteSpec {
+    Passthrough {
+        targets: Vec<String>,
+    },
+    Random {
+        targets: Vec<String>,
+        weights: Option<Vec<f64>>,
+        seed: Option<u64>,
+    },
+    StageRouter {
+        efficient: Vec<String>,
+        capable: Vec<String>,
+        #[serde(default = "default_picker_mode")]
+        mode: PickerMode,
+        #[serde(default = "default_confidence")]
+        confidence_threshold: f64,
+    },
+    LlmClassifier {
+        mode: ClassifierMode,
+        efficient: Vec<String>,
+        capable: Vec<String>,
+        judge: Vec<String>,
+        /// Capability mode: lowest solve probability that routes a supported task to `efficient`.
+        #[serde(default = "default_confidence")]
+        base_threshold: f64,
+        /// Capability mode: threshold added per capability-boundary step.
+        #[serde(default = "default_threshold_step")]
+        threshold_step: f64,
+        /// Capability mode: how often the judge re-decides a session's target.
+        #[serde(default)]
+        classify_trigger: ClassifyTrigger,
+        /// Escalation mode: consecutive escalate verdicts before the session latches to `capable`.
+        #[serde(default = "default_confirmations")]
+        confirmations: u32,
+    },
+}
+
+fn default_picker_mode() -> PickerMode {
+    PickerMode::EfficientFirst
+}
+
+impl RouteSpec {
+    /// Every target name the route mentions.
+    pub(super) fn target_refs(&self) -> Vec<&str> {
+        let lists: Vec<&Vec<String>> = match self {
+            Self::Passthrough { targets } | Self::Random { targets, .. } => vec![targets],
+            Self::StageRouter {
+                efficient, capable, ..
+            } => vec![efficient, capable],
+            Self::LlmClassifier {
+                efficient,
+                capable,
+                judge,
+                ..
+            } => vec![efficient, capable, judge],
+        };
+        lists.into_iter().flatten().map(String::as_str).collect()
+    }
+}

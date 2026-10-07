@@ -224,14 +224,48 @@ fn violations(name: &str, source: &str) -> Vec<String> {
     found
 }
 
+/// The module a source file belongs to: `src/config/schema.rs` and `src/config.rs` are both
+/// `config`. Nested files are scanned with their top-level module's rules.
+fn module_of(relative: &Path) -> String {
+    let first = relative
+        .components()
+        .next()
+        .unwrap()
+        .as_os_str()
+        .to_string_lossy()
+        .to_string();
+    first.strip_suffix(".rs").unwrap_or(&first).to_string()
+}
+
+/// Every `.rs` file under `dir`, recursively.
+fn rust_files(dir: &Path) -> Vec<std::path::PathBuf> {
+    let mut files = Vec::new();
+    for entry in fs::read_dir(dir).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_dir() {
+            files.extend(rust_files(&path));
+        } else if path.extension().is_some_and(|e| e == "rs") {
+            files.push(path);
+        }
+    }
+    files
+}
+
 #[test]
 fn the_source_tree_obeys_the_architecture_rules() {
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut all = Vec::new();
-    for entry in fs::read_dir(Path::new(env!("CARGO_MANIFEST_DIR")).join("src")).unwrap() {
-        let path = entry.unwrap().path();
-        if path.extension().is_some_and(|e| e == "rs") {
-            let name = path.file_stem().unwrap().to_string_lossy().to_string();
-            all.extend(violations(&name, &fs::read_to_string(&path).unwrap()));
+    let mut seen = std::collections::BTreeSet::new();
+    for path in rust_files(&src) {
+        let module = module_of(path.strip_prefix(&src).unwrap());
+        all.extend(violations(&module, &fs::read_to_string(&path).unwrap()));
+        seen.insert(module);
+    }
+    for declared in rules().keys() {
+        if !seen.contains(*declared) {
+            all.push(format!(
+                "rules() lists `{declared}` but there is no such module in src/ (renamed or removed? update rules())"
+            ));
         }
     }
     assert!(
@@ -239,6 +273,14 @@ fn the_source_tree_obeys_the_architecture_rules() {
         "architecture violations (see docs/invariants.md):\n  - {}",
         all.join("\n  - ")
     );
+}
+
+#[test]
+fn files_map_to_their_top_level_module() {
+    assert_eq!(module_of(Path::new("config.rs")), "config");
+    assert_eq!(module_of(Path::new("config/mod.rs")), "config");
+    assert_eq!(module_of(Path::new("config/schema.rs")), "config");
+    assert_eq!(module_of(Path::new("deep/er/file.rs")), "deep");
 }
 
 // ---- the scanner itself: each form of violation we care about must be caught ----
