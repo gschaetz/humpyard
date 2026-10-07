@@ -7,8 +7,10 @@
     clippy::needless_pass_by_value
 )] // test scaffolding: fail loudly, favor readability
 
+mod common;
+
+use common::{chat_request as chat, serve, usage};
 use std::convert::Infallible;
-use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -25,14 +27,9 @@ use humpyard::ledger::{Entry, Kind, Ledger};
 use humpyard::server;
 use serde_json::{Value, json};
 
-fn usage(prompt: u64, completion: u64) -> Value {
-    json!({"prompt_tokens": prompt, "completion_tokens": completion, "total_tokens": prompt + completion})
-}
-
+/// A streamed chunk as an SSE data payload.
 fn chunk(delta: Value, finish: Option<&str>) -> String {
-    json!({"id": "c", "object": "chat.completion.chunk", "created": 1, "model": "m",
-           "choices": [{"index": 0, "delta": delta, "finish_reason": finish}]})
-    .to_string()
+    common::chunk(delta, finish).to_string()
 }
 
 /// Counts calls to the judge model: it answers once, then fails. Switchyard falls back to every
@@ -78,13 +75,6 @@ async fn completions(
         "choices": [{"index": 0, "message": {"role": "assistant", "content": content}, "finish_reason": "stop"}],
         "usage": tokens}))
     .into_response()
-}
-
-async fn serve(app: Router) -> SocketAddr {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-    addr
 }
 
 struct Harness {
@@ -208,10 +198,6 @@ impl Harness {
         }
         reader.entries_since(0).await.unwrap()
     }
-}
-
-fn chat(model: &str, stream: bool) -> Value {
-    json!({"model": model, "stream": stream, "messages": [{"role": "user", "content": "hi"}]})
 }
 
 #[tokio::test]

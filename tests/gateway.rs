@@ -7,10 +7,12 @@
     clippy::needless_pass_by_value
 )] // test scaffolding: fail loudly, favor readability
 
+mod common;
+
+use common::{chat_request as chat_body, chunk, logs, serve};
 use std::convert::Infallible;
-use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use axum::Router;
@@ -36,11 +38,6 @@ impl Drop for DropFlag {
     fn drop(&mut self) {
         self.0.stream_dropped.store(true, Ordering::SeqCst);
     }
-}
-
-fn chunk(delta: Value, finish: Option<&str>) -> Value {
-    json!({"id": "chatcmpl-1", "object": "chat.completion.chunk", "created": 1, "model": "m",
-           "choices": [{"index": 0, "delta": delta, "finish_reason": finish}]})
 }
 
 async fn completions(
@@ -94,13 +91,6 @@ async fn completions(
     .into_response()
 }
 
-async fn serve(app: Router) -> SocketAddr {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-    addr
-}
-
 struct Harness {
     gateway: String,
     mock: Arc<Mock>,
@@ -150,10 +140,6 @@ impl Harness {
             .await
             .unwrap()
     }
-}
-
-fn chat_body(model: &str, stream: bool) -> Value {
-    json!({"model": model, "stream": stream, "messages": [{"role": "user", "content": "hi"}]})
 }
 
 #[tokio::test]
@@ -369,38 +355,6 @@ async fn client_disconnect_cancels_upstream() {
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
     panic!("upstream stream was not dropped after the client disconnected");
-}
-
-#[derive(Clone, Default)]
-struct LogBuf(Arc<Mutex<Vec<u8>>>);
-impl std::io::Write for LogBuf {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        self.0.lock().unwrap().extend_from_slice(buf);
-        Ok(buf.len())
-    }
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
-}
-impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for LogBuf {
-    type Writer = LogBuf;
-    fn make_writer(&'a self) -> LogBuf {
-        self.clone()
-    }
-}
-
-/// One process-wide subscriber: per-test subscribers race on tracing's global callsite cache.
-fn logs() -> &'static LogBuf {
-    static LOGS: OnceLock<LogBuf> = OnceLock::new();
-    LOGS.get_or_init(|| {
-        let buf = LogBuf::default();
-        tracing_subscriber::fmt()
-            .with_max_level(tracing::Level::TRACE)
-            .with_ansi(false)
-            .with_writer(buf.clone())
-            .init();
-        buf
-    })
 }
 
 #[tokio::test]
