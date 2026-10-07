@@ -41,11 +41,11 @@ the same format, regardless of the upstream's protocol.
 - **THEN** the gateway returns an Anthropic Messages response (or Anthropic SSE events when streaming)
 
 ### Requirement: Model listing
-The gateway SHALL answer `GET /v1/models` with an OpenAI-format list containing the configured model names.
+The gateway SHALL answer `GET /v1/models` with an OpenAI-format list containing every configured route and target name.
 
 #### Scenario: List models
 - **WHEN** a client requests `/v1/models`
-- **THEN** the response lists each model name from the configuration
+- **THEN** the response lists each route and target name from the configuration
 
 ### Requirement: Health endpoint
 The gateway SHALL answer `GET /healthz` with HTTP 200 while the process is serving.
