@@ -1,4 +1,11 @@
 //! Routing-policy seam: eligibility narrows targets, tiers degrade, nothing eligible is a 503.
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::format_push_string,
+    clippy::assert_is_empty
+)] // test scaffolding: fail loudly, favor readability
 
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};

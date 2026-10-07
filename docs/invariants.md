@@ -34,9 +34,12 @@ in an ADR (`docs/adr/`) in the same change.
 8. **No plaintext secrets.** Provider keys come from environment variables; client keys exist only
    as SHA-256 hashes in config; neither keys nor hashes appear in logs. *Enforced by* the config
    tests, `tests/auth.rs` (log checks) and `Debug` redaction tests.
-9. **Money is integer micro-USD.** Cost is computed and stored as whole micro-USD; floating point
-   appears only at the config and display edges. *Enforced by* `pricing` tests today; numeric-cast
-   lints and property tests are planned (`harden-engineering` groups 3 and 6).
+9. **Money is integer micro-USD, and numeric conversions are checked.** Cost is computed and
+   stored as whole micro-USD; floating point appears only at the config and display edges, and
+   every integer/float conversion on money and token paths goes through `src/num.rs`. *Enforced
+   by* the denied `clippy::cast_*` lints in `Cargo.toml` (run by CI), the `num` and `pricing`
+   tests, and, for production code, denied `unwrap_used`, `expect_used` and `panic`. Property
+   tests are planned (`harden-engineering` group 6).
 10. **The ledger refers to key ids, never hashes.** Identity changes (for example database-managed
     keys) must not require a ledger migration. *Enforced by* review and the ledger schema; see
     [ADR-0003](adr/0003-config-first-virtual-keys-behind-keystore.md).

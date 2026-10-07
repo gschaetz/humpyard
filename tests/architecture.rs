@@ -2,6 +2,7 @@
 //!
 //! Core modules know nothing of the Switchyard engine or the HTTP edge; only the engine and edge
 //! modules may use Switchyard crates; only the ledger may use sqlx; only `main` prints.
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // integration tests fail loudly on purpose
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -46,7 +47,8 @@ const fn module(layer: Layer, deps: &'static [&'static str]) -> Module {
 fn rules() -> BTreeMap<&'static str, Module> {
     use Layer::{Core, Edge, Engine};
     BTreeMap::from([
-        ("clock", module(Core, &[])),
+        ("clock", module(Core, &["num"])),
+        ("num", module(Core, &[])),
         ("config", module(Core, &[])),
         ("policy", module(Core, &[])),
         ("auth", module(Core, &["config"])),
@@ -54,15 +56,15 @@ fn rules() -> BTreeMap<&'static str, Module> {
             "ledger",
             Module {
                 sqlx: true,
-                ..module(Core, &[])
+                ..module(Core, &["num"])
             },
         ),
         (
             "budget",
-            module(Core, &["clock", "config", "ledger", "policy"]),
+            module(Core, &["clock", "config", "ledger", "num", "policy"]),
         ),
         ("error", module(Engine, &[])),
-        ("pricing", module(Engine, &["config"])),
+        ("pricing", module(Engine, &["config", "num"])),
         ("pool", module(Engine, &["config"])),
         ("routing", module(Engine, &["config"])),
         (

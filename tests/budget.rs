@@ -1,4 +1,10 @@
 //! Budget enforcement end to end: limits, restricted tiers, 402s, key info, restart recovery.
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::format_push_string
+)] // test scaffolding: fail loudly, favor readability
 
 use std::net::SocketAddr;
 use std::path::PathBuf;

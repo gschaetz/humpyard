@@ -1,4 +1,10 @@
 //! Provider pool behavior: endpoint order, per-endpoint model and key, failover rules.
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::assert_is_empty
+)] // test scaffolding: fail loudly, favor readability
 
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};

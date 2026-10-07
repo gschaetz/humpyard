@@ -1,4 +1,5 @@
 //! Route behavior end to end: built-in Switchyard algorithms over a mock provider.
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // integration tests fail loudly on purpose
 
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex, OnceLock};

@@ -84,6 +84,19 @@ to change next time.
   migration; and the routing-policy seam. Process decisions (OpenSpec workflow, the architecture
   test over `mille`) are recorded in design docs and `docs/invariants.md`, not as ADRs.
 
+## Findings during implementation (lints)
+
+- Numeric conversions now live in `src/num.rs` (checked or saturating, one tested place); the
+  `cast_*` lints are denied everywhere else. The helper module needed its own three narrowly scoped
+  `allow`s with reasons, the only lossy casts left in the crate.
+- Crate-level allows are two: `must_use_candidate` and `missing_errors_doc`, each with a reason in
+  `Cargo.toml`. One local `allow(clippy::too_many_lines)` on `server::handle` is temporary and is
+  removed by task 4.3.
+- Test crates carry a file-level allow for `unwrap`/`expect`/`panic` plus a few readability lints
+  (`format_push_string`, `assert_is_empty`, ...), because `allow-*-in-tests` in `clippy.toml` does not
+  cover helper functions in integration-test files.
+- Existing behavior is unchanged: all 139 tests pass, with `clippy -D warnings` clean.
+
 ## Risks / Trade-offs
 
 - Pedantic lints produce churn → allow list kept short and each entry justified; fixes land with

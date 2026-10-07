@@ -179,6 +179,6 @@ mod tests {
         assert!(store.enforces_auth());
         assert_eq!(store.lookup(&hash_key(&key)).await.unwrap().id, "alice");
         assert!(store.lookup(&hash_key("sk-humpyard-wrong")).await.is_none());
-        assert!(!ConfigKeyStore::new(&Default::default()).enforces_auth());
+        assert!(!ConfigKeyStore::new(&std::collections::BTreeMap::default()).enforces_auth());
     }
 }

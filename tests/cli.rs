@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // integration tests fail loudly on purpose
 use std::process::Command;
 
 fn run(args: &[&str], key: Option<&str>) -> std::process::Output {

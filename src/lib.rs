@@ -7,6 +7,7 @@ pub mod config;
 pub mod error;
 pub mod ledger;
 pub mod metering;
+pub mod num;
 pub mod policy;
 pub mod pool;
 pub mod pricing;

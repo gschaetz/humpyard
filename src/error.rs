@@ -106,8 +106,8 @@ impl From<LlmClientError> for GatewayError {
                 Self::UpstreamUnreachable("upstream connection failed".into())
             }
             LlmClientError::InvalidRequest { message }
-            | LlmClientError::RequestTranslation(message) => Self::BadRequest(message),
-            LlmClientError::ContextWindowExceeded { message, .. } => Self::BadRequest(message),
+            | LlmClientError::RequestTranslation(message)
+            | LlmClientError::ContextWindowExceeded { message, .. } => Self::BadRequest(message),
             other => Self::UpstreamUnreachable(other.to_string()),
         }
     }

@@ -1,6 +1,7 @@
 //! Pins the Switchyard 0.3 behaviors our routing design relies on (see
 //! openspec/changes/add-switchyard-routing/design.md, "Spike findings"). A failure after a
 //! Switchyard upgrade means the design assumption changed, not necessarily that we have a bug.
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // integration tests fail loudly on purpose
 
 use std::collections::HashMap;
 use std::sync::Arc;

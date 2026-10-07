@@ -31,6 +31,7 @@ use crate::config::OverBudget;
 use crate::error::GatewayError;
 use crate::ledger::Ledger;
 use crate::metering::{Accounting, CALL_ID_HEADER, CallContext};
+use crate::num::f64_from_u64;
 use crate::policy::{
     All, AllowAll, BudgetState, KeyContext, PolicyContext, RequestMeta, RoutingPolicy,
 };
@@ -154,7 +155,7 @@ async fn key_info(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Res
             .into_response_for(format);
     };
     let status = tracker.status(&caller.id, &caller.limits);
-    let usd = |micro: u64| micro as f64 / 1_000_000.0;
+    let usd = |micro: u64| f64_from_u64(micro) / 1_000_000.0;
     let remaining = |limit: Option<f64>, spent: f64| limit.map(|l| (l - spent).max(0.0));
     axum::Json(json!({
         "id": caller.id,
@@ -179,8 +180,8 @@ async fn key_info(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Res
         "remaining": {
             "daily_usd": remaining(status.limits.daily_usd, usd(status.day.micro_usd)),
             "monthly_usd": remaining(status.limits.monthly_usd, usd(status.month.micro_usd)),
-            "daily_tokens": remaining(status.limits.daily_tokens.map(|t| t as f64), status.day.tokens as f64),
-            "monthly_tokens": remaining(status.limits.monthly_tokens.map(|t| t as f64), status.month.tokens as f64),
+            "daily_tokens": remaining(status.limits.daily_tokens.map(f64_from_u64), f64_from_u64(status.day.tokens)),
+            "monthly_tokens": remaining(status.limits.monthly_tokens.map(f64_from_u64), f64_from_u64(status.month.tokens)),
         },
     }))
     .into_response()
@@ -232,7 +233,7 @@ async fn infer(
                     .and_then(|v| v.to_str().ok())
                     .unwrap_or(""),
                 status = response.status().as_u16(),
-                elapsed_ms = started.elapsed().as_millis() as u64,
+                elapsed_ms = started.elapsed().as_millis(),
                 "request"
             );
             response
@@ -244,6 +245,8 @@ async fn infer(
     }
 }
 
+// Split into named stages in `harden-engineering` task 4.3, which removes this allowance.
+#[allow(clippy::too_many_lines)]
 async fn handle(
     state: &AppState,
     format: WireFormat,

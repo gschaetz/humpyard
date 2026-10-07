@@ -1,4 +1,11 @@
 //! End-to-end tests: the real gateway router in front of a mock OpenAI-compatible upstream.
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::format_collect,
+    clippy::needless_pass_by_value
+)] // test scaffolding: fail loudly, favor readability
 
 use std::convert::Infallible;
 use std::net::SocketAddr;
