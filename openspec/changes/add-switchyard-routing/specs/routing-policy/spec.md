@@ -31,3 +31,10 @@ The policy SHALL receive the requested route, session id and request metadata so
 #### Scenario: Session-aware policy
 - **WHEN** a policy decides by session
 - **THEN** it can read the session id of the current request
+
+### Requirement: Degrade instead of fail
+When a policy removes every target of a routing tier but other targets remain eligible, the gateway SHALL serve the request from the remaining eligible targets rather than failing.
+
+#### Scenario: Capable tier excluded
+- **WHEN** a `stage_router` route would select its capable tier and the policy has excluded every capable target
+- **THEN** the request is served by an eligible efficient target and the response headers name the serving target
