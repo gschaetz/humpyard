@@ -20,11 +20,27 @@ keep the old `x-conductor-*` header names as history; living specs and code use 
 - Keep [docs/architecture.md](docs/architecture.md) current: any PR that changes structure, request
   flow or component status updates its diagrams and status table, and its "Last updated" line.
 
+## Guardrails (read before changing structure)
+- [docs/invariants.md](docs/invariants.md) lists the rules that must stay true and what enforces
+  each. `tests/architecture.rs` fails the build on layering/import violations (Switchyard types
+  only in engine and edge modules, `sqlx` only in the ledger, no prints outside `main`, every new
+  module needs a layer); add new modules to `rules()` there.
+- Durable decisions are in [docs/adr/](docs/adr/) (immutable; supersede, never edit).
+- Lints (see `Cargo.toml`): no `unwrap`/`expect`/`panic` in production code, and no numeric `as`
+  casts on money or token paths: use `src/num.rs`. Tests live in `tests/`; shared helpers are in
+  `tests/common/`.
+- CI gates (all required on `main`): `check` (fmt, clippy `-D warnings`, tests), `deny` (licences,
+  advisories), `docs` (warning-free), `msrv` (Rust 1.96.1), `coverage` (floor 92% lines, only ever
+  raised). `main` is PR-only.
+- Commits need a DCO `Signed-off-by` line (`git commit -s`, see CONTRIBUTING.md).
+
 ## Gotchas
 - Sibling repo `../modelrelay` is a separate Node.js project (a fork, not a code source for this
   repo; keep it that way for licensing). Migration is a one-shot `migrate-modelrelay` command, not a runtime reader of
   `~/.modelrelay.json` (see docs/background.md, "modelrelay migration").
-- Pipeline order (budget -> Switchyard -> dispatch) is deliberate; don't reorder.
+- The request path order is fixed (decode → authorize → budget check → policy → Switchyard run →
+  encode; [docs/invariants.md](docs/invariants.md) item 5). Nothing reaches an upstream before the
+  first four succeed; don't reorder the stages in `server::handle`.
 - Switchyard crates (`switchyard-libsy`, `-protocol`, `-translation`, ...) are on crates.io, Apache-2.0.
   Findings on their real API are in docs/background.md; the original chat's code sketches were
   illustrative and wrong in places (e.g. no budget/telemetry input, targets are model ids not tags).

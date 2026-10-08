@@ -86,3 +86,36 @@ mod tests {
         assert_eq!(millis_from_nanos(i128::MIN), i64::MIN);
     }
 }
+
+#[cfg(test)]
+mod properties {
+    use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        #[test]
+        fn i64_round_trip_only_loses_what_does_not_fit(n in any::<u64>()) {
+            prop_assert_eq!(from_i64(to_i64(n)), n.min(i64::MAX.unsigned_abs()));
+        }
+
+        #[test]
+        fn rounding_floats_is_monotone_and_never_panics(a in any::<f64>(), b in any::<f64>()) {
+            let (lo, hi) = if a <= b { (a, b) } else { (b, a) };
+            if !lo.is_nan() && !hi.is_nan() {
+                prop_assert!(u64_from_f64_rounded(lo) <= u64_from_f64_rounded(hi));
+            }
+        }
+
+        #[test]
+        fn rounding_matches_f64_round_for_ordinary_amounts(v in 0.0..1.0e15f64) {
+            let rounded = f64_from_u64(u64_from_f64_rounded(v));
+            prop_assert!((rounded - v.round()).abs() < 1e-9, "{rounded} vs {}", v.round());
+        }
+
+        #[test]
+        fn millis_conversion_is_monotone(a in any::<i128>(), b in any::<i128>()) {
+            let (lo, hi) = if a <= b { (a, b) } else { (b, a) };
+            prop_assert!(millis_from_nanos(lo) <= millis_from_nanos(hi));
+        }
+    }
+}
