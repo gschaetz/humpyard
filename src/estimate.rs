@@ -30,7 +30,9 @@ pub fn estimate_tokens(body: &Value) -> u64 {
     total
 }
 
-fn tokens_for_bytes(bytes: usize) -> u64 {
+/// Estimated tokens for `bytes` of generated text, with the same conservative ratio.
+#[must_use]
+pub fn tokens_for_bytes(bytes: usize) -> u64 {
     u64::try_from(bytes)
         .unwrap_or(u64::MAX)
         .div_ceil(BYTES_PER_TOKEN)

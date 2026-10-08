@@ -317,11 +317,9 @@ async fn a_stream_without_usage_is_recorded_with_the_missing_marker() {
     let entries = h.entries(1).await;
     assert_eq!(entries.len(), 1, "{entries:?}");
     let e = &entries[0];
-    assert!(e.usage_missing);
-    assert_eq!(
-        (e.input_tokens, e.output_tokens, e.cost_micro_usd),
-        (0, 0, 0)
-    );
+    assert!(e.usage_missing, "marked as an estimate");
+    assert_eq!(e.input_tokens, 0, "input is unknown, never guessed");
+    assert!(e.output_tokens > 0, "streamed text is estimated: {e:?}");
 }
 
 #[tokio::test]
@@ -334,6 +332,10 @@ async fn a_client_disconnect_records_what_was_seen_as_cancelled() {
     assert_eq!(entries.len(), 1, "{entries:?}");
     assert_eq!(entries[0].outcome, "cancelled");
     assert!(entries[0].usage_missing);
+    assert!(
+        entries[0].output_tokens > 0,
+        "the delivered chunk is counted as an estimate: {entries:?}"
+    );
 }
 
 #[tokio::test]
