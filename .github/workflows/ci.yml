@@ -63,5 +63,7 @@ jobs:
           components: llvm-tools-preview
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@cargo-llvm-cov
-      - name: Line coverage
-        run: cargo llvm-cov --summary-only | tee coverage.txt
+      # Floor set a few points under the first measured baseline (96.15% lines on 2026-10-07).
+      # It only ratchets up: raise it when coverage rises, never lower it to make a change pass.
+      - name: Line coverage (floor 92%)
+        run: cargo llvm-cov --summary-only --fail-under-lines 92
