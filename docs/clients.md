@@ -43,7 +43,32 @@ Notes from the verified run (a read-only agent in a scratch directory, `claude -
   against two real providers it ran 1.07x to 2.14x the true prompt size (median 1.23x), never below
   it: clients compact slightly early rather than overflow. Don't use it for billing.
 
-## Codex and other Responses-API clients
+## Codex CLI (verified 2026-10-08, codex-cli 0.161.0, `brew install --cask codex`)
 
-`/v1/responses` is implemented and tested against mock providers and with curl against a real one,
-but a real Codex CLI session has not been run yet.
+Codex speaks the OpenAI Responses protocol, which humpyard serves at `/v1/responses`. Point it at
+the gateway with a custom provider; the flags below keep the run isolated from any real Codex setup:
+
+```sh
+export HUMPYARD_KEY=sk-humpyard-...          # a key from `humpyard keygen`
+codex exec --ignore-user-config --ephemeral --skip-git-repo-check -s read-only \
+  -c 'model_provider="humpyard"' \
+  -c 'model_providers.humpyard={name="humpyard", base_url="http://127.0.0.1:8080/v1", env_key="HUMPYARD_KEY", wire_api="responses"}' \
+  -m agent "your task"
+```
+
+(For regular use put the same provider in `~/.codex/config.toml` under `[model_providers.humpyard]`
+and set `model_provider = "humpyard"`.) `agent` is a route name from the gateway config.
+
+What was verified, with a real model behind the route:
+
+- **Shell tool calls round trip.** Codex ran `cat src/lib.rs` and used the output.
+- **File edits work.** Codex's freeform `apply_patch` tool, which the Responses translation maps to
+  and from an ordinary function call, produced a correct patch: `mul` was added to `src/lib.rs`.
+- **Streaming, reasoning items and prompt caching** pass through. Cached prompt tokens are
+  reported and priced.
+- **Accounting matches Codex exactly.** Over a three-request edit task Codex reported 27,241 input
+  tokens (14,592 cached) and 314 output tokens; the ledger rows sum to the same figures. All
+  upstream requests were HTTP 200.
+- **Cosmetic:** Codex prints "Model metadata for `agent` not found" for non-OpenAI model names.
+- **Not called in these runs:** `/v1/responses/input_tokens` and `/v1/responses/compact`. They are
+  not implemented (404); a long Codex session may use them.

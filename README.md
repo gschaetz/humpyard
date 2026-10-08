@@ -44,7 +44,8 @@ curl localhost:8080/v1/responses -H 'content-type: application/json' \
 ```
 
 Also: `GET /v1/models`, `GET /healthz`, `GET /v1/key/info`, and `POST /v1/messages/count_tokens`
-(a conservative local estimate: no provider call, no cost; see [docs/clients.md](docs/clients.md)). Set `"stream": true` for SSE.
+(a conservative local estimate: no provider call, no cost). Verified with real Claude Code and
+Codex CLI sessions: see [docs/clients.md](docs/clients.md). Set `"stream": true` for SSE.
 
 ## Configuration
 
