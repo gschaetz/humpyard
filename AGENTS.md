@@ -32,7 +32,8 @@ keep the old `x-conductor-*` header names as history; living specs and code use 
 - CI gates (all required on `main`): `check` (fmt, clippy `-D warnings`, tests), `deny` (licences,
   advisories), `docs` (warning-free), `msrv` (Rust 1.96.1), `coverage` (floor 92% lines, only ever
   raised). `main` is PR-only.
-- Commits need a DCO `Signed-off-by` line (`git commit -s`, see CONTRIBUTING.md).
+- Commits need a DCO `Signed-off-by` line (`git commit -s`, see CONTRIBUTING.md); the `dco` job
+  fails a PR with an unsigned commit. Fix with `git rebase --signoff origin/main`.
 
 ## Gotchas
 - Sibling repo `../modelrelay` is a separate Node.js project (a fork, not a code source for this
