@@ -86,8 +86,8 @@ A target whose first endpoint fails for real, ahead of a working OpenCode Go end
   would burn quota, and public status services answer only their exact paths, while the gateway
   appends `/chat/completions`). 429/5xx failover is covered by the mock-provider tests in
   `tests/pool.rs`.
-- Observed rough edge: when an upstream returns a non-JSON body (an HTML 404 page), the client's
-  error message and the log carry that raw text. A status-based message would be cleaner.
+- A non-JSON upstream body (an HTML 404 page) showed up raw in the client error and the log;
+  fixed by `readable-upstream-errors`: it now reads `upstream returned 404 Not Found`.
 
 **Safety rule when testing failover:** the gateway sends each provider's API key to that
 provider's URL. Give any endpoint you do not control (a public test service, a black hole) its own
