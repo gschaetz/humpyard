@@ -3,7 +3,7 @@
 Living document. Update it in the same PR as any change that alters structure, request flow or
 component status (see [AGENTS.md](../AGENTS.md)). Diagrams are Mermaid and render on GitHub.
 
-Last updated: 2026-10-08 (`add-count-tokens` implemented: Anthropic-format token counting answered locally; health-aware policy, managed keys and the modelrelay migration are next).
+Last updated: 2026-10-08 (`add-responses-input-tokens` implemented: both token-counting endpoints answered locally; health-aware policy, managed keys and the modelrelay migration are next).
 
 ## Component status
 
@@ -21,7 +21,7 @@ Last updated: 2026-10-08 (`add-count-tokens` implemented: Anthropic-format token
 | Provider health + telemetry feeding policy | Planned | not yet proposed |
 | Engineering hardening: invariants + architecture test, lints, structure refactors, CI gates, property tests, ADRs | Implemented | `harden-engineering` |
 | Graceful shutdown: drain, grace period, cancel, ledger flush before exit | Implemented | `add-graceful-shutdown` |
-| `count_tokens`: local, conservative prompt-size estimate (no upstream call) | Implemented | `add-count-tokens` |
+| `count_tokens` / `responses/input_tokens`: local, conservative prompt-size estimates (no upstream call). `responses/compact` intentionally not implemented | Implemented | `add-count-tokens`, `add-responses-input-tokens` |
 | Database-managed keys + admin API | Planned (designed for in `add-cost-tracking`) | not yet proposed |
 | `migrate-modelrelay` command + bundled catalog | Planned | not yet proposed |
 
