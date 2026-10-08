@@ -18,6 +18,16 @@ in an ADR (`docs/adr/`) in the same change.
 3. **SQL stays in the ledger.** Only `src/ledger.rs` uses `sqlx`. *Enforced by* `tests/architecture.rs`.
 4. **Only `main` prints.** Everything else logs through `tracing`. *Enforced by* `tests/architecture.rs`.
 
+## Supply chain and builds
+
+11. **Dependencies stay permissive, advisory-free and from crates.io.** Licences outside the
+    allow-list in `deny.toml`, known vulnerabilities, yanked crates and non-crates.io sources fail
+    the build. *Enforced by* the `deny` CI job (`cargo deny check`).
+12. **The declared minimum Rust version builds** (`rust-version` in `Cargo.toml`), the docs build
+    without warnings, and line coverage does not fall below the floor (currently 92%; baseline
+    96.15% on 2026-10-07). The floor only ratchets up. *Enforced by* the `msrv`, `docs` and
+    `coverage` CI jobs.
+
 ## Request path
 
 5. **Order of checks.** A request is authenticated, checked against the key's route allowlist, and
