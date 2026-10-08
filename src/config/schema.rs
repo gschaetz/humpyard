@@ -23,6 +23,41 @@ pub(super) struct RawConfig {
     pub(super) ledger: Option<RawLedger>,
     #[serde(default)]
     pub(super) budget: RawBudget,
+    #[serde(default)]
+    pub(super) health: RawHealth,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct RawHealth {
+    #[serde(default = "default_failure_threshold")]
+    pub(super) failure_threshold: u32,
+    #[serde(default = "default_cooldown_secs")]
+    pub(super) cooldown_secs: u64,
+    #[serde(default = "default_max_cooldown_secs")]
+    pub(super) max_cooldown_secs: u64,
+}
+
+impl Default for RawHealth {
+    fn default() -> Self {
+        Self {
+            failure_threshold: default_failure_threshold(),
+            cooldown_secs: default_cooldown_secs(),
+            max_cooldown_secs: default_max_cooldown_secs(),
+        }
+    }
+}
+
+fn default_failure_threshold() -> u32 {
+    3
+}
+
+fn default_cooldown_secs() -> u64 {
+    30
+}
+
+fn default_max_cooldown_secs() -> u64 {
+    300
 }
 
 #[derive(Debug, Deserialize)]

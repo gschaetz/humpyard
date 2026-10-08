@@ -22,6 +22,7 @@ numbers are monotonic and never reused. Start from [template.md](template.md).
 | [0006](0006-money-as-integer-micro-usd.md) | Money is integer micro-USD |
 | [0007](0007-one-shot-modelrelay-migration.md) | One-shot modelrelay migration, not a runtime importer |
 | [0008](0008-routing-policy-seam.md) | A routing policy seam in front of Switchyard's algorithms |
+| [0009](0009-endpoint-health-lives-in-the-pool.md) | Endpoint health lives in the pool and fails open |
 
 How decisions relate to enforcement: invariants that must hold mechanically are listed in
 [../invariants.md](../invariants.md) and checked by tests and CI.

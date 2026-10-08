@@ -3,7 +3,7 @@
 Living document. Update it in the same PR as any change that alters structure, request flow or
 component status (see [AGENTS.md](../AGENTS.md)). Diagrams are Mermaid and render on GitHub.
 
-Last updated: 2026-10-08 (`estimate-unreported-stream-usage`: cut or usage-less streams now record an output estimate; health-aware policy, managed keys and the modelrelay migration are next).
+Last updated: 2026-10-08 (`add-endpoint-health`: per-endpoint circuit breakers in the pool; database-managed keys, target-level health eligibility and the modelrelay migration are next).
 
 ## Component status
 
@@ -18,7 +18,8 @@ Last updated: 2026-10-08 (`estimate-unreported-stream-usage`: cut or usage-less 
 | Routing-policy seam (eligibility hook, tier substitution, 503 when none eligible) | Implemented | `add-switchyard-routing` (group 5) |
 | Virtual keys (hashed, `KeyStore` trait), usage ledger (SQLite, async), per-endpoint pricing | Implemented | `add-cost-tracking` |
 | Budgets: UTC daily/monthly USD+token limits, restricted/exhausted states, 402, free-only, `/v1/key/info` | Implemented | `add-cost-tracking` |
-| Provider health + telemetry feeding policy | Planned | not yet proposed |
+| Endpoint health: per-endpoint circuit breaker with cooldown and probe, fail-open, `GET /v1/health` | Implemented | `add-endpoint-health` (ADR 0009) |
+| Health-driven target eligibility in the routing policy (tier substitution on a cold target) | Planned | not yet proposed |
 | Engineering hardening: invariants + architecture test, lints, structure refactors, CI gates, property tests, ADRs | Implemented | `harden-engineering` |
 | Graceful shutdown: drain, grace period, cancel, ledger flush before exit | Implemented | `add-graceful-shutdown` |
 | `count_tokens` / `responses/input_tokens`: local, conservative prompt-size estimates (no upstream call). `responses/compact` intentionally not implemented | Implemented | `add-count-tokens`, `add-responses-input-tokens` |
@@ -64,13 +65,14 @@ flowchart TD
     DEC --> BUD[1. Auth + budget<br/>implemented]
     BUD --> POL[2. Routing policy<br/>eligible targets<br/>seam implemented, allow-all default]
     POL --> ALG[3. Switchyard algorithm<br/>passthrough / random /<br/>stage_router / llm_classifier<br/>implemented]
-    ALG --> POOL[4. Provider pool<br/>endpoint choice + failover<br/>implemented]
+    ALG --> POOL[4. Provider pool<br/>endpoint choice + failover<br/>+ circuit breakers<br/>implemented]
     POOL --> UPS[(Providers)]
     UPS --> ENC[Encode to client protocol]
     ENC --> OUT[Response / SSE]
     POOL -. usage events .-> LEDGER[(Async ledger<br/>SQLite, implemented)]
     LEDGER -. refresh .-> BUD
-    HEALTH[Health + telemetry<br/>planned] -.-> POL
+    POOL -. failures / successes .-> HEALTH[Endpoint health<br/>implemented, inside the pool]
+    HEALTH -. skip cold endpoints .-> POOL
     BUD -. budget state .-> POL
 ```
 
@@ -92,7 +94,8 @@ Switchyard decides the macro question (which target); the provider pool answers 
 | `metering.rs` | Per-request metered clients, stream tap, answer/judge classification, `Accounting` |
 | `pricing.rs` / `clock.rs` | micro-USD cost from usage; clock and UTC periods |
 | `routing.rs` | Builds one long-lived Switchyard algorithm (and target groups) per route and per bare target; applies policy eligibility, tier substitution and random-weight realignment |
-| `pool.rs` | Per-target `RoutedLlmClient`: ordered endpoints, failover, provider attribution header |
+| `pool.rs` | Per-target `RoutedLlmClient`: ordered endpoints, failover, circuit breaking via `health`, provider attribution header |
+| `health.rs` | Per-endpoint circuit breaker (cooldown, doubling, single probe) with an injected clock |
 | `server.rs` | Router, request stages (decode, authorize, budget, plan, execute, encode), SSE framing, attribution headers; `run` owns the server lifecycle (graceful drain, hard stop, ledger flush) |
 | `main.rs` / `lib.rs` | CLI and library root |
 

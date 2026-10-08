@@ -10,8 +10,9 @@ track, one by one. That is the job here, with requests and models. Home: https:/
 
 Status: pre-alpha. Working today: the three client protocols with streaming, routes backed by
 Switchyard's `passthrough`, `random`, `stage_router` and `llm_classifier`, ordered-endpoint
-failover, a routing-policy seam, virtual keys, a SQLite usage ledger and per-key budgets. Planned:
-provider-health-aware routing, database-managed keys, the modelrelay migration command. Design
+failover with per-endpoint circuit breakers, a routing-policy seam, virtual keys, a SQLite usage
+ledger and per-key budgets. Planned: health-driven target eligibility, database-managed keys, the
+modelrelay migration command. Design
 background in [docs/background.md](docs/background.md).
 
 See [docs/architecture.md](docs/architecture.md) for diagrams and component status and
@@ -64,6 +65,8 @@ See [examples/config.toml](examples/config.toml). Three kinds of entries:
   latches to capable after repeated judge verdicts; both need a `judge` target). Send
   `x-switchyard-session-id` so per-session state (latches, holds) persists across requests.
   If the selected target fails entirely, the next target the algorithm returned is tried.
+- `[health]`: optional endpoint circuit breaker (`failure_threshold`, `cooldown_secs`,
+  `max_cooldown_secs`); `GET /v1/health` shows which endpoints are being skipped.
 
 Logging is controlled by `RUST_LOG` (default `info`).
 
@@ -74,7 +77,7 @@ queued usage entries are written to the ledger before the process exits 0. A kil
 still lose entries that were queued but not yet written. `check-config` validates a file and reports
 dangling provider/target references and missing key variables.
 
-Not supported yet: provider-health-aware policy, database-managed keys, `previous_response_id` (returns 400).
+Not supported yet: health-driven target eligibility, database-managed keys, `previous_response_id` (returns 400).
 
 ## Development
 
