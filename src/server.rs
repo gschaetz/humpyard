@@ -213,7 +213,14 @@ async fn build(config: Config, options: Options) -> Result<Built, String> {
         .route("/healthz", get(|| async { StatusCode::OK }))
         .route("/v1/models", get(list_models))
         .route("/v1/key/info", get(key_info))
-        .route("/v1/messages/count_tokens", post(count_tokens))
+        .route(
+            "/v1/messages/count_tokens",
+            post(|s, h, b| count_tokens(s, WireFormat::AnthropicMessages, h, b)),
+        )
+        .route(
+            "/v1/responses/input_tokens",
+            post(|s, h, b| count_tokens(s, WireFormat::OpenAiResponses, h, b)),
+        )
         .route(
             "/v1/chat/completions",
             post(|s, h, b| infer(s, WireFormat::OpenAiChat, h, b)),
@@ -249,16 +256,17 @@ async fn list_models(State(state): State<Arc<AppState>>, headers: HeaderMap) -> 
     axum::Json(json!({"object": "list", "data": data})).into_response()
 }
 
-/// Anthropic-format token counting, answered locally: no provider has a count call, so the number
-/// is an estimate of the prompt the routed model would receive (see `crate::estimate`). It makes no
-/// upstream call and no ledger entry, so it skips the budget and policy stages and stays available
-/// to a key at its limit; authentication, the allowlist and the model check still apply.
+/// Token counting for the Anthropic (`count_tokens`) and Responses (`input_tokens`) protocols,
+/// answered locally: no provider has a count call, so the number is an estimate of the prompt the
+/// routed model would receive (see `crate::estimate`). It makes no upstream call and no ledger
+/// entry, so it skips the budget and policy stages and stays available to a key at its limit;
+/// authentication, the allowlist and the model check still apply.
 async fn count_tokens(
     State(state): State<Arc<AppState>>,
+    format: WireFormat,
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    let format = WireFormat::AnthropicMessages;
     let counted = async {
         let caller = authenticate(&state, &headers).await?;
         let decoded = decode(format, &body)?;
@@ -270,13 +278,19 @@ async fn count_tokens(
     .await;
     match counted {
         Ok((model, input_tokens)) => {
-            tracing::info!(model, input_tokens, "token count (estimate)");
-            let mut response = axum::Json(json!({"input_tokens": input_tokens})).into_response();
+            tracing::info!(%format, model, input_tokens, "token count (estimate)");
+            let body = match format {
+                WireFormat::OpenAiResponses => {
+                    json!({"object": "response.input_tokens", "input_tokens": input_tokens})
+                }
+                _ => json!({"input_tokens": input_tokens}),
+            };
+            let mut response = axum::Json(body).into_response();
             set_header(&mut response, TOKEN_COUNT_HEADER, "estimate");
             response
         }
         Err(error) => {
-            tracing::warn!(status = error.status().as_u16(), error = %error, "token count failed");
+            tracing::warn!(%format, status = error.status().as_u16(), error = %error, "token count failed");
             error.into_response_for(format)
         }
     }

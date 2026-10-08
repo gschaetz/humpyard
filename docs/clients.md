@@ -70,5 +70,9 @@ What was verified, with a real model behind the route:
   tokens (14,592 cached) and 314 output tokens; the ledger rows sum to the same figures. All
   upstream requests were HTTP 200.
 - **Cosmetic:** Codex prints "Model metadata for `agent` not found" for non-OpenAI model names.
-- **Not called in these runs:** `/v1/responses/input_tokens` and `/v1/responses/compact`. They are
-  not implemented (404); a long Codex session may use them.
+- **Token counting and compaction.** `POST /v1/responses/input_tokens` is answered with the same
+  local estimate as `count_tokens` (`{"object": "response.input_tokens", "input_tokens": n}`).
+  `POST /v1/responses/compact` is deliberately **not** implemented: it returns OpenAI-specific
+  encrypted compaction items, and Codex does not call it for custom providers. Their remote
+  compaction capability defaults to unsupported (only OpenAI and Azure providers get it), so Codex
+  compacts locally by summarizing through ordinary `/v1/responses` calls, which work.

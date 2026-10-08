@@ -246,3 +246,156 @@ async fn counting_calls_no_provider_writes_no_ledger_entry_and_ignores_an_exhaus
         .unwrap();
     assert_eq!(entries.len(), 1, "{entries:?}");
 }
+
+// ---- the Responses twin: POST /v1/responses/input_tokens ----
+
+impl Harness {
+    async fn responses_count(&self, key: Option<&str>, body: Value) -> reqwest::Response {
+        let mut req = reqwest::Client::new()
+            .post(format!("{}/v1/responses/input_tokens", self.url))
+            .json(&body);
+        if let Some(key) = key {
+            req = req.bearer_auth(key);
+        }
+        req.send().await.unwrap()
+    }
+
+    async fn responses_tokens(&self, key: &str, body: Value) -> u64 {
+        let resp = self.responses_count(Some(key), body).await;
+        assert_eq!(resp.status(), 200);
+        resp.json::<Value>().await.unwrap()["input_tokens"]
+            .as_u64()
+            .unwrap()
+    }
+}
+
+fn responses(model: &str, input: &str) -> Value {
+    json!({"model": model, "input": input})
+}
+
+#[tokio::test]
+async fn responses_counting_has_openais_shape_and_marks_an_estimate() {
+    let h = harness().await;
+    let resp = h
+        .responses_count(
+            Some(&h.alice),
+            responses("fast", "hello world, how are you today?"),
+        )
+        .await;
+    assert_eq!(resp.status(), 200);
+    assert_eq!(resp.headers()["x-humpyard-token-count"], "estimate");
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["object"], "response.input_tokens");
+    assert!(body["input_tokens"].as_u64().unwrap() > 0);
+    assert_eq!(body.as_object().unwrap().len(), 2, "{body}");
+}
+
+#[tokio::test]
+async fn responses_counting_grows_with_input_instructions_and_tools() {
+    let h = harness().await;
+    let base = h.responses_tokens(&h.alice, responses("fast", "hi")).await;
+
+    let items = json!({"model": "fast", "input": [
+        {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "hi"}]},
+        {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "Hello! How can I help you today?"}]},
+        {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "Tell me about hump yards."}]}
+    ]});
+    assert!(h.responses_tokens(&h.alice, items).await > base);
+
+    let mut with_instructions = responses("fast", "hi");
+    with_instructions["instructions"] =
+        json!("You are a careful assistant that always answers in one sentence.");
+    assert!(h.responses_tokens(&h.alice, with_instructions).await > base);
+
+    let mut with_tools = responses("fast", "hi");
+    with_tools["tools"] = json!([{
+        "type": "function", "name": "get_weather", "description": "Get the weather for a city",
+        "parameters": {"type": "object", "properties": {"city": {"type": "string"}}, "required": ["city"]}
+    }]);
+    assert!(h.responses_tokens(&h.alice, with_tools).await > base + 20);
+}
+
+#[tokio::test]
+async fn responses_counting_errors_use_the_openai_error_format() {
+    let h = harness().await;
+    let resp = h.responses_count(None, responses("fast", "hi")).await;
+    assert_eq!(resp.status(), 401);
+    assert_eq!(
+        resp.json::<Value>().await.unwrap()["error"]["type"],
+        "authentication_error"
+    );
+
+    let resp = h
+        .responses_count(Some(&h.bob), responses("smart", "hi"))
+        .await;
+    assert_eq!(resp.status(), 403);
+    assert_eq!(
+        resp.json::<Value>().await.unwrap()["error"]["type"],
+        "permission_error"
+    );
+
+    let resp = h
+        .responses_count(Some(&h.alice), responses("nope", "hi"))
+        .await;
+    assert_eq!(resp.status(), 404);
+    assert_eq!(
+        resp.json::<Value>().await.unwrap()["error"]["type"],
+        "not_found_error"
+    );
+
+    let mut stateful = responses("fast", "hi");
+    stateful["previous_response_id"] = json!("resp_1");
+    let resp = h.responses_count(Some(&h.alice), stateful).await;
+    assert_eq!(resp.status(), 400);
+    assert!(
+        resp.json::<Value>().await.unwrap()["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("previous_response_id")
+    );
+
+    let resp = reqwest::Client::new()
+        .post(format!("{}/v1/responses/input_tokens", h.url))
+        .bearer_auth(&h.alice)
+        .body("{nope")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 400);
+}
+
+#[tokio::test]
+async fn responses_counting_calls_no_provider_and_ignores_an_exhausted_budget() {
+    let h = harness().await;
+    for _ in 0..2 {
+        let _ = reqwest::Client::new()
+            .post(format!("{}/v1/chat/completions", h.url))
+            .bearer_auth(&h.tight)
+            .json(&chat_request("fast", false))
+            .send()
+            .await
+            .unwrap();
+    }
+    let calls_before = h.upstream_calls.load(Ordering::SeqCst);
+    for _ in 0..3 {
+        assert_eq!(
+            h.responses_count(Some(&h.tight), responses("fast", "still counting"))
+                .await
+                .status(),
+            200
+        );
+    }
+    assert_eq!(h.upstream_calls.load(Ordering::SeqCst), calls_before);
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let entries = Ledger::open(&h.db)
+        .await
+        .unwrap()
+        .entries_since(0)
+        .await
+        .unwrap();
+    assert_eq!(
+        entries.len(),
+        1,
+        "only the one real call that fit the budget: {entries:?}"
+    );
+}
