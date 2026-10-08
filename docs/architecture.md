@@ -3,7 +3,7 @@
 Living document. Update it in the same PR as any change that alters structure, request flow or
 component status (see [AGENTS.md](../AGENTS.md)). Diagrams are Mermaid and render on GitHub.
 
-Last updated: 2026-10-07 (`add-cost-tracking` implemented: keys, ledger and budgets feed the policy seam; health-aware policy and managed keys are next).
+Last updated: 2026-10-08 (`harden-engineering` implemented: invariants enforced by tests and CI, lints, structure refactors, property tests, ADRs; graceful ledger shutdown, health-aware policy and managed keys are next).
 
 ## Component status
 
@@ -19,7 +19,7 @@ Last updated: 2026-10-07 (`add-cost-tracking` implemented: keys, ledger and budg
 | Virtual keys (hashed, `KeyStore` trait), usage ledger (SQLite, async), per-endpoint pricing | Implemented | `add-cost-tracking` |
 | Budgets: UTC daily/monthly USD+token limits, restricted/exhausted states, 402, free-only, `/v1/key/info` | Implemented | `add-cost-tracking` |
 | Provider health + telemetry feeding policy | Planned | not yet proposed |
-| Engineering hardening: invariants + architecture tests, lints, refactors, CI, property tests, ADRs | In progress (invariants, architecture test, policy decoupling done) | `harden-engineering` |
+| Engineering hardening: invariants + architecture test, lints, structure refactors, CI gates, property tests, ADRs | Implemented | `harden-engineering` |
 | Database-managed keys + admin API | Planned (designed for in `add-cost-tracking`) | not yet proposed |
 | `migrate-modelrelay` command + bundled catalog | Planned | not yet proposed |
 
@@ -79,7 +79,8 @@ Switchyard decides the macro question (which target); the provider pool answers 
 
 | Module | Role |
 |---|---|
-| `config.rs` | TOML schema, env-var key loading, validation |
+| `config/` | TOML schema (`schema.rs`), cross-field validation (`validate.rs`), env-var key loading and the public `Config` (`mod.rs`) |
+| `num.rs` | Checked integer/float conversions for money and token paths (the only lossy casts) |
 | `error.rs` | Gateway errors rendered per client protocol |
 | `policy.rs` | `RoutingPolicy` trait, `PolicyContext`, allow-all default |
 | `auth.rs` | `KeyStore` trait, config-backed store, key hashing, `keygen` support |
@@ -91,6 +92,20 @@ Switchyard decides the macro question (which target); the provider pool answers 
 | `pool.rs` | Per-target `RoutedLlmClient`: ordered endpoints, failover, provider attribution header |
 | `server.rs` | Router, handlers: decode, `run`, encode/SSE framing, attribution headers |
 | `main.rs` / `lib.rs` | CLI and library root |
+
+Tests: unit tests beside the code; end-to-end suites in `tests/` (shared helpers in
+`tests/common/`); `tests/architecture.rs` enforces the layering rules; `tests/switchyard_assumptions.rs`
+pins the Switchyard behaviors we rely on; property tests for pricing, budgets and numeric helpers
+live in `#[cfg(test)] mod properties` blocks.
+
+## Guardrails
+
+What keeps the structure honest, and where each rule is written down:
+
+- [invariants.md](invariants.md): the rules, each naming its enforcement.
+- [adr/](adr/): the durable decisions (immutable).
+- CI jobs (all required on `main`): `check`, `deny`, `docs`, `msrv`, `coverage`.
+- Lints in `Cargo.toml`: no panics in production code, checked numeric conversions.
 
 ## Key decisions
 

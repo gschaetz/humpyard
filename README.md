@@ -70,7 +70,10 @@ Not supported yet: provider-health-aware policy, database-managed keys, `previou
 
 ## Development
 
-Specs live in `openspec/` (OpenSpec). `cargo test`, `cargo clippy --all-targets -- -D warnings`.
+Specs live in `openspec/` (OpenSpec, with an ADR step); decisions in [docs/adr/](docs/adr/); the
+rules that must keep holding, and what enforces them, in [docs/invariants.md](docs/invariants.md).
+Locally: `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test`; CI also
+runs `cargo deny check`, a warning-free `cargo doc`, an MSRV build and a coverage floor.
 
 ## License
 

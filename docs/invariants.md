@@ -28,6 +28,9 @@ in an ADR (`docs/adr/`) in the same change.
     96.15% on 2026-10-07). The floor only ratchets up. *Enforced by* the `msrv`, `docs` and
     `coverage` CI jobs.
 
+13. **Every commit is signed off (DCO).** Each non-merge commit in a pull request carries a
+    `Signed-off-by` line, as `CONTRIBUTING.md` requires. *Enforced by* the `dco` CI job.
+
 ## Request path
 
 5. **Order of checks.** A request is authenticated, checked against the key's route allowlist, and

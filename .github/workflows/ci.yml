@@ -19,6 +19,32 @@ jobs:
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test
 
+  # Every commit in a pull request must carry a DCO `Signed-off-by` line (CONTRIBUTING.md).
+  # Merge commits are exempt: they are created by GitHub or by `git merge`, not authored.
+  dco:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Check sign-offs
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          missing=0
+          for commit in $(git rev-list --no-merges "$BASE..$HEAD"); do
+            if ! git log -1 --format=%B "$commit" | grep -Eq '^Signed-off-by: .+ <.+@.+>$'; then
+              echo "::error::commit $(git log -1 --format='%h %s' "$commit") has no Signed-off-by line"
+              missing=1
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            echo "Sign off with 'git commit -s', or amend existing commits with 'git rebase --signoff origin/main'."
+            exit 1
+          fi
+
   # Licences, advisories, yanked crates and registries (deny.toml).
   deny:
     runs-on: ubuntu-latest

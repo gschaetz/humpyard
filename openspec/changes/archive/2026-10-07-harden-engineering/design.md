@@ -115,6 +115,13 @@ to change next time.
 - CI only runs on pull requests and pushes to `main`, so a scratch branch needs a (draft) PR to
   exercise a workflow change.
 
+## Findings during implementation (property tests)
+
+- 13 property tests (pricing, budget tracker, numeric helpers). Verified they can fail: injecting
+  `wrapping_add` into the token total and dropping the month counter from `record()` were each
+  caught immediately and shrunk to tiny inputs (for example a single `(0, 1)` call).
+- `proptest` is a dev-dependency only; it passes `cargo deny` unchanged.
+
 ## Risks / Trade-offs
 
 - Pedantic lints produce churn → allow list kept short and each entry justified; fixes land with

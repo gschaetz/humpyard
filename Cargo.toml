@@ -58,5 +58,6 @@ tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 http = "1.5.0"
 http-body-util = "0.1.5"
 parking_lot = "0.12.5"
+proptest = "1.11.0"
 tempfile = "3.27.0"
 tower = "0.5.3"

@@ -118,3 +118,97 @@ mod tests {
         assert_eq!(total_tokens(&u), 142);
     }
 }
+
+#[cfg(test)]
+mod properties {
+    use super::*;
+    use proptest::prelude::*;
+    use switchyard_protocol::InputCacheUsage;
+
+    /// Token counts up to a trillion: far beyond any real call, still exact in `f64`.
+    const REALISTIC: u64 = 1_000_000_000_000;
+
+    fn usage_strategy(max: u64) -> impl Strategy<Value = Usage> {
+        (
+            prop::option::of(0..=max),
+            prop::option::of(0..=max),
+            prop::option::of(0..=max),
+            prop::option::of((prop::option::of(0..=max), prop::option::of(0..=max))),
+        )
+            .prop_map(|(input, output, reasoning, cache)| Usage {
+                input_tokens: input,
+                output_tokens: output,
+                reasoning_tokens: reasoning,
+                cache: cache.map(|(cached, created)| {
+                    Box::new(InputCacheUsage {
+                        cached_input_tokens: cached,
+                        cache_creation_input_tokens: created,
+                    })
+                }),
+                ..Usage::default()
+            })
+    }
+
+    fn price_strategy() -> impl Strategy<Value = Price> {
+        (
+            0.0..1000.0f64,
+            0.0..1000.0f64,
+            prop::option::of(0.0..1000.0f64),
+        )
+            .prop_map(|(input, output, cached_input)| Price {
+                input,
+                output,
+                cached_input,
+            })
+    }
+
+    proptest! {
+        #[test]
+        fn free_prices_always_cost_nothing(usage in usage_strategy(u64::MAX)) {
+            prop_assert_eq!(cost_micro_usd(&usage, &Price::FREE), 0);
+        }
+
+        #[test]
+        fn cost_never_panics_and_never_exceeds_the_priciest_rate_times_tokens(
+            usage in usage_strategy(REALISTIC),
+            price in price_strategy(),
+        ) {
+            let cost = cost_micro_usd(&usage, &price);
+            let max_rate = price.input.max(price.output).max(price.cached_input.unwrap_or(0.0));
+            // +1 for rounding to the nearest micro-USD.
+            let ceiling = f64_from_u64(total_tokens(&usage)) * max_rate + 1.0;
+            prop_assert!(f64_from_u64(cost) <= ceiling, "cost {cost} above ceiling {ceiling}");
+        }
+
+        #[test]
+        fn more_output_tokens_never_cost_less(
+            usage in usage_strategy(REALISTIC),
+            extra in 0..=REALISTIC,
+            price in price_strategy(),
+        ) {
+            let mut bigger = usage.clone();
+            bigger.output_tokens = Some(usage.output_tokens.unwrap_or(0) + extra);
+            prop_assert!(cost_micro_usd(&bigger, &price) >= cost_micro_usd(&usage, &price));
+        }
+
+        #[test]
+        fn costs_add_up_within_one_micro_dollar_of_rounding(
+            a in 0..=REALISTIC / 2,
+            b in 0..=REALISTIC / 2,
+            price in price_strategy(),
+        ) {
+            let of = |n: u64| Usage { input_tokens: Some(n), ..Usage::default() };
+            let together = cost_micro_usd(&of(a + b), &price);
+            let apart = cost_micro_usd(&of(a), &price) + cost_micro_usd(&of(b), &price);
+            prop_assert!(together.abs_diff(apart) <= 1, "{together} vs {apart}");
+        }
+
+        #[test]
+        fn the_token_total_saturates_and_covers_every_part(usage in usage_strategy(u64::MAX)) {
+            let total = total_tokens(&usage);
+            for part in [usage.input_tokens, usage.output_tokens, usage.reasoning_tokens] {
+                prop_assert!(total >= part.unwrap_or(0));
+            }
+        }
+    }
+}

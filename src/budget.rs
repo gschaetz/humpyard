@@ -341,3 +341,109 @@ mod tests {
         assert_eq!(status.month.micro_usd, 500_000);
     }
 }
+
+#[cfg(test)]
+mod properties {
+    use super::*;
+    use proptest::prelude::*;
+    use std::sync::atomic::{AtomicI64, Ordering};
+
+    struct Fixed(AtomicI64);
+    impl Clock for Fixed {
+        fn now_ms(&self) -> i64 {
+            self.0.load(Ordering::SeqCst)
+        }
+    }
+
+    const NOW: i64 = 1_791_000_000_000;
+    const DAY: i64 = 86_400_000;
+
+    fn tracker(restricted_at: f64) -> (Arc<Fixed>, BudgetTracker) {
+        let clock = Arc::new(Fixed(AtomicI64::new(NOW)));
+        let budget = BudgetConfig {
+            restricted_at,
+            restricted_max_output_price: None,
+        };
+        (clock.clone(), BudgetTracker::new(clock, &budget))
+    }
+
+    fn rank(state: BudgetState) -> u8 {
+        match state {
+            BudgetState::Healthy => 0,
+            BudgetState::Restricted => 1,
+            BudgetState::Exhausted => 2,
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn recorded_spend_adds_up_exactly(
+            calls in prop::collection::vec((0u64..5_000_000, 0u64..10_000), 0..40),
+        ) {
+            let (_, t) = tracker(0.8);
+            for (micro, tokens) in &calls {
+                t.record("k", *micro, *tokens);
+            }
+            let status = t.status("k", &Limits::default());
+            prop_assert_eq!(status.day.micro_usd, calls.iter().map(|c| c.0).sum::<u64>());
+            prop_assert_eq!(status.month.tokens, calls.iter().map(|c| c.1).sum::<u64>());
+        }
+
+        #[test]
+        fn more_spend_never_makes_the_state_healthier(
+            calls in prop::collection::vec((0u64..2_000_000, 0u64..5_000), 1..30),
+            daily_usd in 0.5f64..20.0,
+            daily_tokens in 100u64..50_000,
+            restricted_at in 0.1f64..0.99,
+        ) {
+            let (_, t) = tracker(restricted_at);
+            let limits = Limits {
+                daily_usd: Some(daily_usd),
+                daily_tokens: Some(daily_tokens),
+                ..Limits::default()
+            };
+            let mut last = rank(t.status("k", &limits).state);
+            for (micro, tokens) in calls {
+                t.record("k", micro, tokens);
+                let now = rank(t.status("k", &limits).state);
+                prop_assert!(now >= last, "state improved while spending");
+                last = now;
+            }
+        }
+
+        #[test]
+        fn exhausted_exactly_when_a_limit_is_reached(
+            micro in 0u64..30_000_000,
+            tokens in 0u64..60_000,
+            daily_usd in 0.5f64..20.0,
+            daily_tokens in 100u64..50_000,
+        ) {
+            let (_, t) = tracker(0.8);
+            t.record("k", micro, tokens);
+            let limits = Limits {
+                daily_usd: Some(daily_usd),
+                daily_tokens: Some(daily_tokens),
+                ..Limits::default()
+            };
+            let reached = f64_from_u64(micro) / 1_000_000.0 >= daily_usd
+                || f64_from_u64(tokens) >= f64_from_u64(daily_tokens);
+            prop_assert_eq!(t.status("k", &limits).state == BudgetState::Exhausted, reached);
+        }
+
+        #[test]
+        fn a_new_day_resets_the_day_and_never_inflates_the_month(
+            micro in 0u64..5_000_000,
+            tokens in 0u64..10_000,
+            days_later in 1i64..20,
+        ) {
+            let (clock, t) = tracker(0.8);
+            t.record("k", micro, tokens);
+            let before = t.status("k", &Limits::default());
+            clock.0.store(NOW + days_later * DAY, Ordering::SeqCst);
+            let after = t.status("k", &Limits::default());
+            prop_assert_eq!(after.day, Spend::default());
+            prop_assert!(after.month.micro_usd <= before.month.micro_usd);
+            prop_assert!(after.month.tokens <= before.month.tokens);
+        }
+    }
+}
