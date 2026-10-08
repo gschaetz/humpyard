@@ -51,6 +51,13 @@ impl Accounting {
         self.ledger.as_ref()
     }
 
+    /// Waits until everything recorded so far is in the ledger (a no-op without one).
+    pub async fn flush(&self) {
+        if let Some(ledger) = &self.ledger {
+            ledger.flush().await;
+        }
+    }
+
     pub fn now_ms(&self) -> i64 {
         self.clock.now_ms()
     }
@@ -222,6 +229,15 @@ impl CallContext {
             }
             recorder.submit();
         })
+    }
+}
+
+impl Drop for CallContext {
+    /// A request cancelled mid-flight (shutdown, or a client that disconnected: axum drops the
+    /// handler) still records the calls it already paid for. The normal paths drain these buffers
+    /// first, so nothing is recorded twice.
+    fn drop(&mut self) {
+        self.finish_err();
     }
 }
 

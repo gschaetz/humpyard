@@ -2,8 +2,8 @@
 
 ## 1. Ledger flush and record on drop
 
-- [ ] 1.1 Give the ledger writer a message enum and add `Ledger::flush(&self)` and `Accounting::flush`; unit tests: entries are in the database right after `flush` returns (no polling), flush on a broken database returns without hanging, flush after the channel closed returns
-- [ ] 1.2 Add `Drop` to `CallContext` completing held entries (calls and cancelled stream templates); tests: a client that disconnects while a classifier route's answer is pending still gets the judge entry recorded, and normal requests record each entry exactly once
+- [x] 1.1 Give the ledger writer a message enum and add `Ledger::flush(&self)` and `Accounting::flush`; unit tests: entries are in the database right after `flush` returns (no polling), flush on a broken database returns without hanging, flush after the channel closed returns
+- [x] 1.2 Add `Drop` to `CallContext` completing held entries (calls and cancelled stream templates); tests: a client that disconnects while a classifier route's answer is pending still gets the judge entry recorded, and normal requests record each entry exactly once
 
 ## 2. Server lifecycle
 

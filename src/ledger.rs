@@ -13,7 +13,7 @@ use crate::num::{from_i64, to_i64};
 use sqlx::sqlite::{
     SqliteConnectOptions, SqliteJournalMode, SqlitePool, SqlitePoolOptions, SqliteSynchronous,
 };
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 
 const SCHEMA_VERSION: i64 = 1;
@@ -85,8 +85,15 @@ pub enum LedgerError {
     Query(#[from] sqlx::Error),
 }
 
+/// What the writer task receives: entries, and markers that ask it to catch up.
+enum Message {
+    Entry(Box<Entry>),
+    /// Written once everything received before it has been stored.
+    Flush(oneshot::Sender<()>),
+}
+
 pub struct Ledger {
-    tx: mpsc::Sender<Entry>,
+    tx: mpsc::Sender<Message>,
     pool: SqlitePool,
     /// Entries dropped because the writer's queue was full.
     dropped: Arc<AtomicU64>,
@@ -117,21 +124,25 @@ impl Ledger {
             .map_err(open_error)?;
         migrate(&pool).await.map_err(open_error)?;
 
-        let (tx, mut rx) = mpsc::channel::<Entry>(capacity.max(1));
+        let (tx, mut rx) = mpsc::channel::<Message>(capacity.max(1));
         let failed = Arc::new(AtomicU64::new(0));
         let writer_pool = pool.clone();
         let writer_failed = failed.clone();
         let writer = tokio::spawn(async move {
-            let mut batch = Vec::with_capacity(BATCH);
-            while rx.recv_many(&mut batch, BATCH).await > 0 {
-                if let Err(error) = insert_batch(&writer_pool, &batch).await {
-                    writer_failed.fetch_add(
-                        u64::try_from(batch.len()).unwrap_or(u64::MAX),
-                        Ordering::Relaxed,
-                    );
-                    tracing::error!(%error, entries = batch.len(), "ledger write failed; entries lost");
+            let mut messages = Vec::with_capacity(BATCH);
+            while rx.recv_many(&mut messages, BATCH).await > 0 {
+                let mut entries = Vec::with_capacity(messages.len());
+                for message in messages.drain(..) {
+                    match message {
+                        Message::Entry(entry) => entries.push(*entry),
+                        Message::Flush(done) => {
+                            write(&writer_pool, &writer_failed, &entries).await;
+                            entries.clear();
+                            let _ = done.send(());
+                        }
+                    }
                 }
-                batch.clear();
+                write(&writer_pool, &writer_failed, &entries).await;
             }
         });
         Ok(Self {
@@ -145,7 +156,7 @@ impl Ledger {
 
     /// Queues an entry. Never waits: a full queue drops the entry and counts it.
     pub fn record(&self, entry: Entry) {
-        if self.tx.try_send(entry).is_err() {
+        if self.tx.try_send(Message::Entry(Box::new(entry))).is_err() {
             self.dropped.fetch_add(1, Ordering::Relaxed);
             tracing::error!("ledger queue full or closed; entry dropped");
         }
@@ -216,6 +227,15 @@ impl Ledger {
             .collect())
     }
 
+    /// Waits until every entry recorded before this call has been written (or has failed to be).
+    /// Returns at once if the writer has already stopped.
+    pub async fn flush(&self) {
+        let (done, wait) = oneshot::channel();
+        if self.tx.send(Message::Flush(done)).await.is_ok() {
+            let _ = wait.await;
+        }
+    }
+
     /// Stops accepting entries and waits for queued ones to be written.
     pub async fn shutdown(mut self) {
         let Self { tx, writer, .. } = &mut self;
@@ -231,6 +251,20 @@ impl Ledger {
     #[doc(hidden)]
     pub fn pool(&self) -> &SqlitePool {
         &self.pool
+    }
+}
+
+/// Writes a batch; failures are counted and logged, never propagated.
+async fn write(pool: &SqlitePool, failed: &AtomicU64, entries: &[Entry]) {
+    if entries.is_empty() {
+        return;
+    }
+    if let Err(error) = insert_batch(pool, entries).await {
+        failed.fetch_add(
+            u64::try_from(entries.len()).unwrap_or(u64::MAX),
+            Ordering::Relaxed,
+        );
+        tracing::error!(%error, entries = entries.len(), "ledger write failed; entries lost");
     }
 }
 
@@ -466,6 +500,47 @@ mod tests {
             ledger.dropped() > 0,
             "a 2-slot queue cannot absorb 5,000 instant entries"
         );
+    }
+
+    #[tokio::test]
+    async fn flush_makes_recorded_entries_visible_without_waiting() {
+        let dir = tempfile::tempdir().unwrap();
+        let ledger = open(&dir).await;
+        for i in 0..250 {
+            ledger.record(entry(Some("a"), i, 1, 1));
+        }
+        ledger.flush().await;
+        // No polling: everything recorded before `flush` is already stored.
+        assert_eq!(ledger.entries_since(0).await.unwrap().len(), 250);
+        assert_eq!(ledger.failed(), 0);
+    }
+
+    #[tokio::test]
+    async fn flush_on_a_broken_database_returns_and_counts_the_failures() {
+        let dir = tempfile::tempdir().unwrap();
+        let ledger = open(&dir).await;
+        sqlx::query("DROP TABLE usage")
+            .execute(ledger.pool())
+            .await
+            .unwrap();
+        for i in 0..5 {
+            ledger.record(entry(Some("a"), i, 1, 1));
+        }
+        tokio::time::timeout(std::time::Duration::from_secs(5), ledger.flush())
+            .await
+            .expect("flush must not hang on a failing database");
+        assert_eq!(ledger.failed(), 5);
+    }
+
+    #[tokio::test]
+    async fn flush_after_the_writer_stopped_returns_at_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut ledger = open(&dir).await;
+        ledger.writer.take().unwrap().abort();
+        tokio::task::yield_now().await;
+        tokio::time::timeout(std::time::Duration::from_secs(5), ledger.flush())
+            .await
+            .expect("flush must return when the writer is gone");
     }
 
     #[tokio::test]
