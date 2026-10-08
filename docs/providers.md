@@ -41,7 +41,33 @@ Against real models, with a dead first endpoint to force failover:
 - `llm_classifier` in `capability` mode with a real judge: an easy question stayed on the efficient
   target, a hard one went to the capable target.
 
+## Budgets, usage and shutdown against a real provider (verified 2026-10-08)
+
+Same provider (OpenCode Go; `glm-5.3-flash` as the efficient tier, `kimi-k2.6` as the capable tier,
+the free `longcat-2.5-preview-free` as the free tier), a throwaway gateway key with a 1,500-token
+daily limit and another with a 400-token `free_only` limit, at 50% restricted.
+
+- **Usage matches the provider exactly.** Buffered, streamed (the final usage chunk the client sees
+  equals the ledger row), Anthropic-format and Responses-format calls all recorded the provider's
+  prompt and completion tokens, and the key's running total matched the sum of the calls (738
+  tokens after five calls). The first run exposed a real bug: reasoning tokens (a subset of the
+  completion tokens) were being added again, doubling reasoning-heavy calls; fixed in PR #32.
+- **Cost is right.** A `kimi-k2.6` call of 53 input and 120 output tokens at $1 and $4 per million
+  came to 533 micro-USD; cached-prompt tokens bill at the input price unless `cached_input` is set.
+- **States progress as designed.** Healthy: a failing tool turn escalated to the capable tier.
+  Past 50% (restricted): identical failing turns were served by the efficient tier, because the
+  capable tier's price is above the ceiling. Past the limit: HTTP 402 in the chat, Anthropic and
+  Responses shapes, with no upstream call (the ledger row count did not move). The last call
+  crossed the limit (1,633 of 1,500 tokens): the documented overshoot.
+- **Free-only keys continue on free targets**, and a route with no free target gets 402.
+- **Graceful shutdown in the middle of a real stream.** After SIGTERM new connections were
+  refused, the running stream finished (192 events plus `[DONE]`), the gateway exited after it
+  completed, and the ledger row had full usage with outcome `ok`.
+- **Restart recovery.** After a restart both keys' spend was rebuilt from the ledger (1,633 and 910
+  tokens) and the exhausted key still got 402.
+
 ## Not yet verified
 
-Rate-limit (429) failover against a real provider, Responses `previous_response_id`, and
+Rate-limit (429) failover against a real provider, Responses `previous_response_id`, a stream
+cut by the grace period against a real provider (the mock-based test covers it), and
 long-running streams near the provider timeout.
