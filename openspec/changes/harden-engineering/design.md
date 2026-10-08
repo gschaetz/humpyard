@@ -103,6 +103,18 @@ to change next time.
   nested modules and fails when a rule names a module that no longer exists (caught while
   splitting `config`).
 
+## Findings during implementation (CI)
+
+- `cargo deny` runs through the official `EmbarkStudios/cargo-deny-action@v2`; the licence allow-list
+  was derived from the actual dependency tree (13 permissive licences; `r-efi`'s LGPL branch is an
+  `OR` alongside MIT/Apache-2.0). Ten duplicate-crate warnings (Switchyard pins some versions) are
+  tolerated and surfaced, not denied. A banned licence fails the check (verified: exit 4).
+- The MSRV job needs `cargo +1.96.1` because `rust-toolchain.toml` pins the newer dev compiler.
+- Coverage baseline 96.15% lines / 95.21% regions / 93.40% functions; floor 92% lines. The floor
+  was proven to enforce by a throwaway PR with an impossible 99.9% target, which failed the job.
+- CI only runs on pull requests and pushes to `main`, so a scratch branch needs a (draft) PR to
+  exercise a workflow change.
+
 ## Risks / Trade-offs
 
 - Pedantic lints produce churn → allow list kept short and each entry justified; fixes land with

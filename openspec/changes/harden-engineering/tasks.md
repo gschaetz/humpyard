@@ -24,9 +24,9 @@
 
 ## 5. CI
 
-- [ ] 5.1 Add `deny.toml` and a `cargo deny` job; verify it passes and fails on a deliberately banned licence in a scratch branch
-- [ ] 5.2 Add a docs job (`cargo doc --no-deps` with warnings denied) and an MSRV job at the declared `rust-version`; verify both run green in CI
-- [ ] 5.3 Add a coverage job with `cargo llvm-cov`, record the baseline and set the floor a few points below it; verify the job reports and enforces
+- [x] 5.1 Add `deny.toml` and a `cargo deny` job; verify it passes and fails on a deliberately banned licence in a scratch branch
+- [x] 5.2 Add a docs job (`cargo doc --no-deps` with warnings denied) and an MSRV job at the declared `rust-version`; verify both run green in CI
+- [x] 5.3 Add a coverage job with `cargo llvm-cov`, record the baseline and set the floor a few points below it; verify the job reports and enforces
 
 ## 6. Property tests and ADRs
 
