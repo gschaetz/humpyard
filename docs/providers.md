@@ -93,8 +93,23 @@ A target whose first endpoint fails for real, ahead of a working OpenCode Go end
 provider's URL. Give any endpoint you do not control (a public test service, a black hole) its own
 dummy `api_key_env`, never the key of a real provider.
 
+## Grace-period cut with a real stream (verified 2026-10-08)
+
+A long streamed answer from OpenCode Go (glm-5.3-flash), `shutdown_grace_secs = 2`, SIGTERM sent
+6 s in (about 36 KB already delivered):
+
+- The log shows "shutdown requested; draining", then "grace period over; cancelling", exactly 2 s
+  later; the gateway exited cleanly right after.
+- The client's stream ended 2.0 s after the signal with an error event
+  (`upstream unreachable: gateway is shutting down`) followed by `data: [DONE]`, not a dropped
+  connection.
+- The ledger recorded the request with outcome `cancelled`.
+- **Known limitation, confirmed:** that row has zero tokens and zero cost, because a cut stream
+  never reaches the provider's final usage chunk. The provider did generate (and may bill) those
+  tokens, so spend from cut streams is under-counted. Estimating output from the bytes streamed
+  would be a possible improvement.
+
 ## Not yet verified
 
-A real provider's own 429 or 5xx, Responses `previous_response_id`, a stream cut by the grace
-period against a real provider (the mock-based test covers it), and long-running streams near the
+A real provider's own 429 or 5xx, Responses `previous_response_id`, and long-running streams near the
 provider timeout.
