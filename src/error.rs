@@ -113,18 +113,29 @@ impl From<LlmClientError> for GatewayError {
     }
 }
 
-/// The provider's own error message when it sent the usual JSON shape, else a clipped body.
+/// The provider's own error message when it sent a recognizable JSON shape (`error.message`,
+/// `error` as a string, or `message`). Anything else, notably an HTML error page from a proxy, is
+/// reduced to the status; short plain text is kept, collapsed to one clipped line.
 fn upstream_message(body: &str, status: StatusCode) -> String {
-    serde_json::from_str::<serde_json::Value>(body)
+    let from_json = serde_json::from_str::<serde_json::Value>(body)
         .ok()
-        .and_then(|v| v["error"]["message"].as_str().map(str::to_string))
-        .unwrap_or_else(|| {
-            if body.is_empty() {
-                format!("upstream returned {status}")
-            } else {
-                body.chars().take(500).collect()
-            }
-        })
+        .and_then(|v| {
+            v["error"]["message"]
+                .as_str()
+                .or_else(|| v["error"].as_str())
+                .or_else(|| v["message"].as_str())
+                .map(str::to_string)
+        });
+    if let Some(message) = from_json {
+        return message;
+    }
+    let text = body.split_whitespace().collect::<Vec<_>>().join(" ");
+    if text.is_empty() || text.contains('<') || text.starts_with(['{', '[']) {
+        format!("upstream returned {status}")
+    } else {
+        let clipped: String = text.chars().take(200).collect();
+        format!("upstream returned {status}: {clipped}")
+    }
 }
 
 #[cfg(test)]
@@ -169,6 +180,30 @@ mod tests {
         });
         assert_eq!(transport.status(), 502);
         assert!(!transport.to_string().contains("secret"));
+    }
+
+    #[test]
+    fn upstream_messages_are_readable_whatever_the_body() {
+        let msg = |body: &str| upstream_message(body, StatusCode::NOT_FOUND);
+        assert_eq!(
+            msg(r#"{"error":{"message":"no such model"}}"#),
+            "no such model"
+        );
+        assert_eq!(msg(r#"{"error":"flat string"}"#), "flat string");
+        assert_eq!(msg(r#"{"message":"top level"}"#), "top level");
+        let html = "<!DOCTYPE HTML>\n<title>404 Not Found</title>\n<h1>Not Found</h1>";
+        assert_eq!(msg(html), "upstream returned 404 Not Found");
+        assert_eq!(msg(""), "upstream returned 404 Not Found");
+        assert_eq!(
+            msg(r#"{"unknown":"shape"}"#),
+            "upstream returned 404 Not Found"
+        );
+        assert_eq!(
+            msg("model\n  is   overloaded"),
+            "upstream returned 404 Not Found: model is overloaded"
+        );
+        let long = "x".repeat(900);
+        assert!(msg(&long).len() < 260);
     }
 
     #[test]
