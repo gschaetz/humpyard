@@ -38,9 +38,15 @@ in an ADR (`docs/adr/`) in the same change.
    (401/403 make no upstream call) and `tests/budget.rs` (402 makes no upstream call).
 6. **Routing never sees ineligible targets.** The policy narrows targets before any algorithm
    runs. *Enforced by* `tests/policy.rs`.
-7. **Ledger writes never block a response.** Entries go through a bounded queue with `try_send`; a
-   full queue or failing database is counted, not surfaced. *Enforced by* the ledger tests
-   (`a_full_queue_drops_and_counts_instead_of_waiting`, `a_broken_database_never_blocks_or_fails_recording`).
+7. **Ledger writes never block a response, and are flushed before a graceful exit.** Entries go
+   through a bounded queue with `try_send`; a full queue or failing database is counted, not
+   surfaced. On SIGTERM/SIGINT `server::run` drains, cancels what outlives the grace period, and
+   flushes the queue before returning; a request cancelled mid-flight still records the calls it
+   paid for. *Enforced by* the ledger tests (`a_full_queue_drops_and_counts_instead_of_waiting`,
+   `a_broken_database_never_blocks_or_fails_recording`, the `flush_*` tests), `tests/shutdown.rs`
+   (including `run_waits_for_a_stalled_ledger_writer_before_returning`), `tests/shutdown_process.rs`
+   (real signals against the binary) and `tests/usage.rs`
+   (`a_request_cancelled_mid_flight_still_records_the_judge_call_it_paid_for`).
 
 ## Data and secrets
 

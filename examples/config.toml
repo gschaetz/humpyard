@@ -1,4 +1,5 @@
 listen = "127.0.0.1:8080"
+# shutdown_grace_secs = 30   # how long to let in-flight requests finish after SIGTERM/Ctrl-C (0-3600)
 
 # Providers: OpenAI-compatible endpoints. Keys come from environment variables only.
 [providers.groq]

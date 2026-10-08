@@ -38,6 +38,17 @@ future does not cancel in-flight handlers. See proposal.md - Why and ADR 0005.
   grace period, exits 0 as long as the ledger was flushed.
 - **Config**: `shutdown_grace_secs`, 0 to 3600, default 30.
 
+## Findings during implementation
+
+- The flush needed a deterministic test: SQLite is fast enough that a plain "entries are present"
+  check would pass without any flush. The test holds SQLite's write lock (`BEGIN IMMEDIATE`) so
+  the writer stalls; only a real flush makes `run` outlast the lock (it fails with "returned after
+  only 162µs" when the flush call is removed).
+- `CallContext`'s drop-time recording also fixes a pre-existing gap independent of shutdown: a
+  client disconnecting during a non-streaming request dropped the handler and lost the judge
+  calls already paid for (covered by a usage test that fails without the `Drop`).
+- axum's `serve` stops accepting at the signal, so late connections are refused (tested).
+
 ## Risks / Trade-offs
 
 - A handler cancelled by `select!` drops its upstream call mid-flight; the provider may still bill

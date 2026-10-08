@@ -26,6 +26,42 @@ enum Command {
     Keygen { id: String },
 }
 
+/// Turns SIGINT (Ctrl-C) and, on Unix, SIGTERM into messages: the first starts a graceful
+/// shutdown, a second ends the wait for in-flight requests.
+fn termination_signals() -> tokio::sync::mpsc::Receiver<()> {
+    let (tx, rx) = tokio::sync::mpsc::channel(4);
+    tokio::spawn(async move {
+        #[cfg(unix)]
+        let mut terminate =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).ok();
+        loop {
+            #[cfg(unix)]
+            {
+                let sigterm = async {
+                    match terminate.as_mut() {
+                        Some(signal) => {
+                            signal.recv().await;
+                        }
+                        None => std::future::pending::<()>().await,
+                    }
+                };
+                tokio::select! {
+                    _ = tokio::signal::ctrl_c() => {}
+                    () = sigterm => {}
+                }
+            }
+            #[cfg(not(unix))]
+            {
+                let _ = tokio::signal::ctrl_c().await;
+            }
+            if tx.send(()).await.is_err() {
+                break;
+            }
+        }
+    });
+    rx
+}
+
 #[tokio::main]
 async fn main() -> ExitCode {
     tracing_subscriber::fmt()
@@ -62,9 +98,7 @@ async fn run(command: Command) -> Result<(), String> {
                 .await
                 .map_err(|e| format!("cannot bind {}: {e}", config.listen))?;
             tracing::info!(listen = %config.listen, "serving");
-            axum::serve(listener, server::router(config).await?)
-                .await
-                .map_err(|e| e.to_string())
+            server::run(config, listener, termination_signals()).await
         }
     }
 }

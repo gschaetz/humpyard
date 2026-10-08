@@ -47,6 +47,9 @@ pub(super) fn reject_plaintext_keys(text: &str) -> Result<(), ConfigError> {
 }
 
 pub(super) fn validate(raw: &RawConfig) -> Result<(), ConfigError> {
+    if raw.shutdown_grace_secs > 3600 {
+        return Err(invalid("shutdown_grace_secs must be between 0 and 3600"));
+    }
     if raw.providers.is_empty() {
         return Err(invalid("at least one provider is required"));
     }

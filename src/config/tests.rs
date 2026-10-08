@@ -331,3 +331,25 @@ fn debug_output_hides_keys() {
     let config = Config::from_toml(VALID, env).unwrap();
     assert!(!format!("{config:?}").contains("secret-"));
 }
+
+#[test]
+fn shutdown_grace_defaults_to_thirty_seconds_and_accepts_the_valid_range() {
+    assert_eq!(
+        Config::from_toml(VALID, env).unwrap().shutdown_grace_secs,
+        30
+    );
+    for secs in [0, 5, 3600] {
+        let text = format!("shutdown_grace_secs = {secs}\n{VALID}");
+        assert_eq!(
+            Config::from_toml(&text, env).unwrap().shutdown_grace_secs,
+            secs
+        );
+    }
+}
+
+#[test]
+fn shutdown_grace_above_an_hour_is_rejected_naming_the_key() {
+    let text = format!("shutdown_grace_secs = 3601\n{VALID}");
+    let message = err(&text);
+    assert!(message.contains("shutdown_grace_secs"), "{message}");
+}

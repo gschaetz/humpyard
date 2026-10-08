@@ -14,8 +14,10 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use futures::{Stream, StreamExt};
 use serde_json::{Value, json};
+use std::time::Duration;
+use tokio::sync::{mpsc, watch};
 
-use switchyard_llm_client::run;
+use switchyard_llm_client::run as run_algorithm;
 use switchyard_protocol::{
     Category, LlmRequest, LlmResponse, Metadata, ModelId, Request, WireFormat,
 };
@@ -44,6 +46,8 @@ const TARGET_HEADER: &str = "x-humpyard-target";
 
 pub struct AppState {
     config: Config,
+    /// Flips to `true` when shutdown gives up waiting: running requests are cancelled.
+    hard_stop: watch::Receiver<bool>,
     targets: HashMap<ModelId, Arc<TargetClient>>,
     accounting: Arc<Accounting>,
     tracker: Option<Arc<BudgetTracker>>,
@@ -80,6 +84,100 @@ pub struct Options {
 }
 
 pub async fn router_with_options(config: Config, options: Options) -> Result<Router, String> {
+    Ok(build(config, options).await?.router)
+}
+
+/// How long, after giving up on in-flight requests, to wait for their connections to close.
+const HARD_STOP_WAIT: Duration = Duration::from_secs(2);
+/// How long to wait for queued usage entries to reach the ledger before exiting.
+const FLUSH_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Serves on `listener` until the process is asked to stop, then shuts down cleanly.
+///
+/// The first message on `signals` starts a drain: no new connections, in-flight requests may
+/// finish for up to `shutdown_grace_secs`. A second message, or the end of the grace period,
+/// cancels whatever is still running (streams end with an error event). Either way every usage
+/// entry is flushed to the ledger before this returns, and a failed flush is an error.
+///
+/// # Errors
+/// If the router cannot be built, the server fails, or the ledger cannot be flushed in time.
+pub async fn run(
+    config: Config,
+    listener: tokio::net::TcpListener,
+    mut signals: mpsc::Receiver<()>,
+) -> Result<(), String> {
+    let grace = Duration::from_secs(config.shutdown_grace_secs);
+    let built = build(config, Options::default()).await?;
+    let (drain_tx, drain_rx) = tokio::sync::oneshot::channel::<()>();
+    let server = axum::serve(listener, built.router)
+        .with_graceful_shutdown(async move {
+            let _ = drain_rx.await;
+        })
+        .into_future();
+    tokio::pin!(server);
+
+    let mut cancelled = false;
+    tokio::select! {
+        result = &mut server => result.map_err(|e| e.to_string())?,
+        Some(()) = signals.recv() => {
+            tracing::info!("shutdown requested; draining in-flight requests");
+            let _ = drain_tx.send(());
+            tokio::select! {
+                result = &mut server => result.map_err(|e| e.to_string())?,
+                Some(()) = signals.recv() => {
+                    tracing::warn!("second shutdown signal; cancelling remaining requests");
+                    cancelled = true;
+                }
+                () = tokio::time::sleep(grace) => {
+                    tracing::warn!(grace_secs = grace.as_secs(), "grace period over; cancelling remaining requests");
+                    cancelled = true;
+                }
+            }
+        }
+    }
+    if cancelled {
+        let _ = built.hard_stop.send(true);
+        if tokio::time::timeout(HARD_STOP_WAIT, &mut server)
+            .await
+            .is_err()
+        {
+            tracing::warn!("connections did not close in time");
+        }
+    }
+
+    if tokio::time::timeout(FLUSH_TIMEOUT, built.accounting.flush())
+        .await
+        .is_err()
+    {
+        let (failed, dropped) = built
+            .accounting
+            .ledger()
+            .map_or((0, 0), |l| (l.failed(), l.dropped()));
+        tracing::error!(
+            failed,
+            dropped,
+            "ledger flush timed out; usage entries may be lost"
+        );
+        return Err("ledger flush timed out; usage entries may be lost".into());
+    }
+    if let Some(ledger) = built.accounting.ledger() {
+        let (failed, dropped) = (ledger.failed(), ledger.dropped());
+        if failed + dropped > 0 {
+            tracing::warn!(failed, dropped, "some usage entries were not written");
+        }
+    }
+    tracing::info!("shutdown complete");
+    Ok(())
+}
+
+/// Everything `run` needs to serve and then shut down cleanly.
+struct Built {
+    router: Router,
+    accounting: Arc<Accounting>,
+    hard_stop: watch::Sender<bool>,
+}
+
+async fn build(config: Config, options: Options) -> Result<Built, String> {
     let clock: Arc<dyn Clock> = options.clock.unwrap_or_else(|| Arc::new(SystemClock));
     let targets = pool::build(&config)?;
     let ledger = match &config.ledger {
@@ -98,16 +196,18 @@ pub async fn router_with_options(config: Config, options: Options) -> Result<Rou
     ]));
     let routes = Routes::build(&config)?;
     let keys: Arc<dyn KeyStore> = Arc::new(ConfigKeyStore::new(&config.keys));
+    let (hard_stop_tx, hard_stop) = watch::channel(false);
     let state = Arc::new(AppState {
         config,
+        hard_stop,
         targets,
-        accounting,
+        accounting: accounting.clone(),
         tracker,
         routes,
         policy,
         keys,
     });
-    Ok(Router::new()
+    let app = Router::new()
         .route("/healthz", get(|| async { StatusCode::OK }))
         .route("/v1/models", get(list_models))
         .route("/v1/key/info", get(key_info))
@@ -123,7 +223,12 @@ pub async fn router_with_options(config: Config, options: Options) -> Result<Rou
             "/v1/messages",
             post(|s, h, b| infer(s, WireFormat::AnthropicMessages, h, b)),
         )
-        .with_state(state))
+        .with_state(state);
+    Ok(Built {
+        router: app,
+        accounting,
+        hard_stop: hard_stop_tx,
+    })
 }
 
 async fn list_models(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response {
@@ -189,6 +294,19 @@ async fn key_info(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Res
     .into_response()
 }
 
+/// Resolves once shutdown has given up waiting. If the signal can never fire (the router was built
+/// without `run`), it never resolves.
+async fn stopped(mut stop: watch::Receiver<bool>) {
+    loop {
+        if *stop.borrow() {
+            return;
+        }
+        if stop.changed().await.is_err() {
+            std::future::pending::<()>().await;
+        }
+    }
+}
+
 /// Identifies the caller. `None` means the gateway is open (no keys configured).
 async fn authenticate(
     state: &AppState,
@@ -223,7 +341,13 @@ async fn infer(
         }
     };
     let key_id = caller.as_ref().map_or("-", |k| k.id.as_str()).to_string();
-    match handle(&state, format, &headers, &body, caller.as_ref()).await {
+    let outcome = tokio::select! {
+        outcome = handle(&state, format, &headers, &body, caller.as_ref()) => outcome,
+        () = stopped(state.hard_stop.clone()) => {
+            Err(GatewayError::Unavailable("gateway is shutting down".into()))
+        }
+    };
+    match outcome {
         Ok((target, response)) => {
             tracing::info!(
                 %format,
@@ -301,7 +425,7 @@ async fn handle(
         model,
     );
     let executed = execute(state, &ctx, plan, request).await?;
-    encode(format, executed, &extensions)
+    encode(format, state.hard_stop.clone(), executed, &extensions)
 }
 
 /// Stage 1: parse the body and translate it into Switchyard's neutral form.
@@ -436,13 +560,14 @@ async fn execute(
     let names: Vec<ModelId> = plan.models.models_for(&Category::Any).to_vec();
     let clients = ctx.router(&state.targets, &names);
     let models = Arc::new(plan.models);
-    let (selected, mut response) = match run(plan.algorithm, clients, request, models, None).await {
-        Ok(done) => done,
-        Err(error) => {
-            ctx.finish_err();
-            return Err(error.into());
-        }
-    };
+    let (selected, mut response) =
+        match run_algorithm(plan.algorithm, clients, request, models, None).await {
+            Ok(done) => done,
+            Err(error) => {
+                ctx.finish_err();
+                return Err(error.into());
+            }
+        };
     let answer_id = response
         .upstream_headers
         .remove(CALL_ID_HEADER)
@@ -459,6 +584,7 @@ async fn execute(
 /// Stage 6: encode the answer for the client's protocol and attach the attribution headers.
 fn encode(
     format: WireFormat,
+    stop: watch::Receiver<bool>,
     executed: Executed,
     extensions: &switchyard_protocol::ProviderExtensions,
 ) -> Result<(String, Response), GatewayError> {
@@ -485,7 +611,7 @@ fn encode(
             let events =
                 encode_stream_with_extensions(stream, format, Some(served.clone()), extensions)
                     .map_err(|e| GatewayError::Internal(e.to_string()))?;
-            frame_stream(events, format).into_response()
+            frame_stream(events, format, stop).into_response()
         }
     };
     set_header(&mut http_response, TARGET_HEADER, &served);
@@ -510,11 +636,25 @@ type SseStream = std::pin::Pin<Box<dyn Stream<Item = Result<Event, Infallible>> 
 
 /// Frames translated events as SSE for the client's protocol. Dropping the returned body drops
 /// the upstream stream, which cancels the upstream request.
-fn frame_stream(stream: RawEventStream, format: WireFormat) -> Sse<SseStream> {
+fn frame_stream(
+    stream: RawEventStream,
+    format: WireFormat,
+    stop: watch::Receiver<bool>,
+) -> Sse<SseStream> {
     let framed = async_stream::stream! {
         let mut stream = stream;
         let mut failed = false;
-        while let Some(item) = stream.next().await {
+        loop {
+            let item = tokio::select! {
+                item = stream.next() => item,
+                () = stopped(stop.clone()) => {
+                    // Shutdown gave up waiting: end the stream with an error event. Dropping the
+                    // stream afterwards lets the usage tap record it as cancelled.
+                    yield Ok(error_event(format, "gateway is shutting down"));
+                    break;
+                }
+            };
+            let Some(item) = item else { break };
             let event = match item {
                 Ok(value) => frame_event(format, &value),
                 Err(LlmStreamError::Upstream(value)) => {

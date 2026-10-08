@@ -63,7 +63,13 @@ See [examples/config.toml](examples/config.toml). Three kinds of entries:
   `x-switchyard-session-id` so per-session state (latches, holds) persists across requests.
   If the selected target fails entirely, the next target the algorithm returned is tried.
 
-Logging is controlled by `RUST_LOG` (default `info`). `check-config` validates a file and reports
+Logging is controlled by `RUST_LOG` (default `info`).
+
+**Shutdown.** SIGTERM or Ctrl-C starts a graceful stop: new connections are refused, requests
+already running may finish for up to `shutdown_grace_secs` (default 30; a second signal stops
+waiting at once), anything still running is then cancelled (streams end with an error event), and
+queued usage entries are written to the ledger before the process exits 0. A kill -9 or crash can
+still lose entries that were queued but not yet written. `check-config` validates a file and reports
 dangling provider/target references and missing key variables.
 
 Not supported yet: provider-health-aware policy, database-managed keys, `previous_response_id` (returns 400).
