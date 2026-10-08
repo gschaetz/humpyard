@@ -251,3 +251,39 @@ async fn session_state_persists_across_runs() {
         "other sessions must be unaffected"
     );
 }
+
+/// Cost and budgets rely on reasoning tokens being a *subset* of output tokens. Switchyard's
+/// documentation says otherwise ("excluding reasoning"), but its decoders do not subtract.
+#[test]
+fn reasoning_tokens_are_reported_as_part_of_output_tokens() {
+    use switchyard_translation::decode_aggregated_response;
+
+    let openai = json!({
+        "id": "c", "object": "chat.completion", "model": "m",
+        "choices": [{"index": 0, "message": {"role": "assistant", "content": "hi"}, "finish_reason": "stop"}],
+        "usage": {"prompt_tokens": 10, "completion_tokens": 100, "total_tokens": 110,
+                  "completion_tokens_details": {"reasoning_tokens": 90}}
+    });
+    let usage = decode_aggregated_response(&openai, WireFormat::OpenAiChat)
+        .unwrap()
+        .usage;
+    assert_eq!(
+        usage.output_tokens,
+        Some(100),
+        "reasoning must not be subtracted from output"
+    );
+    assert_eq!(usage.reasoning_tokens, Some(90));
+    assert_eq!(usage.total_tokens, Some(110));
+
+    let anthropic = json!({
+        "id": "m", "type": "message", "role": "assistant", "model": "m", "stop_reason": "end_turn",
+        "content": [{"type": "text", "text": "hi"}],
+        "usage": {"input_tokens": 10, "output_tokens": 100,
+                  "output_tokens_details": {"thinking_tokens": 90}}
+    });
+    let usage = decode_aggregated_response(&anthropic, WireFormat::AnthropicMessages)
+        .unwrap()
+        .usage;
+    assert_eq!(usage.output_tokens, Some(100));
+    assert_eq!(usage.reasoning_tokens, Some(90));
+}

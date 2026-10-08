@@ -9,8 +9,11 @@ use crate::num::{f64_from_u64, u64_from_f64_rounded};
 /// Cost of `usage` at `price`, rounded to the nearest micro-USD.
 ///
 /// Non-cached input and cache-creation tokens bill at the input price, cache reads at the cached
-/// price (the input price when none is configured), and output plus reasoning tokens at the
-/// output price.
+/// price (the input price when none is configured), and output tokens at the output price.
+///
+/// Reasoning tokens are *part of* the output tokens in the chat, responses and messages wire
+/// formats, so they are not added again (see `tests/usage.rs` and
+/// `tests/switchyard_assumptions.rs`, which pin this against Switchyard's decoders).
 pub fn cost_micro_usd(usage: &Usage, price: &Price) -> u64 {
     let input = f64_from_u64(
         usage
@@ -19,26 +22,21 @@ pub fn cost_micro_usd(usage: &Usage, price: &Price) -> u64 {
             .saturating_add(usage.cache_creation_input_tokens().unwrap_or(0)),
     );
     let cached = f64_from_u64(usage.cached_input_tokens().unwrap_or(0));
-    let output = f64_from_u64(
-        usage
-            .output_tokens
-            .unwrap_or(0)
-            .saturating_add(usage.reasoning_tokens.unwrap_or(0)),
-    );
+    let output = f64_from_u64(usage.output_tokens.unwrap_or(0));
     let micro = input * price.input
         + cached * price.cached_input.unwrap_or(price.input)
         + output * price.output;
     u64_from_f64_rounded(micro)
 }
 
-/// Total tokens counted against token limits: everything sent and generated.
+/// Total tokens counted against token limits: everything sent and generated. Reasoning tokens are
+/// already inside the output count.
 pub fn total_tokens(usage: &Usage) -> u64 {
     [
         usage.input_tokens,
         usage.cached_input_tokens(),
         usage.cache_creation_input_tokens(),
         usage.output_tokens,
-        usage.reasoning_tokens,
     ]
     .into_iter()
     .fold(0, |sum, n| sum.saturating_add(n.unwrap_or(0)))
@@ -85,10 +83,12 @@ mod tests {
     }
 
     #[test]
-    fn reasoning_tokens_bill_as_output() {
-        let mut u = usage(0, 10);
+    fn reasoning_tokens_are_part_of_output_and_not_billed_twice() {
+        // 10 prompt tokens, 100 completion tokens of which 90 are reasoning.
+        let mut u = usage(10, 100);
         u.reasoning_tokens = Some(90);
-        assert_eq!(cost_micro_usd(&u, &PRICE), 400);
+        assert_eq!(cost_micro_usd(&u, &PRICE), 10 + 100 * 4);
+        assert_eq!(total_tokens(&u), 110);
     }
 
     #[test]
@@ -108,14 +108,14 @@ mod tests {
     }
 
     #[test]
-    fn token_total_counts_everything() {
+    fn token_total_counts_input_cache_and_output_once() {
         let mut u = usage(10, 20);
         u.reasoning_tokens = Some(5);
         u.cache = Some(Box::new(InputCacheUsage {
             cached_input_tokens: Some(100),
             cache_creation_input_tokens: Some(7),
         }));
-        assert_eq!(total_tokens(&u), 142);
+        assert_eq!(total_tokens(&u), 137); // reasoning (5) is inside output (20)
     }
 }
 
@@ -204,9 +204,23 @@ mod properties {
         }
 
         #[test]
+        fn reasoning_tokens_never_change_cost_or_totals(
+            usage in usage_strategy(REALISTIC),
+            reasoning in 0..=u64::MAX,
+            price in price_strategy(),
+        ) {
+            let mut with = usage.clone();
+            with.reasoning_tokens = Some(reasoning);
+            let mut without = usage;
+            without.reasoning_tokens = None;
+            prop_assert_eq!(cost_micro_usd(&with, &price), cost_micro_usd(&without, &price));
+            prop_assert_eq!(total_tokens(&with), total_tokens(&without));
+        }
+
+        #[test]
         fn the_token_total_saturates_and_covers_every_part(usage in usage_strategy(u64::MAX)) {
             let total = total_tokens(&usage);
-            for part in [usage.input_tokens, usage.output_tokens, usage.reasoning_tokens] {
+            for part in [usage.input_tokens, usage.output_tokens] {
                 prop_assert!(total >= part.unwrap_or(0));
             }
         }
