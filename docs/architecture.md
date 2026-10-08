@@ -3,7 +3,7 @@
 Living document. Update it in the same PR as any change that alters structure, request flow or
 component status (see [AGENTS.md](../AGENTS.md)). Diagrams are Mermaid and render on GitHub.
 
-Last updated: 2026-10-08 (`harden-engineering` implemented: invariants enforced by tests and CI, lints, structure refactors, property tests, ADRs; graceful ledger shutdown, health-aware policy and managed keys are next).
+Last updated: 2026-10-08 (`add-graceful-shutdown` implemented: SIGTERM/Ctrl-C drain and flush the ledger before exit; health-aware policy, managed keys and the modelrelay migration are next).
 
 ## Component status
 
@@ -20,6 +20,7 @@ Last updated: 2026-10-08 (`harden-engineering` implemented: invariants enforced 
 | Budgets: UTC daily/monthly USD+token limits, restricted/exhausted states, 402, free-only, `/v1/key/info` | Implemented | `add-cost-tracking` |
 | Provider health + telemetry feeding policy | Planned | not yet proposed |
 | Engineering hardening: invariants + architecture test, lints, structure refactors, CI gates, property tests, ADRs | Implemented | `harden-engineering` |
+| Graceful shutdown: drain, grace period, cancel, ledger flush before exit | Implemented | `add-graceful-shutdown` |
 | Database-managed keys + admin API | Planned (designed for in `add-cost-tracking`) | not yet proposed |
 | `migrate-modelrelay` command + bundled catalog | Planned | not yet proposed |
 
@@ -90,7 +91,7 @@ Switchyard decides the macro question (which target); the provider pool answers 
 | `pricing.rs` / `clock.rs` | micro-USD cost from usage; clock and UTC periods |
 | `routing.rs` | Builds one long-lived Switchyard algorithm (and target groups) per route and per bare target; applies policy eligibility, tier substitution and random-weight realignment |
 | `pool.rs` | Per-target `RoutedLlmClient`: ordered endpoints, failover, provider attribution header |
-| `server.rs` | Router, handlers: decode, `run`, encode/SSE framing, attribution headers |
+| `server.rs` | Router, request stages (decode, authorize, budget, plan, execute, encode), SSE framing, attribution headers; `run` owns the server lifecycle (graceful drain, hard stop, ledger flush) |
 | `main.rs` / `lib.rs` | CLI and library root |
 
 Tests: unit tests beside the code; end-to-end suites in `tests/` (shared helpers in

@@ -62,6 +62,9 @@ async fn completions(
         };
         return Sse::new(events).into_response();
     }
+    if model == "delay-m" {
+        tokio::time::sleep(Duration::from_secs(3)).await;
+    }
     let (content, tokens) = match model.as_str() {
         "judge-m" => (
             json!({"crux": "x", "primary_rule": "SUP-1", "capability_boundary": "supported", "p_solve": 0.9}).to_string(),
@@ -90,6 +93,12 @@ type = "llm_classifier"
 mode = "capability"
 efficient = ["fast"]
 capable = ["fast"]
+judge = ["judge"]
+[routes.slowjudged]
+type = "llm_classifier"
+mode = "capability"
+efficient = ["delayed"]
+capable = ["delayed"]
 judge = ["judge"]
 [routes.doomed]
 type = "llm_classifier"
@@ -151,6 +160,10 @@ async fn harness() -> Harness {
         (
             "slow",
             format!("[{}]", endpoint("mock", "slow-m", 1.0, 2.0)),
+        ),
+        (
+            "delayed",
+            format!("[{}]", endpoint("mock", "delay-m", 1.0, 2.0)),
         ),
         (
             "broken",
@@ -326,4 +339,26 @@ async fn a_failed_run_still_records_the_judge_spend() {
     );
     assert_eq!(entries[0].kind, Kind::Judge);
     assert_eq!(entries[0].cost_micro_usd, 100 * 2 + 20 * 6);
+}
+
+#[tokio::test]
+async fn a_request_cancelled_mid_flight_still_records_the_judge_call_it_paid_for() {
+    let h = harness().await;
+    // The judge answers at once, then the answer call sleeps; the client gives up first.
+    let impatient = reqwest::Client::builder()
+        .timeout(Duration::from_millis(700))
+        .build()
+        .unwrap();
+    let result = impatient
+        .post(format!("{}/v1/chat/completions", h.url))
+        .bearer_auth(&h.key)
+        .json(&chat("slowjudged", false))
+        .send()
+        .await;
+    assert!(result.is_err(), "the client should have timed out");
+    let entries = h.entries(1).await;
+    assert_eq!(entries.len(), 1, "{entries:?}");
+    assert_eq!(entries[0].kind, Kind::Judge);
+    assert_eq!(entries[0].cost_micro_usd, 100 * 2 + 20 * 6);
+    assert_eq!(entries[0].key_id.as_deref(), Some("alice"));
 }

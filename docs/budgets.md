@@ -34,8 +34,15 @@ route, target, provider, model, kind (`answer`, or `judge` for classifier calls 
 sees), token counts, cost and outcome (`ok`, `error`, `cancelled`). Judge calls are charged to the
 same key. Rows are written by a background task and never delay a response; a full queue or a
 failing database is logged and counted, not surfaced to clients. Streams are recorded when they end
-(or when the client disconnects, as `cancelled`); a provider that reports no usage is recorded with
+(or when the client disconnects, as `cancelled`; a request cancelled before it answers still
+records the judge calls it already paid for); a provider that reports no usage is recorded with
 zero tokens and `usage_missing = 1`.
+
+On SIGTERM or Ctrl-C the gateway drains in-flight requests, cancels what is left after
+`shutdown_grace_secs`, and **flushes the queue to the ledger before exiting**; if it cannot (10
+second limit) it exits non-zero and logs that entries may be lost. A hard kill (SIGKILL, a crash,
+power loss) can still lose entries that were queued but not yet written, so budgets rebuilt after
+one may be slightly low.
 
 ## Budgets
 

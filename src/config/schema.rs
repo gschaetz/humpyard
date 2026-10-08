@@ -11,6 +11,9 @@ use serde::Deserialize;
 #[serde(deny_unknown_fields)]
 pub(super) struct RawConfig {
     pub(super) listen: SocketAddr,
+    /// Seconds to wait for in-flight requests after a termination signal.
+    #[serde(default = "default_shutdown_grace_secs")]
+    pub(super) shutdown_grace_secs: u64,
     pub(super) providers: BTreeMap<String, RawProvider>,
     pub(super) targets: BTreeMap<String, RawTarget>,
     #[serde(default)]
@@ -94,6 +97,10 @@ pub(super) struct RawProvider {
 #[serde(deny_unknown_fields)]
 pub(super) struct RawTarget {
     pub(super) endpoints: Vec<Endpoint>,
+}
+
+fn default_shutdown_grace_secs() -> u64 {
+    30
 }
 
 fn default_timeout_secs() -> u64 {
