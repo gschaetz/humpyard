@@ -49,6 +49,7 @@ fn rules() -> BTreeMap<&'static str, Module> {
     BTreeMap::from([
         ("clock", module(Core, &["num"])),
         ("num", module(Core, &[])),
+        ("estimate", module(Core, &[])),
         ("config", module(Core, &[])),
         ("policy", module(Core, &[])),
         ("auth", module(Core, &["config"])),

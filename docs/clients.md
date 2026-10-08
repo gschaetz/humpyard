@@ -37,8 +37,11 @@ Notes from the verified run (a read-only agent in a scratch directory, `claude -
   guessed 39 different filenames (`todo.txt`, `main.py`, ...) without using the search tools and ran
   out of turns, while the same agent answered a precise "read this file" task correctly in two
   turns. Pick tiers for agent work accordingly.
-- **Not implemented:** `POST /v1/messages/count_tokens` returns 404. Claude Code did not call it in
-  this run, but clients that do (context display, compaction) will see an error.
+- **`POST /v1/messages/count_tokens` is answered with a local estimate.** No provider has a count
+  call, so the number is computed by the gateway (no upstream call, no cost, no ledger entry, still
+  available to a key over budget) and marked with `x-humpyard-token-count: estimate`. Measured
+  against two real providers it ran 1.07x to 2.14x the true prompt size (median 1.23x), never below
+  it: clients compact slightly early rather than overflow. Don't use it for billing.
 
 ## Codex and other Responses-API clients
 

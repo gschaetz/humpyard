@@ -3,7 +3,7 @@
 Living document. Update it in the same PR as any change that alters structure, request flow or
 component status (see [AGENTS.md](../AGENTS.md)). Diagrams are Mermaid and render on GitHub.
 
-Last updated: 2026-10-08 (`add-graceful-shutdown` implemented: SIGTERM/Ctrl-C drain and flush the ledger before exit; health-aware policy, managed keys and the modelrelay migration are next).
+Last updated: 2026-10-08 (`add-count-tokens` implemented: Anthropic-format token counting answered locally; health-aware policy, managed keys and the modelrelay migration are next).
 
 ## Component status
 
@@ -21,6 +21,7 @@ Last updated: 2026-10-08 (`add-graceful-shutdown` implemented: SIGTERM/Ctrl-C dr
 | Provider health + telemetry feeding policy | Planned | not yet proposed |
 | Engineering hardening: invariants + architecture test, lints, structure refactors, CI gates, property tests, ADRs | Implemented | `harden-engineering` |
 | Graceful shutdown: drain, grace period, cancel, ledger flush before exit | Implemented | `add-graceful-shutdown` |
+| `count_tokens`: local, conservative prompt-size estimate (no upstream call) | Implemented | `add-count-tokens` |
 | Database-managed keys + admin API | Planned (designed for in `add-cost-tracking`) | not yet proposed |
 | `migrate-modelrelay` command + bundled catalog | Planned | not yet proposed |
 
@@ -81,6 +82,7 @@ Switchyard decides the macro question (which target); the provider pool answers 
 | Module | Role |
 |---|---|
 | `config/` | TOML schema (`schema.rs`), cross-field validation (`validate.rs`), env-var key loading and the public `Config` (`mod.rs`) |
+| `estimate.rs` | Prompt-size estimate for `count_tokens` (pure function over JSON, bytes-per-token ratio calibrated high) |
 | `num.rs` | Checked integer/float conversions for money and token paths (the only lossy casts) |
 | `error.rs` | Gateway errors rendered per client protocol |
 | `policy.rs` | `RoutingPolicy` trait, `PolicyContext`, allow-all default |
