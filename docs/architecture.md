@@ -3,7 +3,7 @@
 Living document. Update it in the same PR as any change that alters structure, request flow or
 component status (see [AGENTS.md](../AGENTS.md)). Diagrams are Mermaid and render on GitHub.
 
-Last updated: 2026-10-08 (`add-endpoint-health`: per-endpoint circuit breakers in the pool; database-managed keys, target-level health eligibility and the modelrelay migration are next).
+Last updated: 2026-10-08 (`add-packaging`: tag-only release workflow, container image, launchd service; the modelrelay migration, database-managed keys and target-level health eligibility are next).
 
 ## Component status
 
@@ -23,6 +23,7 @@ Last updated: 2026-10-08 (`add-endpoint-health`: per-endpoint circuit breakers i
 | Engineering hardening: invariants + architecture test, lints, structure refactors, CI gates, property tests, ADRs | Implemented | `harden-engineering` |
 | Graceful shutdown: drain, grace period, cancel, ledger flush before exit | Implemented | `add-graceful-shutdown` |
 | `count_tokens` / `responses/input_tokens`: local, conservative prompt-size estimates (no upstream call). `responses/compact` intentionally not implemented | Implemented | `add-count-tokens`, `add-responses-input-tokens` |
+| Packaging: tag-only release workflow (native runners), GHCR image, launchd service | Implemented (first release not cut yet) | `add-packaging` (ADR 0010) |
 | Database-managed keys + admin API | Planned (designed for in `add-cost-tracking`) | not yet proposed |
 | `migrate-modelrelay` command + bundled catalog | Planned | not yet proposed |
 

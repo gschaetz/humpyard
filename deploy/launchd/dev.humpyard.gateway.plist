@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- humpyard as a per-user launchd service. Install with deploy/launchd/install.sh (see
+     docs/deployment.md). Provider keys are loaded from ~/.config/humpyard/env by the shell, so
+     they never appear in this file. launchd sends SIGTERM and waits ExitTimeOut seconds before
+     SIGKILL: keep it above shutdown_grace_secs (default 30) plus the 10 s ledger flush. -->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>dev.humpyard.gateway</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/sh</string>
+    <string>-c</string>
+    <string>set -a; . "$HOME/.config/humpyard/env"; set +a; exec "$HOME/.local/bin/humpyard" serve --config "$HOME/.config/humpyard/config.toml"</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+  <key>ExitTimeOut</key>
+  <integer>50</integer>
+  <key>StandardOutPath</key>
+  <string>__HOME__/Library/Logs/humpyard.log</string>
+  <key>StandardErrorPath</key>
+  <string>__HOME__/Library/Logs/humpyard.log</string>
+</dict>
+</plist>
