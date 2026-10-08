@@ -66,8 +66,35 @@ daily limit and another with a 400-token `free_only` limit, at 50% restricted.
 - **Restart recovery.** After a restart both keys' spend was rebuilt from the ledger (1,633 and 910
   tokens) and the exhausted key still got 402.
 
+## Failover against real network failures (verified 2026-10-08)
+
+A target whose first endpoint fails for real, ahead of a working OpenCode Go endpoint:
+
+| first endpoint | result | time |
+|---|---|---|
+| connect timeout (non-routable address, 3 s limit) | failed over, served by OpenCode | 3.6 s |
+| DNS failure (`.invalid` name) | failed over, served by OpenCode | 0.8 s |
+| a real server answering **404** (public test service) | **no failover**: the 404 passed straight to the client | 0.2 s |
+| the only endpoint times out | client got 504 `upstream timed out` | 3.0 s |
+
+- The log names each failed endpoint and why ("trying next ... provider=blackhole ... timed out").
+- The ledger holds only the call that served, attributed to the serving endpoint; failed attempts
+  carry no usage and are not recorded.
+- A real 404 not failing over is the intended rule (other 4xx would fail identically elsewhere),
+  now seen against a real server, not just a mock.
+- **Real 429 and 5xx responses could not be produced safely** (provoking OpenCode Go's own limits
+  would burn quota, and public status services answer only their exact paths, while the gateway
+  appends `/chat/completions`). 429/5xx failover is covered by the mock-provider tests in
+  `tests/pool.rs`.
+- Observed rough edge: when an upstream returns a non-JSON body (an HTML 404 page), the client's
+  error message and the log carry that raw text. A status-based message would be cleaner.
+
+**Safety rule when testing failover:** the gateway sends each provider's API key to that
+provider's URL. Give any endpoint you do not control (a public test service, a black hole) its own
+dummy `api_key_env`, never the key of a real provider.
+
 ## Not yet verified
 
-Rate-limit (429) failover against a real provider, Responses `previous_response_id`, a stream
-cut by the grace period against a real provider (the mock-based test covers it), and
-long-running streams near the provider timeout.
+A real provider's own 429 or 5xx, Responses `previous_response_id`, a stream cut by the grace
+period against a real provider (the mock-based test covers it), and long-running streams near the
+provider timeout.
