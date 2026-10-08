@@ -71,6 +71,12 @@ async fn completions(
             usage(100, 20),
         ),
         "fast-m" => ("fast".to_string(), usage(10, 5)),
+        // 100 completion tokens, 90 of them reasoning: the way real reasoning models report usage.
+        "reason-m" => {
+            let mut tokens = usage(10, 100);
+            tokens["completion_tokens_details"] = json!({"reasoning_tokens": 90});
+            ("thought".to_string(), tokens)
+        }
         "p2-m" => ("p2".to_string(), usage(7, 3)),
         _ => (model.clone(), usage(1, 1)),
     };
@@ -160,6 +166,10 @@ async fn harness() -> Harness {
         (
             "slow",
             format!("[{}]", endpoint("mock", "slow-m", 1.0, 2.0)),
+        ),
+        (
+            "reasoner",
+            format!("[{}]", endpoint("mock", "reason-m", 1.0, 2.0)),
         ),
         (
             "delayed",
@@ -361,4 +371,34 @@ async fn a_request_cancelled_mid_flight_still_records_the_judge_call_it_paid_for
     assert_eq!(entries[0].kind, Kind::Judge);
     assert_eq!(entries[0].cost_micro_usd, 100 * 2 + 20 * 6);
     assert_eq!(entries[0].key_id.as_deref(), Some("alice"));
+}
+
+#[tokio::test]
+async fn reasoning_tokens_are_inside_output_and_counted_once() {
+    let h = harness().await;
+    assert_eq!(
+        h.post("/v1/chat/completions", chat("reasoner", false))
+            .await
+            .status(),
+        200
+    );
+    let entries = h.entries(1).await;
+    let e = &entries[0];
+    assert_eq!(
+        (e.input_tokens, e.output_tokens, e.reasoning_tokens),
+        (10, 100, 90)
+    );
+    // 10 input at $1/M + 100 output at $2/M: the 90 reasoning tokens are not billed again.
+    assert_eq!(e.cost_micro_usd, 10 + 100 * 2);
+
+    let info: Value = reqwest::Client::new()
+        .get(format!("{}/v1/key/info", h.url))
+        .bearer_auth(&h.key)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(info["spend"]["daily_tokens"], 110, "{info}");
 }

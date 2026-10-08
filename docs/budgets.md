@@ -25,7 +25,8 @@ never the key or its hash. `GET /v1/key/info` shows the calling key's limits, sp
 Each endpoint may declare `price = { input, output, cached_input }` in USD per million tokens.
 Cost is computed from the tokens the provider reports and kept in whole micro-USD. A config with
 any USD budget must price every endpoint (use `0` for free models), so nothing is silently free.
-Reasoning tokens bill as output; cache-read tokens bill at `cached_input` (default: `input`).
+Reasoning tokens are part of the output tokens the provider reports (they are recorded as detail,
+not added again), and cache-read tokens bill at `cached_input` (default: `input`).
 
 ## The usage ledger
 

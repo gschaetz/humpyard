@@ -61,12 +61,17 @@ pub struct Entry {
 }
 
 impl Entry {
+    /// Tokens counted against token budgets. `reasoning_tokens` is detail inside
+    /// `output_tokens` (providers report reasoning as part of the completion), so it is not added.
     pub fn total_tokens(&self) -> u64 {
-        self.input_tokens
-            + self.cached_input_tokens
-            + self.cache_creation_tokens
-            + self.output_tokens
-            + self.reasoning_tokens
+        [
+            self.input_tokens,
+            self.cached_input_tokens,
+            self.cache_creation_tokens,
+            self.output_tokens,
+        ]
+        .into_iter()
+        .fold(0, u64::saturating_add)
     }
 }
 
@@ -174,7 +179,7 @@ impl Ledger {
     pub async fn spend_since(&self, since_ms: i64) -> Result<HashMap<String, Spend>, LedgerError> {
         let rows = sqlx::query(
             "SELECT key_id, SUM(cost_micro_usd) AS cost, \
-             SUM(input_tokens + cached_input_tokens + cache_creation_tokens + output_tokens + reasoning_tokens) AS tokens \
+             SUM(input_tokens + cached_input_tokens + cache_creation_tokens + output_tokens) AS tokens \
              FROM usage WHERE ts_ms >= ?1 AND key_id IS NOT NULL GROUP BY key_id",
         )
         .bind(since_ms)
@@ -395,6 +400,21 @@ mod tests {
             }
         );
         assert_eq!(spend.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn reasoning_tokens_are_not_added_to_the_rebuilt_totals() {
+        let dir = tempfile::tempdir().unwrap();
+        let ledger = open(&dir).await;
+        let mut e = entry(Some("alice"), 1_000, 10, 10);
+        e.output_tokens = 100;
+        e.reasoning_tokens = 90; // detail inside the 100 output tokens
+        assert_eq!(e.total_tokens(), 110);
+        ledger.record(e);
+        ledger.shutdown().await;
+        let ledger = open(&dir).await;
+        let spend = ledger.spend_since(0).await.unwrap();
+        assert_eq!(spend["alice"].tokens, 110);
     }
 
     #[tokio::test]
