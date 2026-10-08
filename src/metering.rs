@@ -19,6 +19,7 @@ use switchyard_protocol::{
 use crate::budget::BudgetTracker;
 use crate::clock::Clock;
 use crate::config::Price;
+use crate::estimate::tokens_for_bytes;
 use crate::ledger::{Entry, Kind, Ledger};
 use crate::pool::{Served, TargetClient};
 use crate::pricing::cost_micro_usd;
@@ -200,6 +201,7 @@ impl CallContext {
             template,
             accounting: self.accounting.clone(),
             usage: None,
+            streamed_bytes: 0,
             terminal: false,
             failed: false,
             submitted: false,
@@ -210,6 +212,9 @@ impl CallContext {
                 match &item {
                     Ok(event) => {
                         for chunk in event.normalized() {
+                            recorder.streamed_bytes = recorder
+                                .streamed_bytes
+                                .saturating_add(generated_bytes(chunk));
                             match chunk {
                                 LlmResponseChunk::Usage(usage) => recorder.usage = Some(usage.clone()),
                                 LlmResponseChunk::MessageStop { .. } => recorder.terminal = true,
@@ -245,6 +250,8 @@ struct StreamRecorder {
     template: StreamTemplate,
     accounting: Arc<Accounting>,
     usage: Option<Usage>,
+    /// Bytes of generated text seen so far, the basis of the estimate when no usage arrives.
+    streamed_bytes: usize,
     terminal: bool,
     failed: bool,
     submitted: bool,
@@ -268,11 +275,31 @@ impl StreamRecorder {
             fill_tokens(&mut entry, usage);
             entry.cost_micro_usd = self.template.price.map_or(0, |p| cost_micro_usd(usage, &p));
             entry.usage_missing = false;
+        } else if self.streamed_bytes > 0 {
+            // The provider's usage chunk never arrived (cut stream, dropped client), but it
+            // generated what was delivered, so count an estimate rather than nothing. Input is
+            // unknown here, so the estimate covers output only. `usage_missing` stays set to mark
+            // the row as an estimate.
+            let output = tokens_for_bytes(self.streamed_bytes);
+            entry.output_tokens = output;
+            entry.cost_micro_usd = self.template.price.map_or(0, |p| {
+                let usage = Usage {
+                    output_tokens: Some(output),
+                    ..Usage::default()
+                };
+                cost_micro_usd(&usage, &p)
+            });
+            tracing::warn!(
+                target = %entry.target,
+                provider = %entry.provider,
+                output_tokens = output,
+                "stream ended without usage; recording an output-only estimate"
+            );
         } else {
             tracing::warn!(
                 target = %entry.target,
                 provider = %entry.provider,
-                "stream ended without usage; recording zero cost"
+                "stream ended without usage or output; recording zero cost"
             );
         }
         self.accounting.complete(entry);
@@ -283,6 +310,21 @@ impl Drop for StreamRecorder {
     /// A dropped stream (client disconnect) still records what was seen.
     fn drop(&mut self) {
         self.submit();
+    }
+}
+
+/// Bytes of generated content a chunk carries (text, reasoning and tool-call arguments).
+fn generated_bytes(chunk: &LlmResponseChunk) -> usize {
+    match chunk {
+        LlmResponseChunk::TextDelta { text, .. }
+        | LlmResponseChunk::ReasoningDelta { text, .. }
+        | LlmResponseChunk::ReasoningDetailsDelta { text, .. } => text.len(),
+        LlmResponseChunk::ToolCallDelta {
+            name,
+            arguments_delta,
+            ..
+        } => name.as_deref().map_or(0, str::len) + arguments_delta.as_deref().map_or(0, str::len),
+        _ => 0,
     }
 }
 

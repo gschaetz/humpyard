@@ -206,6 +206,11 @@ async fn the_grace_period_cuts_a_long_stream_and_records_it_as_cancelled() {
         .unwrap();
     assert_eq!(entries.len(), 1, "{entries:?}");
     assert_eq!(entries[0].outcome, "cancelled");
+    // The provider never sent usage, but the first chunk was generated and delivered: it is
+    // counted as an output-only estimate (and marked as one), not as free.
+    assert!(entries[0].usage_missing);
+    assert!(entries[0].output_tokens > 0, "{entries:?}");
+    assert!(entries[0].cost_micro_usd > 0, "{entries:?}");
 }
 
 #[tokio::test]

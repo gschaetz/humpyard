@@ -3,7 +3,7 @@
 Living document. Update it in the same PR as any change that alters structure, request flow or
 component status (see [AGENTS.md](../AGENTS.md)). Diagrams are Mermaid and render on GitHub.
 
-Last updated: 2026-10-08 (`add-responses-input-tokens` implemented: both token-counting endpoints answered locally; health-aware policy, managed keys and the modelrelay migration are next).
+Last updated: 2026-10-08 (`estimate-unreported-stream-usage`: cut or usage-less streams now record an output estimate; health-aware policy, managed keys and the modelrelay migration are next).
 
 ## Component status
 

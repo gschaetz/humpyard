@@ -104,10 +104,10 @@ A long streamed answer from OpenCode Go (glm-5.3-flash), `shutdown_grace_secs = 
   (`upstream unreachable: gateway is shutting down`) followed by `data: [DONE]`, not a dropped
   connection.
 - The ledger recorded the request with outcome `cancelled`.
-- **Known limitation, confirmed:** that row has zero tokens and zero cost, because a cut stream
-  never reaches the provider's final usage chunk. The provider did generate (and may bill) those
-  tokens, so spend from cut streams is under-counted. Estimating output from the bytes streamed
-  would be a possible improvement.
+- **Found:** that row had zero tokens and zero cost, because a cut stream never reaches the
+  provider's final usage chunk, although the provider generated (and may bill) the delivered
+  text. Fixed by `estimate-unreported-stream-usage`: such rows now carry an output-only estimate
+  (marked `usage_missing`); the input side of a cut stream is still not counted.
 
 ## Not yet verified
 

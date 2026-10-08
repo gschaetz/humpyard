@@ -36,8 +36,10 @@ sees), token counts, cost and outcome (`ok`, `error`, `cancelled`). Judge calls 
 same key. Rows are written by a background task and never delay a response; a full queue or a
 failing database is logged and counted, not surfaced to clients. Streams are recorded when they end
 (or when the client disconnects, as `cancelled`; a request cancelled before it answers still
-records the judge calls it already paid for); a provider that reports no usage is recorded with
-zero tokens and `usage_missing = 1`.
+records the judge calls it already paid for); a stream that ends without usage (cut by the grace period, dropped client, or a provider that
+never reports it) is recorded with `usage_missing = 1` and an **output-only estimate** from the
+text delivered (conservative, about 3 bytes per token); its input is not counted. A buffered
+response without usage, or a stream that generated nothing, records zero.
 
 On SIGTERM or Ctrl-C the gateway drains in-flight requests, cancels what is left after
 `shutdown_grace_secs`, and **flushes the queue to the ledger before exiting**; if it cannot (10
