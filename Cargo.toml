@@ -9,6 +9,10 @@ repository = "https://github.com/gschaetz/humpyard"
 homepage = "https://humpyard.dev"
 readme = "README.md"
 
+[profile.release]
+lto = "thin"
+strip = true
+
 [lints.rust]
 unsafe_code = "forbid"
 

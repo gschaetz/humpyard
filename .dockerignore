@@ -1,0 +1,9 @@
+target
+local
+.git
+.github
+openspec
+docs
+tests
+examples
+*.md

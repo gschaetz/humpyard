@@ -93,3 +93,15 @@ jobs:
       # It only ratchets up: raise it when coverage rises, never lower it to make a change pass.
       - name: Line coverage (floor 92%)
         run: cargo llvm-cov --summary-only --fail-under-lines 92
+
+  # The container image must keep building (it is published by the release workflow).
+  image:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false

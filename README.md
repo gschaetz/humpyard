@@ -15,6 +15,9 @@ ledger and per-key budgets. Planned: health-driven target eligibility, database-
 modelrelay migration command. Design
 background in [docs/background.md](docs/background.md).
 
+Run it: release binaries, a container image and a macOS launchd service are described in
+[docs/deployment.md](docs/deployment.md).
+
 See [docs/architecture.md](docs/architecture.md) for diagrams and component status and
 [docs/routing.md](docs/routing.md) for routes, failover and the routing policy, and
 [docs/budgets.md](docs/budgets.md) for virtual keys, the usage ledger and budgets.

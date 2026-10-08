@@ -35,6 +35,11 @@ keep the old `x-conductor-*` header names as history; living specs and code use 
 - Commits need a DCO `Signed-off-by` line (`git commit -s`, see CONTRIBUTING.md); the `dco` job
   fails a PR with an unsigned commit. Fix with `git rebase --signoff origin/main`.
 
+## Releases
+- Releases are tag-only (`vX.Y.Z` matching `Cargo.toml`, commit on `main`; ADR 0010,
+  [docs/deployment.md](docs/deployment.md)). Pushing a tag publishes binaries and an image publicly,
+  so never create or push a release tag unless the user explicitly asks for that release.
+
 ## Gotchas
 - Sibling repo `../modelrelay` is a separate Node.js project (a fork, not a code source for this
   repo; keep it that way for licensing). Migration is a one-shot `migrate-modelrelay` command, not a runtime reader of
