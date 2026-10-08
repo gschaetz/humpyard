@@ -64,4 +64,4 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@cargo-llvm-cov
       - name: Line coverage
-        run: cargo llvm-cov --summary-only | tee coverage.txt
+        run: cargo llvm-cov --summary-only --fail-under-lines 99.9
