@@ -353,3 +353,50 @@ fn shutdown_grace_above_an_hour_is_rejected_naming_the_key() {
     let message = err(&text);
     assert!(message.contains("shutdown_grace_secs"), "{message}");
 }
+
+#[test]
+fn health_defaults_and_overrides() {
+    let defaults = Config::from_toml(VALID, env).unwrap().health;
+    assert_eq!(
+        (
+            defaults.failure_threshold,
+            defaults.cooldown_secs,
+            defaults.max_cooldown_secs
+        ),
+        (3, 30, 300)
+    );
+    let text = format!(
+        "{VALID}\n[health]\nfailure_threshold = 5\ncooldown_secs = 2\nmax_cooldown_secs = 9\n"
+    );
+    let health = Config::from_toml(&text, env).unwrap().health;
+    assert_eq!(
+        (
+            health.failure_threshold,
+            health.cooldown_secs,
+            health.max_cooldown_secs
+        ),
+        (5, 2, 9)
+    );
+}
+
+#[test]
+fn health_values_are_validated_by_key_and_ignored_when_disabled() {
+    for (section, key) in [
+        ("cooldown_secs = 0", "cooldown_secs"),
+        (
+            "cooldown_secs = 86401\nmax_cooldown_secs = 86400",
+            "cooldown_secs",
+        ),
+        (
+            "cooldown_secs = 60\nmax_cooldown_secs = 30",
+            "max_cooldown_secs",
+        ),
+        ("max_cooldown_secs = 86401", "max_cooldown_secs"),
+    ] {
+        let message = err(&format!("{VALID}\n[health]\n{section}\n"));
+        assert!(message.contains(key), "{section}: {message}");
+    }
+    let disabled = format!("{VALID}\n[health]\nfailure_threshold = 0\ncooldown_secs = 0\n");
+    assert!(Config::from_toml(&disabled, env).is_ok());
+    assert!(err(&format!("{VALID}\n[health]\nbogus = 1\n")).contains("bogus"));
+}

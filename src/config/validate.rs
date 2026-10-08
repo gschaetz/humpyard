@@ -60,6 +60,7 @@ pub(super) fn validate(raw: &RawConfig) -> Result<(), ConfigError> {
         validate_headers(name, &provider.headers)?;
     }
     validate_budgets(raw)?;
+    validate_health(raw)?;
     for (id, target) in &raw.targets {
         if target.endpoints.is_empty() {
             return Err(invalid(format!("target `{id}` has no endpoints")));
@@ -87,6 +88,27 @@ pub(super) fn validate(raw: &RawConfig) -> Result<(), ConfigError> {
             }
         }
         validate_route(id, route)?;
+    }
+    Ok(())
+}
+
+/// One day: far beyond any useful cooldown, small enough that doubling can never overflow.
+const MAX_COOLDOWN_SECS: u64 = 86_400;
+
+pub(super) fn validate_health(raw: &RawConfig) -> Result<(), ConfigError> {
+    let health = &raw.health;
+    if health.failure_threshold == 0 {
+        return Ok(()); // disabled: the cooldowns are unused
+    }
+    if health.cooldown_secs == 0 || health.cooldown_secs > MAX_COOLDOWN_SECS {
+        return Err(invalid("health.cooldown_secs must be between 1 and 86400"));
+    }
+    if health.max_cooldown_secs < health.cooldown_secs
+        || health.max_cooldown_secs > MAX_COOLDOWN_SECS
+    {
+        return Err(invalid(
+            "health.max_cooldown_secs must be between cooldown_secs and 86400",
+        ));
     }
     Ok(())
 }

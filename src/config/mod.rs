@@ -42,6 +42,15 @@ pub struct Config {
     pub keys: BTreeMap<String, KeyConfig>,
     pub ledger: Option<PathBuf>,
     pub budget: BudgetConfig,
+    pub health: HealthConfig,
+}
+
+/// Endpoint circuit-breaker settings. A `failure_threshold` of 0 disables health tracking.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct HealthConfig {
+    pub failure_threshold: u32,
+    pub cooldown_secs: u64,
+    pub max_cooldown_secs: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -173,6 +182,11 @@ impl Config {
                 })
                 .collect::<Result<_, ConfigError>>()?,
             ledger: raw.ledger.map(|l| l.path),
+            health: HealthConfig {
+                failure_threshold: raw.health.failure_threshold,
+                cooldown_secs: raw.health.cooldown_secs,
+                max_cooldown_secs: raw.health.max_cooldown_secs,
+            },
             budget: BudgetConfig {
                 restricted_at: raw.budget.restricted_at,
                 restricted_max_output_price: raw.budget.restricted_max_output_price,

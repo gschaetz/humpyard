@@ -181,7 +181,7 @@ struct Built {
 
 async fn build(config: Config, options: Options) -> Result<Built, String> {
     let clock: Arc<dyn Clock> = options.clock.unwrap_or_else(|| Arc::new(SystemClock));
-    let targets = pool::build(&config)?;
+    let targets = pool::build(&config, &clock)?;
     let ledger = match &config.ledger {
         Some(path) => Some(Ledger::open(path).await.map_err(|e| e.to_string())?),
         None => None,
@@ -213,6 +213,7 @@ async fn build(config: Config, options: Options) -> Result<Built, String> {
         .route("/healthz", get(|| async { StatusCode::OK }))
         .route("/v1/models", get(list_models))
         .route("/v1/key/info", get(key_info))
+        .route("/v1/health", get(endpoint_health))
         .route(
             "/v1/messages/count_tokens",
             post(|s, h, b| count_tokens(s, WireFormat::AnthropicMessages, h, b)),
@@ -294,6 +295,36 @@ async fn count_tokens(
             error.into_response_for(format)
         }
     }
+}
+
+/// Each endpoint's health: who is being skipped and for how long. Needs a key when the gateway
+/// has keys, like every other `/v1` call.
+async fn endpoint_health(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response {
+    if let Err(error) = authenticate(&state, &headers).await {
+        return error.into_response_for(WireFormat::OpenAiChat);
+    }
+    let mut targets: Vec<_> = state.targets.iter().collect();
+    targets.sort_by(|a, b| a.0.cmp(b.0));
+    let report: Vec<_> = targets
+        .into_iter()
+        .map(|(target, client)| {
+            let endpoints: Vec<_> = client
+                .health()
+                .into_iter()
+                .map(|e| {
+                    json!({
+                        "provider": e.provider,
+                        "model": e.model,
+                        "state": e.snapshot.state.as_str(),
+                        "consecutive_failures": e.snapshot.consecutive_failures,
+                        "cooldown_remaining_ms": e.snapshot.cooldown_remaining_ms,
+                    })
+                })
+                .collect();
+            json!({"target": target.to_string(), "endpoints": endpoints})
+        })
+        .collect();
+    axum::Json(json!({"targets": report})).into_response()
 }
 
 /// The calling key's id, limits, spend and budget state.

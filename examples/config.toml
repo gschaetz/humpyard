@@ -38,3 +38,11 @@ confidence_threshold = 0.5
 # efficient = ["fast"]
 # capable = ["smart"]
 # judge = ["fast"]
+
+# Endpoint health (all optional; these are the defaults). After `failure_threshold` consecutive
+# failures an endpoint is skipped for `cooldown_secs` (doubling each time, up to
+# `max_cooldown_secs`), then probed with one request. 0 turns it off.
+# [health]
+# failure_threshold = 3
+# cooldown_secs = 30
+# max_cooldown_secs = 300

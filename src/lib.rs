@@ -6,6 +6,7 @@ pub mod clock;
 pub mod config;
 pub mod error;
 pub mod estimate;
+pub mod health;
 pub mod ledger;
 pub mod metering;
 pub mod num;

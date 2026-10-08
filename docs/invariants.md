@@ -47,6 +47,9 @@ in an ADR (`docs/adr/`) in the same change.
    (including `run_waits_for_a_stalled_ledger_writer_before_returning`), `tests/shutdown_process.rs`
    (real signals against the binary) and `tests/usage.rs`
    (`a_request_cancelled_mid_flight_still_records_the_judge_call_it_paid_for`).
+14. **Health never denies service.** A target whose endpoints are all cooling down is still tried,
+    and client errors never count against an endpoint. *Enforced by* `tests/health.rs`; see
+    [ADR-0009](adr/0009-endpoint-health-lives-in-the-pool.md).
 
 ## Data and secrets
 
