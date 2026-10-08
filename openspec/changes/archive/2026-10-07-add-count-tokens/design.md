@@ -31,4 +31,19 @@ the `prompt_tokens` a provider reports *after* a completion. Switchyard's server
 
 ## Findings
 
-(filled in during implementation: calibration against real providers)
+**Calibration (2026-10-08, real providers).** Estimate versus the `prompt_tokens` each provider
+reported for the same request, at 3 bytes per token plus 4 per message and 3 base:
+
+| case | glm-5.3-flash | kimi-k2.6 |
+|---|---|---|
+| English prose | 1.52 | 1.54 |
+| code | 1.19 | 1.23 |
+| 8 tool definitions | 1.13 | 2.14 |
+| CJK + Latin mix | 1.22 | 1.13 |
+| agent turn (tool call and result) | 1.07 | 1.13 |
+| long system prompt | 1.63 | 1.65 |
+
+Range 1.07 to 2.14, median 1.23: always above the real count, which is the intended direction. A
+tighter constant would fix prose but undercount code (about 0.89 at 4 bytes per token), so one
+constant of 3 is kept. A refinement would weight alphabetic text and punctuation differently; the
+data (two tokenizers, six shapes) is too thin to justify it yet.

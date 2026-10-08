@@ -43,7 +43,8 @@ curl localhost:8080/v1/responses -H 'content-type: application/json' \
   -d '{"model":"fast","input":"hi"}'
 ```
 
-Also: `GET /v1/models`, `GET /healthz`. Set `"stream": true` for SSE.
+Also: `GET /v1/models`, `GET /healthz`, `GET /v1/key/info`, and `POST /v1/messages/count_tokens`
+(a conservative local estimate: no provider call, no cost; see [docs/clients.md](docs/clients.md)). Set `"stream": true` for SSE.
 
 ## Configuration
 

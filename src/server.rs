@@ -23,7 +23,7 @@ use switchyard_protocol::{
 };
 use switchyard_translation::{
     LlmStreamError, RawEventStream, decode_request, encode_aggregated_response_with_extensions,
-    encode_stream_with_extensions, util::SWITCHYARD_METADATA_KEY,
+    encode_request, encode_stream_with_extensions, util::SWITCHYARD_METADATA_KEY,
 };
 
 use crate::auth::{ConfigKeyStore, KeyRecord, KeyStore, hash_key, presented_key};
@@ -33,6 +33,7 @@ use crate::clock::SystemClock;
 use crate::config::Config;
 use crate::config::OverBudget;
 use crate::error::GatewayError;
+use crate::estimate::estimate_tokens;
 use crate::ledger::Ledger;
 use crate::metering::{Accounting, CALL_ID_HEADER, CallContext, StreamTemplate};
 use crate::num::f64_from_u64;
@@ -43,6 +44,7 @@ use crate::pool::{self, PROVIDER_HEADER, TargetClient};
 use crate::routing::{Plan, Route, Routes};
 
 const TARGET_HEADER: &str = "x-humpyard-target";
+const TOKEN_COUNT_HEADER: &str = "x-humpyard-token-count";
 
 pub struct AppState {
     config: Config,
@@ -211,6 +213,7 @@ async fn build(config: Config, options: Options) -> Result<Built, String> {
         .route("/healthz", get(|| async { StatusCode::OK }))
         .route("/v1/models", get(list_models))
         .route("/v1/key/info", get(key_info))
+        .route("/v1/messages/count_tokens", post(count_tokens))
         .route(
             "/v1/chat/completions",
             post(|s, h, b| infer(s, WireFormat::OpenAiChat, h, b)),
@@ -244,6 +247,39 @@ async fn list_models(State(state): State<Arc<AppState>>, headers: HeaderMap) -> 
         .map(|id| json!({"id": id, "object": "model", "created": 0, "owned_by": "humpyard"}))
         .collect();
     axum::Json(json!({"object": "list", "data": data})).into_response()
+}
+
+/// Anthropic-format token counting, answered locally: no provider has a count call, so the number
+/// is an estimate of the prompt the routed model would receive (see `crate::estimate`). It makes no
+/// upstream call and no ledger entry, so it skips the budget and policy stages and stays available
+/// to a key at its limit; authentication, the allowlist and the model check still apply.
+async fn count_tokens(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    let format = WireFormat::AnthropicMessages;
+    let counted = async {
+        let caller = authenticate(&state, &headers).await?;
+        let decoded = decode(format, &body)?;
+        authorize(&state, caller.as_ref(), &decoded.model)?;
+        let upstream_form = encode_request(&decoded.llm_request, WireFormat::OpenAiChat)
+            .map_err(|e| GatewayError::BadRequest(format!("cannot translate request: {e}")))?;
+        Ok::<_, GatewayError>((decoded.model, estimate_tokens(&upstream_form)))
+    }
+    .await;
+    match counted {
+        Ok((model, input_tokens)) => {
+            tracing::info!(model, input_tokens, "token count (estimate)");
+            let mut response = axum::Json(json!({"input_tokens": input_tokens})).into_response();
+            set_header(&mut response, TOKEN_COUNT_HEADER, "estimate");
+            response
+        }
+        Err(error) => {
+            tracing::warn!(status = error.status().as_u16(), error = %error, "token count failed");
+            error.into_response_for(format)
+        }
+    }
 }
 
 /// The calling key's id, limits, spend and budget state.
