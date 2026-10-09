@@ -25,6 +25,18 @@ pub struct Facts<'a> {
     pub stream: bool,
 }
 
+/// What one rule did for a request: for `explain`, so operators can see why a rule did or did not
+/// apply.
+#[derive(Debug, PartialEq, Eq)]
+pub struct RuleTrace<'a> {
+    pub rule: &'a str,
+    pub route: &'a str,
+    /// Why the conditions failed; empty when they all held.
+    pub mismatches: Vec<String>,
+    /// For a matching rule, whether the key may use its route; `None` when it did not match.
+    pub permitted: Option<bool>,
+}
+
 /// The rule that applied and the route it chose.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Chosen<'a> {
@@ -63,6 +75,28 @@ impl Selectors {
         self.rules.is_empty()
     }
 
+    /// Every rule's outcome for `facts`, in order. The chosen rule is the first with no mismatches
+    /// and `permitted == Some(true)`.
+    pub fn trace<'a>(
+        &'a self,
+        facts: &Facts<'_>,
+        permitted: impl Fn(&str) -> bool,
+    ) -> Vec<RuleTrace<'a>> {
+        self.rules
+            .iter()
+            .map(|rule| {
+                let mismatches = mismatches(&rule.when, facts);
+                let permitted = mismatches.is_empty().then(|| permitted(&rule.route));
+                RuleTrace {
+                    rule: &rule.label,
+                    route: &rule.route,
+                    mismatches,
+                    permitted,
+                }
+            })
+            .collect()
+    }
+
     /// The first rule that matches `facts` and whose route `permitted` accepts. A matching rule
     /// whose route is not permitted is skipped, never an error: a client's headers must not turn a
     /// working request into a refusal or reach a route the key may not use.
@@ -98,34 +132,52 @@ fn normalized(when: &When) -> When {
 }
 
 fn matches(when: &When, facts: &Facts<'_>) -> bool {
-    let text = |pattern: &Option<String>, value: Option<&str>| {
-        pattern
-            .as_deref()
-            .is_none_or(|p| value.is_some_and(|v| glob(p, v)))
-    };
-    let flag = |wanted: Option<bool>, actual: bool| wanted.is_none_or(|w| w == actual);
-    text(&when.model, Some(facts.model))
-        && text(&when.key, facts.key)
-        && text(
-            &when.profile,
-            facts.headers.get(PROFILE_HEADER).map(String::as_str),
-        )
-        && text(&when.agent, facts.agent)
-        && text(&when.task, facts.task)
-        && flag(when.subagent, facts.subagent)
-        && flag(when.stream, facts.stream)
-        && when.header.iter().all(|(name, pattern)| {
-            facts
-                .headers
-                .get(name)
-                .is_some_and(|value| glob(pattern, value))
-        })
-        && when.tag.iter().all(|(name, pattern)| {
-            facts
-                .headers
-                .get(&format!("{TAG_HEADER_PREFIX}{name}"))
-                .is_some_and(|value| glob(pattern, value))
-        })
+    mismatches(when, facts).is_empty()
+}
+
+/// Why a text condition fails, or `None` when it holds or is not set.
+fn text_mismatch(label: &str, pattern: Option<&str>, value: Option<&str>) -> Option<String> {
+    let pattern = pattern?;
+    if value.is_some_and(|v| glob(pattern, v)) {
+        return None;
+    }
+    Some(match value {
+        Some(v) => format!("{label}: wanted `{pattern}`, got `{v}`"),
+        None => format!("{label}: wanted `{pattern}`, but the request has none"),
+    })
+}
+
+/// Which conditions of `when` do not hold for `facts`, each described in a sentence fragment.
+fn mismatches(when: &When, facts: &Facts<'_>) -> Vec<String> {
+    let header = |name: &str| facts.headers.get(name).map(String::as_str);
+    let mut out: Vec<String> = [
+        text_mismatch("model", when.model.as_deref(), Some(facts.model)),
+        text_mismatch("key", when.key.as_deref(), facts.key),
+        text_mismatch("profile", when.profile.as_deref(), header(PROFILE_HEADER)),
+        text_mismatch("agent", when.agent.as_deref(), facts.agent),
+        text_mismatch("task", when.task.as_deref(), facts.task),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    for (label, wanted, actual) in [
+        ("subagent", when.subagent, facts.subagent),
+        ("stream", when.stream, facts.stream),
+    ] {
+        if let Some(wanted) = wanted
+            && wanted != actual
+        {
+            out.push(format!("{label}: wanted {wanted}, got {actual}"));
+        }
+    }
+    out.extend(when.header.iter().filter_map(|(name, pattern)| {
+        text_mismatch(&format!("header {name}"), Some(pattern), header(name))
+    }));
+    out.extend(when.tag.iter().filter_map(|(name, pattern)| {
+        let header_name = format!("{TAG_HEADER_PREFIX}{name}");
+        text_mismatch(&format!("tag {name}"), Some(pattern), header(&header_name))
+    }));
+    out
 }
 
 /// Case-sensitive match where `*` stands for any run of characters (including none).
@@ -347,6 +399,56 @@ mod tests {
             "the restricted key falls through to the next applicable rule"
         );
         assert_eq!(s.choose(&f, |_| false), None);
+    }
+
+    #[test]
+    fn the_trace_says_why_each_rule_did_or_did_not_apply() {
+        let specs = [
+            rule(
+                "ci",
+                When {
+                    key: Some("ci-*".into()),
+                    subagent: Some(true),
+                    ..When::default()
+                },
+                "paid",
+            ),
+            rule(
+                "deep",
+                When {
+                    profile: Some("deep".into()),
+                    ..When::default()
+                },
+                "premium",
+            ),
+            rule("rest", When::default(), "plain"),
+        ];
+        let s = Selectors::new(&specs);
+        let h = headers(&[("x-humpyard-profile", "deep")]);
+        let f = facts(&h);
+        let trace = s.trace(&f, |route| route != "premium");
+        assert_eq!(trace.len(), 3);
+        assert_eq!(
+            trace[0].mismatches,
+            [
+                "key: wanted `ci-*`, got `alice`",
+                "subagent: wanted true, got false"
+            ]
+        );
+        assert_eq!(trace[0].permitted, None);
+        assert_eq!(trace[1].mismatches, Vec::<String>::new());
+        assert_eq!(
+            trace[1].permitted,
+            Some(false),
+            "matched, but the key may not use it"
+        );
+        assert_eq!(trace[2].permitted, Some(true));
+        let none = HashMap::new();
+        let absent = s.trace(&facts(&none), |_| true);
+        assert_eq!(
+            absent[1].mismatches,
+            ["profile: wanted `deep`, but the request has none"]
+        );
     }
 
     #[test]

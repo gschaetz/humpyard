@@ -82,6 +82,21 @@ Give any key whose clients you do not fully trust an `allowed_routes` list. Cred
 (`authorization`, `x-api-key`, `cookie`, `proxy-authorization`) cannot be matched. A rule can also
 rescue a model name the gateway does not know, which helps clients that hard-code one.
 
+**Explaining a decision.** `POST /v1/route/explain` (with your key) says what a request would do,
+without calling a provider or spending anything. Describe the request; only `model` is required:
+
+```sh
+curl localhost:8080/v1/route/explain -H "Authorization: Bearer $KEY" -H 'content-type: application/json' \
+  -d '{"model":"agent","headers":{"x-humpyard-profile":"deep"},"subagent":false,"stream":false}'
+```
+
+The answer has `selected` (`route`, `rule`, and whether it came from a `selector` or the
+`requested_model`), `rules` (every rule in order: `matched`, the `mismatches` that stopped it, and
+`key_may_use_route`), the key's `budget` state, the `targets` the route would use after the routing
+policy with each endpoint's health, the route's `fallback_on`, and an `outcome`: `ok`, `forbidden`,
+`unknown_model`, `budget_exhausted` or `no_eligible_target`. It runs the same code as real
+requests, so the two agree; it only answers for the calling key.
+
 Responses carry `x-humpyard-route` (the route that served) and `x-humpyard-rule` (the rule's name,
 `select[<index>]` when unnamed, or `default` when the requested model named the route); the log
 line has both and the ledger's route column records the route. Selection happens before the budget

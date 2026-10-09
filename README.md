@@ -8,12 +8,15 @@ multi-provider failover; virtual keys, a usage ledger and budgets.
 track, one by one. That is the job here, with requests and models. Home: https://humpyard.dev.
 (Formerly `switchyard-conductor`.)
 
-Status: pre-alpha. Working today: the three client protocols with streaming, routes backed by
-Switchyard's `passthrough`, `random`, `stage_router` and `llm_classifier`, ordered-endpoint
-failover with per-endpoint circuit breakers, a routing-policy seam, virtual keys, a SQLite usage
-ledger and per-key budgets. Planned: health-driven target eligibility, database-managed keys, the
-modelrelay migration command. Design
-background in [docs/background.md](docs/background.md).
+Status: pre-alpha. Working today: the three client protocols with streaming; routes backed by
+Switchyard's `passthrough`, `random`, `stage_router` and `llm_classifier`; ordered-endpoint
+failover with per-endpoint circuit breakers and per-route control over which failures fall through
+to the next target; selector rules that pick the route from the key, headers, tags and agent
+metadata, with a dry-run `explain` call; a routing-policy seam; virtual keys, a SQLite usage
+ledger and per-key budgets. Planned: request-feature conditions and hot reload for rules,
+database-managed keys with an admin API, `/metrics`, and a status page (see
+[the roadmap](docs/architecture.md#component-status)). Design background in
+[docs/background.md](docs/background.md).
 
 Run it: release binaries, a container image and a macOS launchd service are described in
 [docs/deployment.md](docs/deployment.md).
@@ -49,9 +52,12 @@ curl localhost:8080/v1/responses -H 'content-type: application/json' \
   -d '{"model":"fast","input":"hi"}'
 ```
 
-Also: `GET /v1/models`, `GET /healthz`, `GET /v1/key/info`, and `POST /v1/messages/count_tokens`
-and `POST /v1/responses/input_tokens` (conservative local estimates: no provider call, no cost). Verified with real Claude Code and
-Codex CLI sessions: see [docs/clients.md](docs/clients.md). Set `"stream": true` for SSE.
+Also: `GET /v1/models`, `GET /healthz`, `GET /v1/key/info` (a key's limits and spend),
+`GET /v1/health` (which provider endpoints are being skipped), `POST /v1/route/explain` (what a
+request would do, without sending it), and `POST /v1/messages/count_tokens` and
+`POST /v1/responses/input_tokens` (conservative local estimates: no provider call, no cost).
+Verified with real Claude Code and Codex CLI sessions: see [docs/clients.md](docs/clients.md).
+Set `"stream": true` for SSE.
 
 ## Configuration
 
@@ -69,7 +75,13 @@ See [examples/config.toml](examples/config.toml). Three kinds of entries:
   efficient vs capable), or `llm_classifier` (`capability` judges task difficulty, `escalation`
   latches to capable after repeated judge verdicts; both need a `judge` target). Send
   `x-switchyard-session-id` so per-session state (latches, holds) persists across requests.
-  If the selected target fails entirely, the next target the algorithm returned is tried.
+  If the selected target fails entirely, the next target the algorithm returned is tried; a
+  route's `fallback_on = ["overflow", ...]` limits which failures may do that (default: all).
+- `[[select]]`: ordered rules that choose the route from the key, the requested model, headers
+  (`x-humpyard-profile`, `x-humpyard-tag-<name>`, or any named header), and agent metadata. First
+  match wins; a rule is skipped when the key may not use its route, so clients can narrow but never
+  widen. Responses carry `x-humpyard-route` and `x-humpyard-rule`. See
+  [docs/routing.md](docs/routing.md#selecting-the-route).
 - `[health]`: optional endpoint circuit breaker (`failure_threshold`, `cooldown_secs`,
   `max_cooldown_secs`); `GET /v1/health` shows which endpoints are being skipped.
 
@@ -82,7 +94,8 @@ queued usage entries are written to the ledger before the process exits 0. A kil
 still lose entries that were queued but not yet written. `check-config` validates a file and reports
 dangling provider/target references and missing key variables.
 
-Not supported yet: health-driven target eligibility, database-managed keys, `previous_response_id` (returns 400).
+Not supported yet: health-driven target eligibility, database-managed keys, an admin API,
+`previous_response_id` (returns 400).
 
 ## Development
 
