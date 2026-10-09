@@ -236,9 +236,11 @@ targets = ["paid-coding"]
 [routes.fast-public]
 type = "passthrough"
 targets = ["pub-fast", "paid-fast"]
+# Strict: paid is a last resort for oversized prompts only, so a public blip never spends credit.
 [routes.deep-public]
 type = "passthrough"
 targets = ["pub-deep", "paid-deep"]
+fallback_on = ["overflow"]
 [routes.fast-private]
 type = "passthrough"
 targets = ["priv-fast", "pub-fast", "paid-fast"]
@@ -389,6 +391,27 @@ async fn a_prompt_too_large_for_the_public_tier_goes_to_paid() {
     let big = "x".repeat(5_000);
     assert_eq!(r.ask("fast-public", &big).await, (200, "paid-fast".into()));
     assert_eq!(r.ask("deep-public", &big).await, (200, "paid-deep".into()));
+}
+
+#[tokio::test]
+async fn a_strict_route_spends_paid_credit_only_on_overflow() {
+    let r = rig().await;
+    // The public tier is flaky: a lenient route (fast-public) would fall through to paid...
+    r.public.set(|_| status(503));
+    assert_eq!(r.ask("fast-public", "hi").await, (200, "paid-fast".into()));
+    // ...a strict one (deep-public) reports the failure and keeps paid untouched.
+    let paid_before = r.paid.total();
+    assert_eq!(r.ask("deep-public", "hi").await.0, 502);
+    assert_eq!(
+        r.paid.total(),
+        paid_before,
+        "no paid call for a public blip"
+    );
+    r.public.set(|_| status(429));
+    assert_eq!(r.ask("deep-public", "hi").await.0, 429);
+    // Oversized prompts are the one thing it does hand to paid.
+    r.public.set(|_| overflow());
+    assert_eq!(r.ask("deep-public", "hi").await, (200, "paid-deep".into()));
 }
 
 #[tokio::test]

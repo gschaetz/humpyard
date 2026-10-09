@@ -228,7 +228,7 @@ pub(super) fn validate_route(id: &str, route: &RouteSpec) -> Result<(), ConfigEr
         }
     };
     match route {
-        RouteSpec::Passthrough { targets } => non_empty("targets", targets),
+        RouteSpec::Passthrough { targets, .. } => non_empty("targets", targets),
         RouteSpec::Random {
             targets, weights, ..
         } => {

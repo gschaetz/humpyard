@@ -33,10 +33,25 @@ session with the `x-switchyard-session-id` header; without it, state-dependent b
   full timeout each time, so each endpoint (provider + model) has a circuit breaker; see
   [Endpoint health](#endpoint-health).
 - **Across targets**, if every endpoint of the selected target fails, the next target the
-  algorithm returned is tried. Falling through happens for a context-window overflow, 429, 403,
-  408, any 5xx, connection errors and timeouts. Other client errors (400, 401, 404) stop at once
-  and reach the client, because another target would reject the same request. If no target
-  answers, the client gets the last error (a timeout is still reported as 504).
+  algorithm returned is tried. By default falling through happens for a context-window overflow,
+  429, 403, 408, any 5xx, connection errors and timeouts. Other client errors (400, 401, 404) stop
+  at once and reach the client, because another target would reject the same request. If no
+  target answers, the client gets the last error (a timeout is still reported as 504).
+- **Choosing what falls through.** A route can limit this with `fallback_on`, a list of failure
+  classes (`overflow`, `rate_limit`, `timeout`, `server_error`, `connection`, `forbidden`). A
+  failure outside the list ends the request and the client sees the original status and message.
+  `fallback_on = []` turns target fallback off. This keeps a paid last resort from being spent on
+  a public blip:
+
+  ```toml
+  [routes.deep-public]
+  type = "passthrough"
+  targets = ["pub-deep", "paid-deep"]
+  fallback_on = ["overflow"]     # go to paid only when the prompt does not fit
+  ```
+
+  It applies to every route type and governs the hand-over between targets; endpoints inside one
+  target are a rotation and always fail over.
 - If everything fails, the client gets the last error: 429/4xx pass through, unreachable is 502,
   timeout is 504.
 

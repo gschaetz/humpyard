@@ -61,6 +61,14 @@ async fn upstream(failure: Option<Failure>) -> (Arc<Upstream>, String) {
 
 /// Route `r` = target `first` then `second`. Returns the response and how often each was called.
 async fn run(failure: Failure) -> (u16, Option<String>, Value, usize, usize) {
+    run_with(failure, "").await
+}
+
+/// Like `run`, with extra lines appended to the route (for example `fallback_on = [...]`).
+async fn run_with(
+    failure: Failure,
+    route_extra: &str,
+) -> (u16, Option<String>, Value, usize, usize) {
     let (first, first_url) = upstream(Some(failure)).await;
     let (second, second_url) = upstream(None).await;
     let toml = format!(
@@ -81,6 +89,7 @@ endpoints = [{{ provider = "p2", model = "b" }}]
 [routes.r]
 type = "passthrough"
 targets = ["first", "second"]
+{route_extra}
 "#
     );
     let config = Config::from_toml(&toml, |_| Some("k".into())).unwrap();
@@ -183,4 +192,95 @@ endpoints = [{{ provider = "p1", model = "a" }}]
     let body: Value = resp.json().await.unwrap();
     assert_eq!(body["error"]["message"], "upstream timed out", "{body}");
     assert_eq!(first.calls.load(Ordering::SeqCst), 1);
+}
+
+// ---- fallback_on: which failures may move a route to its next target ----
+
+/// With `fallback_on` set, the failure either falls back or reaches the client unchanged.
+async fn with_setting(
+    failure: Failure,
+    setting: &str,
+) -> (u16, Option<String>, Value, usize, usize) {
+    run_with(failure, setting).await
+}
+
+#[tokio::test]
+async fn fallback_on_overflow_only_falls_back_on_overflow_and_nothing_else() {
+    let only_overflow = r#"fallback_on = ["overflow"]"#;
+    let (status, target, _, first, second) = with_setting(
+        Failure::Status(400, err("context_length_exceeded")),
+        only_overflow,
+    )
+    .await;
+    assert_eq!(
+        (status, target.as_deref(), first, second),
+        (200, Some("second"), 1, 1)
+    );
+
+    // A rate limit, a server error and a timeout now stop at the first target, and the client
+    // sees the original status and message, not a gateway-internal one.
+    let (status, target, body, first, second) = with_setting(
+        Failure::Status(429, err("rate_limit_exceeded")),
+        only_overflow,
+    )
+    .await;
+    assert_eq!((status, target, first, second), (429, None, 1, 0));
+    assert_eq!(body["error"]["message"], "nope", "{body}");
+    assert_eq!(body["error"]["type"], "rate_limit_error", "{body}");
+
+    let (status, _, body, first, second) =
+        with_setting(Failure::Status(503, err("overloaded")), only_overflow).await;
+    assert_eq!((status, first, second), (502, 1, 0), "{body}");
+
+    let (status, _, body, first, second) = with_setting(Failure::Stall, only_overflow).await;
+    assert_eq!((status, first, second), (504, 1, 0), "{body}");
+    assert_eq!(body["error"]["message"], "upstream timed out");
+}
+
+#[tokio::test]
+async fn fallback_on_lists_pick_exactly_the_classes_named() {
+    let setting = r#"fallback_on = ["rate_limit", "timeout"]"#;
+    for failure in [Failure::Status(429, err("x")), Failure::Stall] {
+        let (status, target, _, first, second) = with_setting(failure, setting).await;
+        assert_eq!(
+            (status, target.as_deref(), first, second),
+            (200, Some("second"), 1, 1)
+        );
+    }
+    for failure in [
+        Failure::Status(500, err("x")),
+        Failure::Status(403, err("x")),
+        Failure::Status(400, err("context_length_exceeded")),
+    ] {
+        let (status, _, _, first, second) = with_setting(failure, setting).await;
+        assert!(status >= 400, "{status}");
+        assert_eq!((first, second), (1, 0));
+    }
+}
+
+#[tokio::test]
+async fn an_empty_fallback_on_never_falls_through() {
+    let (status, _, _, first, second) =
+        with_setting(Failure::Status(503, err("x")), "fallback_on = []").await;
+    assert_eq!((status, first, second), (502, 1, 0));
+}
+
+#[tokio::test]
+async fn an_unknown_fallback_class_is_rejected_when_the_config_loads() {
+    let toml = r#"listen = "127.0.0.1:0"
+[providers.p]
+base_url = "http://127.0.0.1:1"
+api_key_env = "K"
+[targets.a]
+endpoints = [{ provider = "p", model = "m" }]
+[routes.r]
+type = "passthrough"
+targets = ["a"]
+fallback_on = ["overflow", "sometimes"]
+"#;
+    let message = Config::from_toml(toml, |_| Some("k".into()))
+        .err()
+        .unwrap()
+        .to_string();
+    assert!(message.contains("sometimes"), "{message}");
 }

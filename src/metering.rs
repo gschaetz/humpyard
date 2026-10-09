@@ -18,7 +18,8 @@ use switchyard_protocol::{
 
 use crate::budget::BudgetTracker;
 use crate::clock::Clock;
-use crate::config::Price;
+use crate::config::{FallbackOn, Price};
+use crate::error::{fallback_class, stop_fallback};
 use crate::estimate::tokens_for_bytes;
 use crate::ledger::{Entry, Kind, Ledger};
 use crate::pool::{Served, TargetClient};
@@ -145,6 +146,7 @@ impl CallContext {
         self: &Arc<Self>,
         targets: &HashMap<ModelId, Arc<TargetClient>>,
         names: &[ModelId],
+        fallback: &FallbackOn,
     ) -> ClientRouter {
         let clients: HashMap<ModelId, Arc<dyn RoutedLlmClient>> = names
             .iter()
@@ -154,6 +156,7 @@ impl CallContext {
                     inner,
                     target: name.to_string(),
                     ctx: self.clone(),
+                    fallback: fallback.clone(),
                 };
                 Some((name.clone(), Arc::new(metered) as Arc<dyn RoutedLlmClient>))
             })
@@ -341,12 +344,19 @@ struct Metered {
     inner: Arc<TargetClient>,
     target: String,
     ctx: Arc<CallContext>,
+    /// Failures this route may hand to its next target; any other failure ends the request.
+    fallback: FallbackOn,
 }
 
 #[async_trait]
 impl RoutedLlmClient for Metered {
     async fn call(&self, request: Request) -> Result<Response, LlmClientError> {
-        let (mut response, served) = self.inner.call_detailed(request).await?;
+        let (mut response, served) = self.inner.call_detailed(request).await.map_err(|error| {
+            match fallback_class(&error) {
+                Some(class) if !self.fallback.allows(class) => stop_fallback(class, &error),
+                _ => error,
+            }
+        })?;
         let id = self.ctx.next_id.fetch_add(1, Ordering::Relaxed);
         let mut entry = self.ctx.base_entry(&self.target, &served);
         match &response.llm_response {
