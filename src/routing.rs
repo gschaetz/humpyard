@@ -13,7 +13,7 @@ use switchyard_libsy::{
 };
 use switchyard_protocol::{Category, ModelId};
 
-use crate::config::{ClassifierMode, ClassifyTrigger, Config, PickerMode, RouteSpec};
+use crate::config::{ClassifierMode, ClassifyTrigger, Config, FallbackOn, PickerMode, RouteSpec};
 
 /// A servable name: the algorithm and the target groups it chooses among.
 pub struct Route {
@@ -23,6 +23,8 @@ pub struct Route {
     /// Random routes keep their weights: they follow target order, so removing a target needs
     /// them re-aligned.
     random: Option<RandomSpec>,
+    /// Which failures hand the request to the next target.
+    fallback: FallbackOn,
 }
 
 /// The part of a `random` route that must be re-aligned when targets are removed.
@@ -34,6 +36,7 @@ struct RandomSpec {
 pub struct Plan {
     pub algorithm: Arc<dyn Algorithm>,
     pub models: RuntimeModels,
+    pub fallback: FallbackOn,
 }
 
 pub struct Routes {
@@ -66,6 +69,7 @@ impl Route {
             algorithm,
             groups,
             random: None,
+            fallback: FallbackOn::default(),
         }
     }
 
@@ -146,6 +150,7 @@ impl Route {
         Some(Plan {
             algorithm,
             models: runtime_models(groups),
+            fallback: self.fallback.clone(),
         })
     }
 
@@ -178,8 +183,8 @@ fn algorithm_error(route: &str, error: impl std::fmt::Display) -> String {
 }
 
 fn build_route(name: &str, spec: &RouteSpec) -> Result<Route, String> {
-    let route = match spec {
-        RouteSpec::Passthrough { targets } => Route::new(
+    let mut route = match spec {
+        RouteSpec::Passthrough { targets, .. } => Route::new(
             Arc::new(Passthrough),
             HashMap::from([(Category::Any, ids(targets))]),
         ),
@@ -187,6 +192,7 @@ fn build_route(name: &str, spec: &RouteSpec) -> Result<Route, String> {
             targets,
             weights,
             seed,
+            ..
         } => {
             let mut route = Route::new(
                 Arc::new(
@@ -204,6 +210,7 @@ fn build_route(name: &str, spec: &RouteSpec) -> Result<Route, String> {
             capable,
             mode,
             confidence_threshold,
+            ..
         } => {
             let mode = match mode {
                 PickerMode::EfficientFirst => LibPickerMode::EfficientFirst,
@@ -229,6 +236,7 @@ fn build_route(name: &str, spec: &RouteSpec) -> Result<Route, String> {
             threshold_step,
             classify_trigger,
             confirmations,
+            ..
         } => {
             let config = match mode {
                 ClassifierMode::Capability => LlmClassifierConfig::Capability {
@@ -262,6 +270,7 @@ fn build_route(name: &str, spec: &RouteSpec) -> Result<Route, String> {
             )
         }
     };
+    route.fallback = spec.fallback_on();
     Ok(route)
 }
 

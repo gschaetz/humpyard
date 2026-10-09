@@ -639,7 +639,7 @@ async fn execute(
     request: Request,
 ) -> Result<Executed, GatewayError> {
     let names: Vec<ModelId> = plan.models.models_for(&Category::Any).to_vec();
-    let clients = ctx.router(&state.targets, &names);
+    let clients = ctx.router(&state.targets, &names, &plan.fallback);
     let models = Arc::new(plan.models);
     let (selected, mut response) =
         match run_algorithm(plan.algorithm, clients, request, models, None).await {

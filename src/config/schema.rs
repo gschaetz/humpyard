@@ -214,21 +214,62 @@ pub enum ClassifierMode {
     Escalation,
 }
 
+/// Why a call to a target failed, as far as handing the request to the next target is concerned.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FallbackClass {
+    /// The prompt does not fit the model's context window.
+    Overflow,
+    /// HTTP 429.
+    RateLimit,
+    /// The target did not answer in time.
+    Timeout,
+    /// HTTP 5xx or 408.
+    ServerError,
+    /// The connection failed (refused, DNS, reset).
+    Connection,
+    /// HTTP 403.
+    Forbidden,
+}
+
+/// Which failures make a route hand the request to its next target. The default is all of them.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct FallbackOn(Option<std::collections::BTreeSet<FallbackClass>>);
+
+impl FallbackOn {
+    pub fn only(classes: &[FallbackClass]) -> Self {
+        Self(Some(classes.iter().copied().collect()))
+    }
+
+    pub fn allows(&self, class: FallbackClass) -> bool {
+        self.0.as_ref().is_none_or(|set| set.contains(&class))
+    }
+}
+
 /// A built-in Switchyard algorithm over named targets.
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum RouteSpec {
     Passthrough {
         targets: Vec<String>,
+        /// Failures that move on to the next target; all of them when absent.
+        #[serde(default)]
+        fallback_on: Option<Vec<FallbackClass>>,
     },
     Random {
         targets: Vec<String>,
         weights: Option<Vec<f64>>,
         seed: Option<u64>,
+        /// Failures that move on to the next target; all of them when absent.
+        #[serde(default)]
+        fallback_on: Option<Vec<FallbackClass>>,
     },
     StageRouter {
         efficient: Vec<String>,
         capable: Vec<String>,
+        /// Failures that move on to the next target; all of them when absent.
+        #[serde(default)]
+        fallback_on: Option<Vec<FallbackClass>>,
         #[serde(default = "default_picker_mode")]
         mode: PickerMode,
         #[serde(default = "default_confidence")]
@@ -239,6 +280,9 @@ pub enum RouteSpec {
         efficient: Vec<String>,
         capable: Vec<String>,
         judge: Vec<String>,
+        /// Failures that move on to the next target; all of them when absent.
+        #[serde(default)]
+        fallback_on: Option<Vec<FallbackClass>>,
         /// Capability mode: lowest solve probability that routes a supported task to `efficient`.
         #[serde(default = "default_confidence")]
         base_threshold: f64,
@@ -259,10 +303,22 @@ fn default_picker_mode() -> PickerMode {
 }
 
 impl RouteSpec {
+    /// Which failures hand the request to the next target.
+    pub fn fallback_on(&self) -> FallbackOn {
+        match self {
+            Self::Passthrough { fallback_on, .. }
+            | Self::Random { fallback_on, .. }
+            | Self::StageRouter { fallback_on, .. }
+            | Self::LlmClassifier { fallback_on, .. } => fallback_on
+                .as_deref()
+                .map_or_else(FallbackOn::default, FallbackOn::only),
+        }
+    }
+
     /// Every target name the route mentions.
     pub(super) fn target_refs(&self) -> Vec<&str> {
         let lists: Vec<&Vec<String>> = match self {
-            Self::Passthrough { targets } | Self::Random { targets, .. } => vec![targets],
+            Self::Passthrough { targets, .. } | Self::Random { targets, .. } => vec![targets],
             Self::StageRouter {
                 efficient, capable, ..
             } => vec![efficient, capable],

@@ -12,7 +12,8 @@ use std::path::{Path, PathBuf};
 
 use schema::RawConfig;
 pub use schema::{
-    ClassifierMode, ClassifyTrigger, Endpoint, OverBudget, PickerMode, Price, RouteSpec,
+    ClassifierMode, ClassifyTrigger, Endpoint, FallbackClass, FallbackOn, OverBudget, PickerMode,
+    Price, RouteSpec,
 };
 
 #[derive(Debug, thiserror::Error)]

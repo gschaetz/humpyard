@@ -65,7 +65,7 @@ fn rules() -> BTreeMap<&'static str, Module> {
             "budget",
             module(Core, &["clock", "config", "ledger", "num", "policy"]),
         ),
-        ("error", module(Engine, &[])),
+        ("error", module(Engine, &["config"])),
         ("pricing", module(Engine, &["config", "num"])),
         (
             "pool",

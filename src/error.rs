@@ -7,6 +7,8 @@ use serde_json::json;
 use switchyard_libsy::LibsyError;
 use switchyard_protocol::{LlmClientError, WireFormat};
 
+use crate::config::FallbackClass;
+
 #[derive(Debug, thiserror::Error)]
 pub enum GatewayError {
     #[error("{0}")]
@@ -94,9 +96,73 @@ impl From<LibsyError> for GatewayError {
 /// it back into `UpstreamTimeout`, so a client still sees a timeout when nothing else answers.
 pub const TIMEOUT_MARKER: &str = "humpyard: upstream timed out";
 
+/// Which kind of failure `error` is, for deciding whether the route may hand the request to its
+/// next target. `None` for errors that never fall through (bad requests, auth failures, ...).
+#[must_use]
+pub fn fallback_class(error: &LlmClientError) -> Option<FallbackClass> {
+    match error {
+        LlmClientError::ContextWindowExceeded { .. } => Some(FallbackClass::Overflow),
+        LlmClientError::Timeout { .. } => Some(FallbackClass::Timeout),
+        LlmClientError::Transport { .. } => Some(FallbackClass::Connection),
+        LlmClientError::UpstreamHttp { status, body } => {
+            if *status == StatusCode::GATEWAY_TIMEOUT && body == TIMEOUT_MARKER {
+                Some(FallbackClass::Timeout)
+            } else if *status == StatusCode::TOO_MANY_REQUESTS {
+                Some(FallbackClass::RateLimit)
+            } else if *status == StatusCode::FORBIDDEN {
+                Some(FallbackClass::Forbidden)
+            } else if *status == StatusCode::REQUEST_TIMEOUT || status.is_server_error() {
+                Some(FallbackClass::ServerError)
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+/// Prefix of the synthetic error that tells Switchyard to stop: it falls back on a fixed set of
+/// errors, so a failure the route must not fall back on is re-labelled as a general error and
+/// restored by `From` (the client still sees the original status and message).
+const STOP_PREFIX: &str = "humpyard-no-fallback:";
+
+/// Re-labels `error` (of kind `class`) so the route does not hand it to the next target.
+#[must_use]
+pub fn stop_fallback(class: FallbackClass, error: &LlmClientError) -> LlmClientError {
+    let (status, text) = match error {
+        LlmClientError::UpstreamHttp { status, body } => (status.as_u16(), body.clone()),
+        LlmClientError::ContextWindowExceeded { message, .. } => (0, message.clone()),
+        _ => (0, String::new()),
+    };
+    let class_name = format!("{class:?}");
+    LlmClientError::General(format!(
+        "{STOP_PREFIX}{}",
+        json!({"class": class_name, "status": status, "text": text})
+    ))
+}
+
+/// The original error behind a `stop_fallback` re-label.
+fn restore_stopped(message: &str) -> Option<GatewayError> {
+    let value: serde_json::Value = serde_json::from_str(message.strip_prefix(STOP_PREFIX)?).ok()?;
+    let text = value["text"].as_str().unwrap_or_default().to_string();
+    let status = u16::try_from(value["status"].as_u64().unwrap_or(0)).ok()?;
+    Some(match value["class"].as_str()? {
+        "Overflow" => GatewayError::BadRequest(text),
+        "Timeout" => GatewayError::UpstreamTimeout,
+        "Connection" => GatewayError::UpstreamUnreachable("upstream connection failed".into()),
+        _ => GatewayError::from(LlmClientError::UpstreamHttp {
+            status: StatusCode::from_u16(status).ok()?,
+            body: text,
+        }),
+    })
+}
+
 impl From<LlmClientError> for GatewayError {
     fn from(error: LlmClientError) -> Self {
         match error {
+            LlmClientError::General(message) if message.starts_with(STOP_PREFIX) => {
+                restore_stopped(&message).unwrap_or(Self::Internal(message))
+            }
             LlmClientError::UpstreamHttp { status, body }
                 if status == StatusCode::GATEWAY_TIMEOUT && body == TIMEOUT_MARKER =>
             {
@@ -214,6 +280,79 @@ mod tests {
         );
         let long = "x".repeat(900);
         assert!(msg(&long).len() < 260);
+    }
+
+    #[test]
+    fn failures_are_classified_for_fallback() {
+        let http = |code: u16, body: &str| LlmClientError::UpstreamHttp {
+            status: StatusCode::from_u16(code).unwrap(),
+            body: body.into(),
+        };
+        assert_eq!(
+            fallback_class(&http(429, "")),
+            Some(FallbackClass::RateLimit)
+        );
+        assert_eq!(
+            fallback_class(&http(403, "")),
+            Some(FallbackClass::Forbidden)
+        );
+        assert_eq!(
+            fallback_class(&http(408, "")),
+            Some(FallbackClass::ServerError)
+        );
+        assert_eq!(
+            fallback_class(&http(502, "")),
+            Some(FallbackClass::ServerError)
+        );
+        assert_eq!(
+            fallback_class(&http(504, TIMEOUT_MARKER)),
+            Some(FallbackClass::Timeout)
+        );
+        assert_eq!(fallback_class(&http(400, "")), None);
+        assert_eq!(fallback_class(&http(404, "")), None);
+        assert_eq!(
+            fallback_class(&LlmClientError::Timeout { source: "t".into() }),
+            Some(FallbackClass::Timeout)
+        );
+        assert_eq!(
+            fallback_class(&LlmClientError::Transport { source: "t".into() }),
+            Some(FallbackClass::Connection)
+        );
+        assert_eq!(fallback_class(&LlmClientError::General("x".into())), None);
+    }
+
+    #[test]
+    fn a_stopped_failure_comes_back_as_the_original() {
+        let original = LlmClientError::UpstreamHttp {
+            status: StatusCode::TOO_MANY_REQUESTS,
+            body: r#"{"error":{"message":"slow down"}}"#.into(),
+        };
+        let stopped = stop_fallback(FallbackClass::RateLimit, &original);
+        assert!(
+            matches!(stopped, LlmClientError::General(_)),
+            "must not look like a fallback error"
+        );
+        let restored = GatewayError::from(stopped);
+        assert_eq!(restored.status(), 429);
+        assert_eq!(restored.to_string(), "slow down");
+
+        let timeout = stop_fallback(
+            FallbackClass::Timeout,
+            &LlmClientError::Timeout { source: "t".into() },
+        );
+        assert_eq!(GatewayError::from(timeout).status(), 504);
+        let overflow = stop_fallback(
+            FallbackClass::Overflow,
+            &LlmClientError::ContextWindowExceeded {
+                model: "m".into(),
+                message: "too long".into(),
+            },
+        );
+        let restored = GatewayError::from(overflow);
+        assert_eq!(
+            (restored.status().as_u16(), restored.to_string()),
+            (400, "too long".into())
+        );
     }
 
     #[test]
