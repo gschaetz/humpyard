@@ -11,6 +11,7 @@ use switchyard_protocol::{LlmClientError, ModelId, Request, Response, RoutedLlmC
 
 use crate::clock::Clock;
 use crate::config::{Config, Endpoint, Price, Provider};
+use crate::error::TIMEOUT_MARKER;
 use crate::health::{Admission, Breaker, Snapshot, Transition};
 
 /// Response header naming the provider endpoint that served a request.
@@ -77,6 +78,18 @@ fn fails_over(error: &LlmClientError) -> bool {
                 || status.is_server_error()
         }
         _ => false,
+    }
+}
+
+/// A timeout that exhausted a target is re-labelled as a gateway timeout (HTTP 504) so the route
+/// falls back to its next target like it does for any 5xx; see `error::TIMEOUT_MARKER`.
+fn for_target_fallback(error: LlmClientError) -> LlmClientError {
+    match error {
+        LlmClientError::Timeout { .. } => LlmClientError::UpstreamHttp {
+            status: StatusCode::GATEWAY_TIMEOUT,
+            body: TIMEOUT_MARKER.to_string(),
+        },
+        other => other,
     }
 }
 
@@ -149,7 +162,7 @@ impl TargetClient {
                     slot.resolved();
                     endpoint.log(endpoint.breaker.failure());
                     if position + 1 >= count {
-                        return Err(error);
+                        return Err(for_target_fallback(error));
                     }
                     tracing::warn!(
                         provider = %endpoint.provider,

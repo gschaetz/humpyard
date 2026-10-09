@@ -89,9 +89,19 @@ impl From<LibsyError> for GatewayError {
     }
 }
 
+/// Body of the synthetic 504 the pool substitutes for a timed-out target. Switchyard falls back to
+/// the next target on a 5xx but not on a timeout, so the pool re-labels the timeout; `From` turns
+/// it back into `UpstreamTimeout`, so a client still sees a timeout when nothing else answers.
+pub const TIMEOUT_MARKER: &str = "humpyard: upstream timed out";
+
 impl From<LlmClientError> for GatewayError {
     fn from(error: LlmClientError) -> Self {
         match error {
+            LlmClientError::UpstreamHttp { status, body }
+                if status == StatusCode::GATEWAY_TIMEOUT && body == TIMEOUT_MARKER =>
+            {
+                Self::UpstreamTimeout
+            }
             LlmClientError::UpstreamHttp { status, body } => {
                 let message = upstream_message(&body, status);
                 if status.is_client_error() {

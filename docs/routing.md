@@ -33,7 +33,10 @@ session with the `x-switchyard-session-id` header; without it, state-dependent b
   full timeout each time, so each endpoint (provider + model) has a circuit breaker; see
   [Endpoint health](#endpoint-health).
 - **Across targets**, if every endpoint of the selected target fails, the next target the
-  algorithm returned is tried.
+  algorithm returned is tried. Falling through happens for a context-window overflow, 429, 403,
+  408, any 5xx, connection errors and timeouts. Other client errors (400, 401, 404) stop at once
+  and reach the client, because another target would reject the same request. If no target
+  answers, the client gets the last error (a timeout is still reported as 504).
 - If everything fails, the client gets the last error: 429/4xx pass through, unreachable is 502,
   timeout is 504.
 
