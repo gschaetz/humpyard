@@ -30,6 +30,7 @@ use crate::auth::{ConfigKeyStore, KeyRecord, KeyStore, hash_key, presented_key};
 use crate::budget::{BudgetPolicy, BudgetTracker};
 use crate::clock::Clock;
 use crate::clock::SystemClock;
+use crate::config::CREDENTIAL_HEADERS;
 use crate::config::Config;
 use crate::config::OverBudget;
 use crate::error::GatewayError;
@@ -42,9 +43,13 @@ use crate::policy::{
 };
 use crate::pool::{self, PROVIDER_HEADER, TargetClient};
 use crate::routing::{Plan, Route, Routes};
+use crate::select::{Facts, Selectors};
 
 const TARGET_HEADER: &str = "x-humpyard-target";
 const TOKEN_COUNT_HEADER: &str = "x-humpyard-token-count";
+/// Response headers naming the route that served a request and the selector rule that chose it.
+const ROUTE_HEADER: &str = "x-humpyard-route";
+const RULE_HEADER: &str = "x-humpyard-rule";
 
 pub struct AppState {
     config: Config,
@@ -54,6 +59,7 @@ pub struct AppState {
     accounting: Arc<Accounting>,
     tracker: Option<Arc<BudgetTracker>>,
     routes: Routes,
+    selectors: Selectors,
     policy: Arc<dyn RoutingPolicy>,
     keys: Arc<dyn KeyStore>,
 }
@@ -199,6 +205,7 @@ async fn build(config: Config, options: Options) -> Result<Built, String> {
     let routes = Routes::build(&config)?;
     let keys: Arc<dyn KeyStore> = Arc::new(ConfigKeyStore::new(&config.keys));
     let (hard_stop_tx, hard_stop) = watch::channel(false);
+    let selectors = Selectors::new(&config.select);
     let state = Arc::new(AppState {
         config,
         hard_stop,
@@ -206,6 +213,7 @@ async fn build(config: Config, options: Options) -> Result<Built, String> {
         accounting: accounting.clone(),
         tracker,
         routes,
+        selectors,
         policy,
         keys,
     });
@@ -271,7 +279,16 @@ async fn count_tokens(
     let counted = async {
         let caller = authenticate(&state, &headers).await?;
         let decoded = decode(format, &body)?;
-        authorize(&state, caller.as_ref(), &decoded.model)?;
+        let info = request_info(&headers);
+        let stream = decoded.body["stream"].as_bool().unwrap_or(false);
+        select_route(
+            &state,
+            caller.as_ref(),
+            &decoded.model,
+            stream,
+            &headers,
+            &info,
+        )?;
         let upstream_form = encode_request(&decoded.llm_request, WireFormat::OpenAiChat)
             .map_err(|e| GatewayError::BadRequest(format!("cannot translate request: {e}")))?;
         Ok::<_, GatewayError>((decoded.model, estimate_tokens(&upstream_form)))
@@ -434,6 +451,16 @@ async fn infer(
                 %format,
                 key = key_id,
                 target,
+                route = response
+                    .headers()
+                    .get(ROUTE_HEADER)
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or(""),
+                rule = response
+                    .headers()
+                    .get(RULE_HEADER)
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or(""),
                 provider = response
                     .headers()
                     .get(PROVIDER_HEADER)
@@ -489,10 +516,18 @@ async fn handle(
         llm_request,
         model,
     } = decode(format, raw)?;
-    let route = authorize(state, caller, &model)?;
     let info = request_info(headers);
+    let stream = body["stream"].as_bool().unwrap_or(false);
+    let selection = select_route(state, caller, &model, stream, headers, &info)?;
     let budget = check_budget(state, caller)?;
-    let plan = plan_route(state, route, &model, caller, budget, &info)?;
+    let plan = plan_route(
+        state,
+        selection.route,
+        &selection.name,
+        caller,
+        budget,
+        &info,
+    )?;
     let extensions = llm_request.extensions.clone();
     let request = Request {
         llm_request,
@@ -503,10 +538,13 @@ async fn handle(
         state.accounting.clone(),
         caller.map(|k| k.id.clone()),
         info.session_id,
-        model,
+        selection.name.clone(),
     );
     let executed = execute(state, &ctx, plan, request).await?;
-    encode(format, state.hard_stop.clone(), executed, &extensions)
+    let (target, mut response) = encode(format, state.hard_stop.clone(), executed, &extensions)?;
+    set_header(&mut response, ROUTE_HEADER, &selection.name);
+    set_header(&mut response, RULE_HEADER, &selection.rule);
+    Ok((target, response))
 }
 
 /// Stage 1: parse the body and translate it into Switchyard's neutral form.
@@ -557,6 +595,68 @@ fn authorize<'a>(
         .routes
         .get(model)
         .ok_or_else(|| GatewayError::ModelNotFound(model.to_string()))
+}
+
+/// The route a request follows, and why.
+struct Selection<'a> {
+    route: &'a Route,
+    name: String,
+    /// The selector rule that chose it, or `default` when the requested model named the route.
+    rule: String,
+}
+
+/// Request headers rules may match: names lower-cased, credential headers left out.
+fn selector_headers(headers: &HeaderMap) -> HashMap<String, String> {
+    headers
+        .iter()
+        .filter(|(name, _)| !CREDENTIAL_HEADERS.contains(&name.as_str()))
+        .filter_map(|(name, value)| {
+            Some((name.as_str().to_string(), value.to_str().ok()?.to_string()))
+        })
+        .collect()
+}
+
+/// Stage 2: choose the route. Selector rules go first; a rule only applies if the key may use its
+/// route, so client headers can narrow the flow but never widen it (ADR 0011). With no applicable
+/// rule the requested model names the route, subject to the key's allowlist as before.
+fn select_route<'a>(
+    state: &'a AppState,
+    caller: Option<&KeyRecord>,
+    model: &str,
+    stream: bool,
+    headers: &HeaderMap,
+    info: &RequestInfo,
+) -> Result<Selection<'a>, GatewayError> {
+    if !state.selectors.is_empty() {
+        let header_facts = selector_headers(headers);
+        let facts = Facts {
+            model,
+            key: caller.map(|k| k.id.as_str()),
+            headers: &header_facts,
+            agent: info.meta.agent_id.as_deref(),
+            task: info.meta.task_id.as_deref(),
+            subagent: info.meta.is_subagent,
+            stream,
+        };
+        let chosen = state
+            .selectors
+            .choose(&facts, |route| caller.is_none_or(|key| key.may_use(route)));
+        if let Some(chosen) = chosen
+            && let Some(route) = state.routes.get(chosen.route)
+        {
+            return Ok(Selection {
+                route,
+                name: chosen.route.to_string(),
+                rule: chosen.rule.to_string(),
+            });
+        }
+    }
+    let route = authorize(state, caller, model)?;
+    Ok(Selection {
+        route,
+        name: model.to_string(),
+        rule: "default".to_string(),
+    })
 }
 
 /// Stage 2b: what the client's headers tell us about the session and agent.

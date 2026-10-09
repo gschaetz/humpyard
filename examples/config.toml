@@ -31,6 +31,15 @@ capable = ["smart"]
 mode = "efficient_first"
 confidence_threshold = 0.5
 
+# Selectors choose the route from request facts, first match wins; without a match the requested
+# model is the route. A rule is skipped when the key may not use its route (allowed_routes).
+# [[select]]
+# when = { profile = "deep" }                          # client header x-humpyard-profile: deep
+# route = "smart-only"
+# [[select]]
+# when = { header = { "x-client" = "openclaw" }, subagent = true }
+# route = "agent"
+
 # Any route can limit which failures move on to the next target (default: all of them):
 # fallback_on = ["overflow"]   # classes: overflow, rate_limit, timeout, server_error, connection, forbidden
 

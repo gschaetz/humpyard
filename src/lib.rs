@@ -14,4 +14,5 @@ pub mod policy;
 pub mod pool;
 pub mod pricing;
 pub mod routing;
+pub mod select;
 pub mod server;
