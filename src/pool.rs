@@ -7,7 +7,9 @@ use std::time::Duration;
 use async_trait::async_trait;
 use http::{HeaderName, HeaderValue, StatusCode};
 use switchyard_llm_client::{Backend, HttpBackendConfig, ModelConfig, TranslatingLlmClient};
-use switchyard_protocol::{LlmClientError, ModelId, Request, Response, RoutedLlmClient};
+use switchyard_protocol::{
+    ContentBlock, LlmClientError, ModelId, Request, Response, Role, RoutedLlmClient,
+};
 
 use crate::clock::Clock;
 use crate::config::{Config, Endpoint, Price, Provider};
@@ -93,6 +95,33 @@ fn for_target_fallback(error: LlmClientError) -> LlmClientError {
     }
 }
 
+/// Adapts a request, whatever protocol it arrived in, for chat-completions providers:
+///
+/// - A reasoning item replayed from the Responses API (Codex does this each turn) can carry the
+///   whole Responses item as a "detail"; chat providers reject its array-valued `summary`. Such
+///   entries are dropped (the reasoning text itself is kept); genuine chat-style details, for
+///   example `reasoning.encrypted`, are left untouched.
+/// - The `developer` role (Codex injects it mid-conversation) is rejected by many providers, so it
+///   is sent as `system`.
+fn adapt_for_chat_providers(request: &mut Request) {
+    // Responses developer messages are hoisted into `instructions` by the decoder.
+    for instruction in &mut request.llm_request.instructions {
+        if instruction.role == Role::Developer {
+            instruction.role = Role::System;
+        }
+    }
+    for message in &mut request.llm_request.messages {
+        if message.role == Role::Developer {
+            message.role = Role::System;
+        }
+        for block in &mut message.content {
+            if let ContentBlock::Reasoning { details, .. } = block {
+                details.retain(|d| d.get("type").and_then(|t| t.as_str()) != Some("reasoning"));
+            }
+        }
+    }
+}
+
 #[async_trait]
 impl RoutedLlmClient for TargetClient {
     async fn call(&self, request: Request) -> Result<Response, LlmClientError> {
@@ -135,6 +164,8 @@ impl TargetClient {
         &self,
         request: Request,
     ) -> Result<(Response, Served), LlmClientError> {
+        let mut request = request;
+        adapt_for_chat_providers(&mut request);
         let mut last_error = None;
         let mut walk = self.walk();
         let count = walk.len();
