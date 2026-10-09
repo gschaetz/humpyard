@@ -24,8 +24,26 @@ Last updated: 2026-10-08 (`add-packaging`: tag-only release workflow, container 
 | Graceful shutdown: drain, grace period, cancel, ledger flush before exit | Implemented | `add-graceful-shutdown` |
 | `count_tokens` / `responses/input_tokens`: local, conservative prompt-size estimates (no upstream call). `responses/compact` intentionally not implemented | Implemented | `add-count-tokens`, `add-responses-input-tokens` |
 | Packaging: tag-only release workflow (native runners), GHCR image, launchd service | Implemented (first release not cut yet) | `add-packaging` (ADR 0010) |
-| Database-managed keys + admin API | Planned (designed for in `add-cost-tracking`) | not yet proposed |
+| Database-managed keys + a versioned, documented admin API (separate admin credential) | Planned (designed for in `add-cost-tracking`) | not yet proposed |
+| `/metrics` endpoint (Prometheus format) | Planned | not yet proposed |
+| Read-only status page served by the binary (endpoint health, spend, recent requests) | Planned | not yet proposed |
+| Full admin GUI (key and budget management, spend charts) | Later; not ruled out | not yet proposed |
 | `migrate-modelrelay` command + bundled catalog | Planned | not yet proposed |
+
+## Direction: operating humpyard
+
+The gateway is configured as code today and observed through `GET /v1/health`, `GET /v1/key/info`
+and the SQLite ledger. The planned order for the operator-facing surface is API first:
+
+1. A versioned, documented admin API (OpenAPI generated from the code) with its own admin
+   credential and scopes, so a client key can never mint keys. Config-defined keys stay read-only
+   in the API; database-managed keys are editable, so config-as-code and runtime management can
+   coexist.
+2. A `/metrics` endpoint, so existing Prometheus and Grafana setups need no custom UI.
+3. A read-only status page served by the binary, built only on the same API.
+4. A fuller admin GUI is deliberately left open for later, for people who want one. It should be an
+   optional, separate component that is just another client of the admin API, so the core stays a
+   single small binary. Nothing above should be built in a way that rules it out.
 
 ## Current: request flow (implemented)
 
