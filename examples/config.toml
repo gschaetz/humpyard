@@ -39,6 +39,9 @@ confidence_threshold = 0.5
 # [[select]]
 # when = { header = { "x-client" = "openclaw" }, subagent = true }
 # route = "agent"
+# [[select]]
+# when = { prompt_tokens = { min = 30000 } }           # also: tools = true, images = true
+# route = "long-context"
 
 # Any route can limit which failures move on to the next target (default: all of them):
 # fallback_on = ["overflow"]   # classes: overflow, rate_limit, timeout, server_error, connection, forbidden

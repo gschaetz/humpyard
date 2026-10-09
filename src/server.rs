@@ -43,7 +43,7 @@ use crate::policy::{
 };
 use crate::pool::{self, PROVIDER_HEADER, TargetClient};
 use crate::routing::{Plan, Route, Routes};
-use crate::select::{Facts, Selectors};
+use crate::select::{Facts, Features, Selectors};
 
 const TARGET_HEADER: &str = "x-humpyard-target";
 const TOKEN_COUNT_HEADER: &str = "x-humpyard-token-count";
@@ -289,6 +289,7 @@ async fn count_tokens(
             caller.as_ref(),
             &decoded.model,
             stream,
+            request_features(&decoded.llm_request, &state.selectors),
             &selector_headers(&headers),
             &info,
         )?;
@@ -526,6 +527,7 @@ async fn handle(
         caller,
         &model,
         stream,
+        request_features(&llm_request, &state.selectors),
         &selector_headers(headers),
         &info,
     )?;
@@ -607,6 +609,31 @@ fn authorize<'a>(
         .ok_or_else(|| GatewayError::ModelNotFound(model.to_string()))
 }
 
+/// What the request contains, as selector rules see it. The prompt size is an estimate and is only
+/// computed when some rule looks at it.
+fn request_features(
+    llm_request: &switchyard_protocol::LlmRequest,
+    selectors: &Selectors,
+) -> Features {
+    let prompt_tokens = if selectors.needs_prompt_estimate() {
+        encode_request(llm_request, WireFormat::OpenAiChat)
+            .ok()
+            .map(|body| estimate_tokens(&body))
+    } else {
+        None
+    };
+    Features {
+        prompt_tokens,
+        tools: !llm_request.tools.is_empty(),
+        images: llm_request.messages.iter().any(|message| {
+            message
+                .content
+                .iter()
+                .any(|block| matches!(block, switchyard_protocol::ContentBlock::Image { .. }))
+        }),
+    }
+}
+
 /// The route a request follows, and why.
 struct Selection<'a> {
     route: &'a Route,
@@ -634,6 +661,7 @@ fn select_route<'a>(
     caller: Option<&KeyRecord>,
     model: &str,
     stream: bool,
+    features: Features,
     header_facts: &HashMap<String, String>,
     info: &RequestInfo,
 ) -> Result<Selection<'a>, GatewayError> {
@@ -646,6 +674,7 @@ fn select_route<'a>(
             task: info.meta.task_id.as_deref(),
             subagent: info.meta.is_subagent,
             stream,
+            features,
         };
         let chosen = state
             .selectors

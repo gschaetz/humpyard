@@ -12,8 +12,8 @@ Status: pre-alpha. Working today: the three client protocols with streaming; rou
 Switchyard's `passthrough`, `random`, `stage_router` and `llm_classifier`; ordered-endpoint
 failover with per-endpoint circuit breakers and per-route control over which failures fall through
 to the next target; selector rules that pick the route from the key, headers, tags and agent
-metadata, with a dry-run `explain` call; a routing-policy seam; virtual keys, a SQLite usage
-ledger and per-key budgets. Planned: request-feature conditions and hot reload for rules,
+metadata and request content, with a dry-run `explain` call; a routing-policy seam; virtual keys, a SQLite usage
+ledger and per-key budgets. Planned: hot reload for rules, a router decision log,
 database-managed keys with an admin API, `/metrics`, and a status page (see
 [the roadmap](docs/architecture.md#component-status)). Design background in
 [docs/background.md](docs/background.md).
@@ -78,7 +78,8 @@ See [examples/config.toml](examples/config.toml). Three kinds of entries:
   If the selected target fails entirely, the next target the algorithm returned is tried; a
   route's `fallback_on = ["overflow", ...]` limits which failures may do that (default: all).
 - `[[select]]`: ordered rules that choose the route from the key, the requested model, headers
-  (`x-humpyard-profile`, `x-humpyard-tag-<name>`, or any named header), and agent metadata. First
+  (`x-humpyard-profile`, `x-humpyard-tag-<name>`, or any named header), agent metadata, and what
+  the request contains (estimated prompt size, tools, images). First
   match wins; a rule is skipped when the key may not use its route, so clients can narrow but never
   widen. Responses carry `x-humpyard-route` and `x-humpyard-rule`. See
   [docs/routing.md](docs/routing.md#selecting-the-route).

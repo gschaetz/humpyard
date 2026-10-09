@@ -17,9 +17,11 @@ use switchyard_protocol::{Category, Metadata, ModelId, WireFormat};
 use super::{AppState, GatewayError, RequestInfo, authenticate, check_budget, plan_route};
 use crate::config::CREDENTIAL_HEADERS;
 use crate::policy::{BudgetState, RequestMeta};
-use crate::select::Facts;
+use crate::select::{Facts, Features};
 
 /// What the caller says about the hypothetical request. Only `model` is required.
+// A flat JSON request body: each flag is an independent fact the caller may state.
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Hypothetical {
@@ -33,6 +35,14 @@ struct Hypothetical {
     task: Option<String>,
     #[serde(default)]
     subagent: bool,
+    /// Estimated prompt size, for rules on `prompt_tokens`.
+    prompt_tokens: Option<u64>,
+    /// Whether the request defines tools.
+    #[serde(default)]
+    tools: bool,
+    /// Whether the request carries images.
+    #[serde(default)]
+    images: bool,
 }
 
 pub(super) async fn explain_route(
@@ -96,6 +106,11 @@ fn explain(
         task: request.task.as_deref(),
         subagent: request.subagent,
         stream: request.stream,
+        features: Features {
+            prompt_tokens: request.prompt_tokens,
+            tools: request.tools,
+            images: request.images,
+        },
     };
     let permitted = |route: &str| caller.is_none_or(|key| key.may_use(route));
     let trace = state.selectors.trace(&facts, permitted);
@@ -118,6 +133,7 @@ fn explain(
         caller,
         &request.model,
         request.stream,
+        facts.features,
         &header_facts,
         &info,
     ) {
