@@ -37,6 +37,16 @@ Notes from the verified run (a read-only agent in a scratch directory, `claude -
   guessed 39 different filenames (`todo.txt`, `main.py`, ...) without using the search tools and ran
   out of turns, while the same agent answered a precise "read this file" task correctly in two
   turns. Pick tiers for agent work accordingly.
+- **A multi-step task with a subagent and a resumed session (verified 2026-10-08).** In a scratch
+  Python project Claude Code fixed a bug, added a method and tests, ran the suite, wrote docs,
+  delegated a review to a subagent, then (resuming the same session with `--continue`, which
+  replays the whole history including thinking blocks) added another feature: 17 requests in total,
+  all HTTP 200, 10/10 tests passing, one escalation to the capable tier. Unlike Codex, the
+  Anthropic path needed no request adaptation. Claude Code's cumulative session usage matched the
+  ledger exactly (121,385 input, 189,696 cached, 5,595 output).
+- **Daily use.** Run the gateway container and a wrapper that sets `CLAUDE_CONFIG_DIR` (so your
+  normal Claude Code setup is untouched), `ANTHROPIC_BASE_URL`, a gateway key in
+  `ANTHROPIC_API_KEY` and the model variables above, then `exec claude "$@"`.
 - **`POST /v1/messages/count_tokens` is answered with a local estimate.** No provider has a count
   call, so the number is computed by the gateway (no upstream call, no cost, no ledger entry, still
   available to a key over budget) and marked with `x-humpyard-token-count: estimate`. Measured
