@@ -43,8 +43,10 @@ unreachable) and the ledger path to `/data/ledger.db` so usage survives upgrades
   `GET /healthz` from outside.
 - Tags: `X.Y.Z` for every release; `latest` only moves for releases at 1.0 or later.
 - A bind-mounted `/data` must be writable by uid 65532.
-- First publish only: GitHub creates the package private. The owner sets it to public once under
-  *Package settings* so anyone can pull.
+- The package is public (verified with an anonymous pull of 0.1.0): the image's
+  `org.opencontainers.image.source` label links it to this public repository. Each architecture
+  carries a build provenance attestation (buildx default), shown as an `unknown/unknown` entry in
+  `docker buildx imagetools inspect`.
 
 ## macOS service (launchd)
 
