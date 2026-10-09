@@ -25,6 +25,7 @@ numbers are monotonic and never reused. Start from [template.md](template.md).
 | [0009](0009-endpoint-health-lives-in-the-pool.md) | Endpoint health lives in the pool and fails open |
 | [0010](0010-tag-only-native-releases.md) | Releases are tag-only and built on native runners |
 | [0011](0011-selectors-choose-the-route.md) | Selectors choose the route from request facts; clients narrow, never widen |
+| [0012](0012-config-snapshot-reloaded-on-sighup.md) | The configuration is an atomically swapped snapshot, reloaded on SIGHUP |
 
 How decisions relate to enforcement: invariants that must hold mechanically are listed in
 [../invariants.md](../invariants.md) and checked by tests and CI.
