@@ -3,7 +3,7 @@
 Living document. Update it in the same PR as any change that alters structure, request flow or
 component status (see [AGENTS.md](../AGENTS.md)). Diagrams are Mermaid and render on GitHub.
 
-Last updated: 2026-10-08 (`add-request-feature-conditions`: selector rules on prompt size, tools and images; next: hot reload, then the router decision log).
+Last updated: 2026-10-08 (`add-hot-reload`: configuration reloads without a restart; next: the private LiteLLM-parity configuration and openclaw trial, then the router decision log).
 
 ## Component status
 
@@ -18,6 +18,7 @@ Last updated: 2026-10-08 (`add-request-feature-conditions`: selector rules on pr
 | Routing-policy seam (eligibility hook, tier substitution, 503 when none eligible) | Implemented | `add-switchyard-routing` (group 5) |
 | Virtual keys (hashed, `KeyStore` trait), usage ledger (SQLite, async), per-endpoint pricing | Implemented | `add-cost-tracking` |
 | Budgets: UTC daily/monthly USD+token limits, restricted/exhausted states, 402, free-only, `/v1/key/info` | Implemented | `add-cost-tracking` |
+| Hot reload: atomic config snapshot swapped on SIGHUP or by polling the file; bad files rejected; health and unchanged routes carried over | Implemented | `add-hot-reload` (ADR 0012) |
 | Router decision log: a request id plus a `decisions` table (requested model, rule, attempts and fallbacks, refusals, request features) with a read API; today only successful calls reach the ledger and the rest is in logs and response headers | Planned (next after hot reload) | not yet proposed |
 | Content conditions for selectors: estimated prompt size, tools, images | Implemented | `add-request-feature-conditions` |
 | Route explain: `POST /v1/route/explain` dry run (selected rule, why others did not apply, targets, health, outcome) | Implemented | `add-route-explain` |
@@ -121,7 +122,7 @@ Switchyard decides the macro question (which target); the provider pool answers 
 | `routing.rs` | Builds one long-lived Switchyard algorithm (and target groups) per route and per bare target; applies policy eligibility, tier substitution and random-weight realignment |
 | `pool.rs` | Per-target `RoutedLlmClient`: ordered endpoints, failover, circuit breaking via `health`, provider attribution header |
 | `health.rs` | Per-endpoint circuit breaker (cooldown, doubling, single probe) with an injected clock |
-| `server.rs` | Router, request stages (decode, authorize, budget, plan, execute, encode), SSE framing, attribution headers; `run` owns the server lifecycle (graceful drain, hard stop, ledger flush) |
+| `server.rs` (snapshot, reload) | Router, request stages (decode, authorize, budget, plan, execute, encode), SSE framing, attribution headers; `run` owns the server lifecycle (graceful drain, hard stop, ledger flush) |
 | `main.rs` / `lib.rs` | CLI and library root |
 
 Tests: unit tests beside the code; end-to-end suites in `tests/` (shared helpers in

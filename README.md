@@ -13,7 +13,7 @@ Switchyard's `passthrough`, `random`, `stage_router` and `llm_classifier`; order
 failover with per-endpoint circuit breakers and per-route control over which failures fall through
 to the next target; selector rules that pick the route from the key, headers, tags and agent
 metadata and request content, with a dry-run `explain` call; a routing-policy seam; virtual keys, a SQLite usage
-ledger and per-key budgets. Planned: hot reload for rules, a router decision log,
+ledger and per-key budgets; configuration reload without a restart (SIGHUP or polling). Planned: a router decision log,
 database-managed keys with an admin API, `/metrics`, and a status page (see
 [the roadmap](docs/architecture.md#component-status)). Design background in
 [docs/background.md](docs/background.md).
@@ -53,7 +53,7 @@ curl localhost:8080/v1/responses -H 'content-type: application/json' \
 ```
 
 Also: `GET /v1/models`, `GET /healthz`, `GET /v1/key/info` (a key's limits and spend),
-`GET /v1/health` (which provider endpoints are being skipped), `POST /v1/route/explain` (what a
+`GET /v1/health` (which provider endpoints are being skipped, and which config version is loaded), `POST /v1/route/explain` (what a
 request would do, without sending it), and `POST /v1/messages/count_tokens` and
 `POST /v1/responses/input_tokens` (conservative local estimates: no provider call, no cost).
 Verified with real Claude Code and Codex CLI sessions: see [docs/clients.md](docs/clients.md).
@@ -87,6 +87,13 @@ See [examples/config.toml](examples/config.toml). Three kinds of entries:
   `max_cooldown_secs`); `GET /v1/health` shows which endpoints are being skipped.
 
 Logging is controlled by `RUST_LOG` (default `info`).
+
+**Reloading.** Edit the config file and send SIGHUP (or set `reload_poll_secs` so the gateway
+notices by itself, which is how to do it under Kubernetes). The new configuration replaces the old
+one atomically; a file that fails to load is rejected and the old one keeps serving, with the
+reason in `GET /v1/health`. Running requests finish on the old configuration. `listen`, the ledger
+path and `shutdown_grace_secs` need a restart, as does rotating a provider API key. Details in
+[docs/deployment.md](docs/deployment.md#reloading-the-configuration).
 
 **Shutdown.** SIGTERM or Ctrl-C starts a graceful stop: new connections are refused, requests
 already running may finish for up to `shutdown_grace_secs` (default 30; a second signal stops

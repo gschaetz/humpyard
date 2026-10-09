@@ -78,7 +78,7 @@ endpoints = [{{ provider = "mock", model = "hang-m", price = {{ input = 1.0, out
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let (signals, rx) = mpsc::channel(4);
-    let task = tokio::spawn(server::run(config, listener, rx));
+    let task = tokio::spawn(server::run(config, listener, rx, None));
     // Wait until it answers.
     for _ in 0..100 {
         if reqwest::get(format!("http://{addr}/healthz")).await.is_ok() {

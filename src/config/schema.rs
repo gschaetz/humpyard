@@ -14,6 +14,9 @@ pub(super) struct RawConfig {
     /// Seconds to wait for in-flight requests after a termination signal.
     #[serde(default = "default_shutdown_grace_secs")]
     pub(super) shutdown_grace_secs: u64,
+    /// Re-read the config file this often and reload when its content changed (0 = off).
+    #[serde(default)]
+    pub(super) reload_poll_secs: u64,
     pub(super) providers: BTreeMap<String, RawProvider>,
     pub(super) targets: BTreeMap<String, RawTarget>,
     #[serde(default)]

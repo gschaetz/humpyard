@@ -71,6 +71,27 @@ shell that launches it, so keys never appear in the plist, in `launchctl print` 
 period plus the ledger flush. Change the environment file, then
 `launchctl kickstart -k gui/$(id -u)/dev.humpyard.gateway` to restart.
 
+## Reloading the configuration
+
+Edits to routes, selector rules, targets, providers, keys, budgets and health settings apply to a
+running gateway without a restart; requests already running (streams included) finish on the
+configuration they started with. A file that does not load, validate or build is **never** applied:
+the previous configuration keeps serving and the failure is logged and shown in `GET /v1/health`
+(`reload.ok`, `reload.message`, and `config.fingerprint` for the version in use).
+
+| Environment | How to reload |
+|---|---|
+| any | set `reload_poll_secs = 15` (top level, 0 = off): the file is re-read on that interval and reloaded when its content changed. A broken file is attempted once per change. |
+| macOS binary or launchd service | `kill -HUP $(pgrep -x humpyard)` (the service replaces its shell with the binary, so this finds the right process) |
+| Docker | `docker kill -s HUP humpyard` (a bind-mounted file must be edited in place, or the container restarted, if your editor replaces the file) |
+| Kubernetes | mount the config from a ConfigMap and set `reload_poll_secs`: the image has no shell or `kill`, and the kubelet refreshes the mounted file on its own schedule (up to about a minute), after which the next poll picks it up (allow a minute or two for the kubelet) |
+
+Not reloadable, and refused as a whole with a message naming the setting: `listen`, the ledger
+path, `shutdown_grace_secs`, `reload_poll_secs`, and adding the first key to (or removing the last
+from) a keyless gateway. Provider API keys come from the process environment, which a running
+process cannot change, so rotating one needs a restart. Carried over by a reload: the health of
+endpoints that did not change, budget counters, and the session state of unchanged routes.
+
 ## Operating notes
 
 - `GET /healthz` answers 200 while the process is up; `GET /v1/health` (with a key when the

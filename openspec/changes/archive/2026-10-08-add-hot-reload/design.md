@@ -17,8 +17,12 @@
 - **Restart-only settings are refused loudly**, not half-applied: `listen`, the ledger path,
   `shutdown_grace_secs`, and the keyless/keyed switch (the budget tracker is only created for keyed
   gateways).
-- **SIGHUP, not file watching.** Works the same under Docker, Kubernetes and launchd, needs no
-  dependency or credential, and avoids the ConfigMap symlink-swap pitfalls of watchers.
+- **SIGHUP first, optional polling second, no inotify.** SIGHUP works the same under Docker and
+  launchd and needs no dependency or credential. A distroless container has no `kill` and
+  Kubernetes has no signal API, so `reload_poll_secs` re-reads the file on a timer and reloads
+  when a content hash changes. Hashing the content (not trusting timestamps or inotify events)
+  is robust to ConfigMap symlink swaps and partial writes; a file that fails to load is attempted
+  once per change.
 - **The budget threshold is adjustable** on the live tracker (`restricted_at`), while limits come
   from the snapshot's keys on each call, so edited budgets apply immediately.
 - **Secrets**: provider keys are read from the process environment on each load. A running

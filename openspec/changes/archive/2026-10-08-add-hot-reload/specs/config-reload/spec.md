@@ -13,6 +13,17 @@ On SIGHUP the gateway SHALL re-read its config file and, if the file loads and v
 - **WHEN** a streaming request is running during a reload
 - **THEN** it completes normally on the old configuration
 
+### Requirement: Optional polling
+With `reload_poll_secs` above zero the gateway SHALL re-read the config file at that interval and reload when its content differs from the last version it looked at. A file that fails to load SHALL be attempted once, not on every interval.
+
+#### Scenario: Edited file, no signal
+- **WHEN** polling is on and the file is edited
+- **THEN** the new configuration takes effect within the interval without any signal
+
+#### Scenario: Broken file
+- **WHEN** polling is on and the file is broken
+- **THEN** one failed reload is recorded, not one per interval, and the previous configuration keeps serving
+
 ### Requirement: A bad config never takes effect
 If the file cannot be read, fails validation, or cannot be built, the gateway SHALL keep serving the previous configuration, log the error and report it.
 
@@ -21,7 +32,7 @@ If the file cannot be read, fails validation, or cannot be built, the gateway SH
 - **THEN** requests keep following the previous config and the health report shows the failed reload
 
 ### Requirement: Restart-only settings are refused
-A reload that changes the listen address, the ledger path, `shutdown_grace_secs`, or switches between having keys and having none SHALL be refused as a whole with a message naming the setting.
+A reload that changes the listen address, the ledger path, `shutdown_grace_secs`, `reload_poll_secs`, or switches between having keys and having none SHALL be refused as a whole with a message naming the setting.
 
 #### Scenario: Listen address changed
 - **WHEN** the new file has a different `listen`
