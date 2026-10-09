@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use schema::RawConfig;
 pub use schema::{
     ClassifierMode, ClassifyTrigger, Endpoint, FallbackClass, FallbackOn, OverBudget, PickerMode,
-    Price, RouteSpec, SelectorSpec, When,
+    Price, RouteSpec, SelectorSpec, TokenRange, When,
 };
 pub use validate::CREDENTIAL_HEADERS;
 

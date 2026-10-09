@@ -11,6 +11,15 @@ pub const PROFILE_HEADER: &str = "x-humpyard-profile";
 /// Prefix of the standard tag headers: `x-humpyard-tag-<name>`.
 pub const TAG_HEADER_PREFIX: &str = "x-humpyard-tag-";
 
+/// Facts about the request's content, derived from the decoded request.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Features {
+    /// Estimated prompt tokens; `None` when not computed (it is only computed when a rule needs it).
+    pub prompt_tokens: Option<u64>,
+    pub tools: bool,
+    pub images: bool,
+}
+
 /// What a rule may look at.
 pub struct Facts<'a> {
     /// The model (route or target) the client asked for.
@@ -23,6 +32,7 @@ pub struct Facts<'a> {
     pub task: Option<&'a str>,
     pub subagent: bool,
     pub stream: bool,
+    pub features: Features,
 }
 
 /// What one rule did for a request: for `explain`, so operators can see why a rule did or did not
@@ -73,6 +83,13 @@ impl Selectors {
 
     pub fn is_empty(&self) -> bool {
         self.rules.is_empty()
+    }
+
+    /// Whether any rule looks at the prompt size, so the caller can skip estimating it otherwise.
+    pub fn needs_prompt_estimate(&self) -> bool {
+        self.rules
+            .iter()
+            .any(|rule| rule.when.prompt_tokens.is_some())
     }
 
     /// Every rule's outcome for `facts`, in order. The chosen rule is the first with no mismatches
@@ -163,11 +180,32 @@ fn mismatches(when: &When, facts: &Facts<'_>) -> Vec<String> {
     for (label, wanted, actual) in [
         ("subagent", when.subagent, facts.subagent),
         ("stream", when.stream, facts.stream),
+        ("tools", when.tools, facts.features.tools),
+        ("images", when.images, facts.features.images),
     ] {
         if let Some(wanted) = wanted
             && wanted != actual
         {
             out.push(format!("{label}: wanted {wanted}, got {actual}"));
+        }
+    }
+    if let Some(range) = when.prompt_tokens {
+        match facts.features.prompt_tokens {
+            None => out.push("prompt_tokens: the request's size is not known".to_string()),
+            Some(n) => {
+                if range.min.is_some_and(|min| n < min) {
+                    out.push(format!(
+                        "prompt_tokens: wanted at least {}, got {n}",
+                        range.min.unwrap_or(0)
+                    ));
+                }
+                if range.max.is_some_and(|max| n > max) {
+                    out.push(format!(
+                        "prompt_tokens: wanted at most {}, got {n}",
+                        range.max.unwrap_or(0)
+                    ));
+                }
+            }
         }
     }
     out.extend(when.header.iter().filter_map(|(name, pattern)| {
@@ -224,6 +262,7 @@ mod tests {
             task: Some("t-1"),
             subagent: false,
             stream: true,
+            features: Features::default(),
         }
     }
 
@@ -448,6 +487,78 @@ mod tests {
         assert_eq!(
             absent[1].mismatches,
             ["profile: wanted `deep`, but the request has none"]
+        );
+    }
+
+    #[test]
+    fn content_conditions_use_inclusive_bounds_and_flags() {
+        let range = |min, max| When {
+            prompt_tokens: Some(crate::config::TokenRange { min, max }),
+            ..When::default()
+        };
+        let h = HashMap::new();
+        let with = |tokens: Option<u64>, tools: bool, images: bool| {
+            let mut f = facts(&h);
+            f.features = Features {
+                prompt_tokens: tokens,
+                tools,
+                images,
+            };
+            f
+        };
+        let big = Selectors::new(&[rule("big", range(Some(1000), None), "long")]);
+        assert!(
+            big.choose(&with(Some(1000), false, false), |_| true)
+                .is_some(),
+            "min is inclusive"
+        );
+        assert!(
+            big.choose(&with(Some(999), false, false), |_| true)
+                .is_none()
+        );
+        let small = Selectors::new(&[rule("small", range(None, Some(500)), "cheap")]);
+        assert!(
+            small
+                .choose(&with(Some(500), false, false), |_| true)
+                .is_some(),
+            "max is inclusive"
+        );
+        assert!(
+            small
+                .choose(&with(Some(501), false, false), |_| true)
+                .is_none()
+        );
+        let both = Selectors::new(&[rule("mid", range(Some(10), Some(20)), "mid")]);
+        assert!(
+            both.choose(&with(Some(15), false, false), |_| true)
+                .is_some()
+        );
+        assert!(
+            both.choose(&with(None, false, false), |_| true).is_none(),
+            "unknown size never matches"
+        );
+        assert!(
+            big.needs_prompt_estimate()
+                && !Selectors::new(&[rule("r", When::default(), "x")]).needs_prompt_estimate()
+        );
+
+        let flags = |w: When| Selectors::new(&[rule("f", w, "x")]);
+        let tools = flags(When {
+            tools: Some(true),
+            ..When::default()
+        });
+        assert!(tools.choose(&with(None, true, false), |_| true).is_some());
+        assert!(tools.choose(&with(None, false, false), |_| true).is_none());
+        let images = flags(When {
+            images: Some(true),
+            ..When::default()
+        });
+        assert!(images.choose(&with(None, false, true), |_| true).is_some());
+        assert!(images.choose(&with(None, true, false), |_| true).is_none());
+        let why = big.trace(&with(Some(5), false, false), |_| true);
+        assert_eq!(
+            why[0].mismatches,
+            ["prompt_tokens: wanted at least 1000, got 5"]
         );
     }
 

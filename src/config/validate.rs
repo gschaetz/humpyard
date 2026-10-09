@@ -124,6 +124,21 @@ pub(super) fn validate_selectors(raw: &RawConfig) -> Result<(), ConfigError> {
                 "selector `{label}` can never match: the catch-all `{earlier}` before it matches everything"
             )));
         }
+        if let Some(range) = rule.when.prompt_tokens {
+            match (range.min, range.max) {
+                (None, None) => {
+                    return Err(invalid(format!(
+                        "selector `{label}`: prompt_tokens needs a `min` or a `max`"
+                    )));
+                }
+                (Some(min), Some(max)) if min > max => {
+                    return Err(invalid(format!(
+                        "selector `{label}`: prompt_tokens min {min} is above max {max}"
+                    )));
+                }
+                _ => {}
+            }
+        }
         for name in rule.when.header.keys() {
             let lower = name.to_ascii_lowercase();
             if CREDENTIAL_HEADERS.contains(&lower.as_str()) {

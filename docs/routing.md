@@ -54,6 +54,14 @@ when = { header = { "x-client" = "openclaw" } }
 route = "cheap-first"
 
 [[select]]
+when = { prompt_tokens = { min = 30000 } }   # long prompts go to a long-context tier
+route = "long-context"
+
+[[select]]
+when = { images = true }                 # vision-capable models only
+route = "vision"
+
+[[select]]
 route = "default"                        # no conditions: matches everything
 ```
 
@@ -70,6 +78,9 @@ else is literal and case-sensitive). The conditions are:
 | `agent`, `task` | the agent and task ids the client reports (`x-switchyard-agent-id`, `x-switchyard-task-id`) |
 | `subagent` | whether the client marked the request as coming from a sub-agent |
 | `stream` | whether the client asked for a streamed response |
+| `prompt_tokens` | `{ min, max }` (inclusive, either may be omitted) against the gateway's estimate of the prompt size, the same conservative number `count_tokens` returns |
+| `tools` | whether the request defines tools |
+| `images` | whether the request carries images |
 
 **Standard client headers.** Clients such as agent harnesses can describe themselves with
 `x-humpyard-profile: <name>` and `x-humpyard-tag-<name>: <value>`; they mean nothing until a rule
@@ -90,7 +101,8 @@ curl localhost:8080/v1/route/explain -H "Authorization: Bearer $KEY" -H 'content
   -d '{"model":"agent","headers":{"x-humpyard-profile":"deep"},"subagent":false,"stream":false}'
 ```
 
-The answer has `selected` (`route`, `rule`, and whether it came from a `selector` or the
+Add `prompt_tokens` (the estimate, for example from `count_tokens`), `tools` and `images` to ask
+about content-based rules; an unstated size never matches a `prompt_tokens` rule. The answer has `selected` (`route`, `rule`, and whether it came from a `selector` or the
 `requested_model`), `rules` (every rule in order: `matched`, the `mismatches` that stopped it, and
 `key_may_use_route`), the key's `budget` state, the `targets` the route would use after the routing
 policy with each endpoint's health, the route's `fallback_on`, and an `outcome`: `ok`, `forbidden`,

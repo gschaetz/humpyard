@@ -375,3 +375,144 @@ fn invalid_selector_config_is_rejected_with_a_clear_message() {
             .is_ok()
     );
 }
+
+// ---- conditions on what the request contains ----
+
+const CONTENT_RULES: &str = r#"
+[[select]]
+name = "vision"
+when = { images = true }
+route = "premium-only"
+[[select]]
+name = "long"
+when = { prompt_tokens = { min = 2000 } }
+route = "premium-only"
+[[select]]
+name = "tools"
+when = { tools = true }
+route = "cheap-first"
+"#;
+
+fn long_prompt() -> String {
+    "x".repeat(30_000)
+}
+
+fn with_tools(prompt: &str) -> Value {
+    json!({"model": "plain", "messages": [{"role": "user", "content": prompt}],
+           "tools": [{"type": "function", "function": {"name": "ls", "description": "list",
+                      "parameters": {"type": "object", "properties": {}}}}]})
+}
+
+fn with_image() -> Value {
+    json!({"model": "plain", "messages": [{"role": "user", "content": [
+        {"type": "text", "text": "what is this?"},
+        {"type": "image_url", "image_url": {"url": "data:image/png;base64,iVBORw0KGgo="}}
+    ]}]})
+}
+
+#[tokio::test]
+async fn prompt_size_tools_and_images_choose_the_route() {
+    let r = rig(CONTENT_RULES).await;
+    let small = r.ask("full", "plain", &[]).await;
+    assert_eq!(picked(&small), (200, "plain", "default"));
+    let long = r
+        .ask_body("full", chat_request_with("plain", &long_prompt()), &[])
+        .await;
+    assert_eq!(picked(&long), (200, "premium-only", "long"));
+    let tools = r.ask_body("full", with_tools("hi"), &[]).await;
+    assert_eq!(picked(&tools), (200, "cheap-first", "tools"));
+    let image = r.ask_body("full", with_image(), &[]).await;
+    assert_eq!(picked(&image), (200, "premium-only", "vision"));
+    // Order matters: a long prompt with tools follows the earlier `long` rule.
+    let both = r.ask_body("full", with_tools(&long_prompt()), &[]).await;
+    assert_eq!(picked(&both), (200, "premium-only", "long"));
+}
+
+fn chat_request_with(model: &str, prompt: &str) -> Value {
+    json!({"model": model, "messages": [{"role": "user", "content": prompt}]})
+}
+
+#[tokio::test]
+async fn explain_takes_the_features_and_agrees_with_the_gateways_own_estimate() {
+    let r = rig(CONTENT_RULES).await;
+    let prompt = long_prompt();
+    // Ask the gateway how big it thinks the prompt is, then explain with that number.
+    let counted: Value = reqwest::Client::new()
+        .post(format!("{}/v1/messages/count_tokens", r.url))
+        .bearer_auth(&r.keys["full"])
+        .json(&json!({"model": "plain", "max_tokens": 1, "messages": [{"role": "user", "content": prompt}]}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let tokens = counted["input_tokens"].as_u64().unwrap();
+    assert!(tokens > 2000, "{counted}");
+
+    let explain = |body: Value| {
+        let client = reqwest::Client::new();
+        let (url, key) = (
+            format!("{}/v1/route/explain", r.url),
+            r.keys["full"].clone(),
+        );
+        async move {
+            client
+                .post(url)
+                .bearer_auth(key)
+                .json(&body)
+                .send()
+                .await
+                .unwrap()
+                .json::<Value>()
+                .await
+                .unwrap()
+        }
+    };
+    let report = explain(json!({"model": "plain", "prompt_tokens": tokens})).await;
+    assert_eq!(report["selected"]["rule"], "long", "{report}");
+    let real = r
+        .ask_body("full", chat_request_with("plain", &prompt), &[])
+        .await;
+    assert_eq!(real.rule.as_deref(), report["selected"]["rule"].as_str());
+
+    let small = explain(json!({"model": "plain", "prompt_tokens": 10})).await;
+    assert_eq!(small["selected"]["rule"], "default");
+    assert_eq!(
+        small["rules"][1]["mismatches"],
+        json!(["prompt_tokens: wanted at least 2000, got 10"])
+    );
+    let unknown = explain(json!({"model": "plain"})).await;
+    assert_eq!(
+        unknown["rules"][1]["mismatches"],
+        json!(["prompt_tokens: the request's size is not known"])
+    );
+    let flags = explain(json!({"model": "plain", "tools": true, "images": true})).await;
+    assert_eq!(flags["selected"]["rule"], "vision");
+}
+
+#[test]
+fn prompt_token_ranges_are_validated() {
+    for (select, expected) in [
+        (
+            "[[select]]\nwhen = { prompt_tokens = {} }\nroute = \"r\"",
+            "needs a `min` or a `max`",
+        ),
+        (
+            "[[select]]\nwhen = { prompt_tokens = { min = 10, max = 5 } }\nroute = \"r\"",
+            "above max",
+        ),
+        (
+            "[[select]]\nwhen = { prompt_tokens = { least = 5 } }\nroute = \"r\"",
+            "least",
+        ),
+    ] {
+        let message = load(select)
+            .err()
+            .unwrap_or_else(|| panic!("accepted: {select}"));
+        assert!(message.contains(expected), "{select}: {message}");
+    }
+    assert!(
+        load("[[select]]\nwhen = { prompt_tokens = { min = 5, max = 5 } }\nroute = \"r\"").is_ok()
+    );
+}

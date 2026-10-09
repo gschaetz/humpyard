@@ -246,12 +246,26 @@ pub struct When {
     pub subagent: Option<bool>,
     /// Whether the client asked for a streamed response.
     pub stream: Option<bool>,
+    /// Estimated prompt size in tokens (a conservative local estimate, inclusive bounds).
+    pub prompt_tokens: Option<TokenRange>,
+    /// Whether the request defines tools.
+    pub tools: Option<bool>,
+    /// Whether the request carries images.
+    pub images: Option<bool>,
     /// Header name to glob. Credential headers cannot be matched.
     #[serde(default)]
     pub header: BTreeMap<String, String>,
     /// Tag name to glob: the value of the client's `x-humpyard-tag-<name>` header.
     #[serde(default)]
     pub tag: BTreeMap<String, String>,
+}
+
+/// Inclusive bounds on a token count; at least one bound is required.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TokenRange {
+    pub min: Option<u64>,
+    pub max: Option<u64>,
 }
 
 impl When {
