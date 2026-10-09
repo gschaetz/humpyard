@@ -82,6 +82,11 @@ impl Breaker {
         }
     }
 
+    /// The settings this breaker was built with.
+    pub fn config(&self) -> HealthConfig {
+        self.config
+    }
+
     fn enabled(&self) -> bool {
         self.config.failure_threshold > 0
     }

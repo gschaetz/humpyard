@@ -150,6 +150,13 @@ follows a catch-all (it could never match). See [ADR 0011](adr/0011-selectors-ch
 
 Responses carry `x-humpyard-target` (who served) and `x-humpyard-provider` (which endpoint).
 
+## Changing the configuration while running
+
+Routes, selector rules, targets, providers, keys and budgets can be edited and reloaded without a
+restart (SIGHUP, or `reload_poll_secs`); see [deployment.md](deployment.md#reloading-the-configuration).
+A reload is all or nothing, in-flight requests keep the configuration they started with, and
+endpoint health and unchanged routes' session state carry over.
+
 ## Endpoint health
 
 After `failure_threshold` consecutive failures of the kind that trigger failover (connection

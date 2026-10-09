@@ -62,6 +62,28 @@ fn termination_signals() -> tokio::sync::mpsc::Receiver<()> {
     rx
 }
 
+/// Turns SIGHUP into reload requests: each one makes the running gateway re-read its config file.
+/// `None` where the platform has no SIGHUP.
+fn reload_signals() -> Option<tokio::sync::mpsc::Receiver<()>> {
+    #[cfg(unix)]
+    {
+        let mut hangup =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::hangup()).ok()?;
+        let (tx, rx) = tokio::sync::mpsc::channel(4);
+        tokio::spawn(async move {
+            while hangup.recv().await.is_some() {
+                // A full queue already has reloads pending, which cover this one.
+                let _ = tx.try_send(());
+            }
+        });
+        Some(rx)
+    }
+    #[cfg(not(unix))]
+    {
+        None
+    }
+}
+
 #[tokio::main]
 async fn main() -> ExitCode {
     tracing_subscriber::fmt()
@@ -92,13 +114,14 @@ async fn run(command: Command) -> Result<(), String> {
             println!("Add to your config:\n\n[keys.{id}]\nsha256 = \"{hash}\"");
             Ok(())
         }
-        Command::Serve { config } => {
-            let config = Config::load(&config).map_err(|e| e.to_string())?;
+        Command::Serve { config: path } => {
+            let config = Config::load(&path).map_err(|e| e.to_string())?;
             let listener = tokio::net::TcpListener::bind(config.listen)
                 .await
                 .map_err(|e| format!("cannot bind {}: {e}", config.listen))?;
             tracing::info!(listen = %config.listen, "serving");
-            server::run(config, listener, termination_signals()).await
+            let reload = reload_signals().map(|triggers| server::Reload { path, triggers });
+            server::run(config, listener, termination_signals(), reload).await
         }
     }
 }

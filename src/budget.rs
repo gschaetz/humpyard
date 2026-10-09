@@ -33,7 +33,9 @@ pub struct BudgetStatus {
 
 pub struct BudgetTracker {
     clock: Arc<dyn Clock>,
-    restricted_at: f64,
+    /// Fraction of a limit at which a key becomes restricted, as `f64` bits so a config reload can
+    /// change it on the live tracker.
+    restricted_at: std::sync::atomic::AtomicU64,
     counters: Mutex<HashMap<String, KeyCounters>>,
 }
 
@@ -41,9 +43,24 @@ impl BudgetTracker {
     pub fn new(clock: Arc<dyn Clock>, budget: &BudgetConfig) -> Self {
         Self {
             clock,
-            restricted_at: budget.restricted_at,
+            restricted_at: std::sync::atomic::AtomicU64::new(budget.restricted_at.to_bits()),
             counters: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// Applies a new restriction threshold (a config reload); counters are untouched.
+    pub fn set_restricted_at(&self, restricted_at: f64) {
+        self.restricted_at.store(
+            restricted_at.to_bits(),
+            std::sync::atomic::Ordering::Relaxed,
+        );
+    }
+
+    fn restricted_at(&self) -> f64 {
+        f64::from_bits(
+            self.restricted_at
+                .load(std::sync::atomic::Ordering::Relaxed),
+        )
     }
 
     /// Loads the current day's and month's spend per key from the ledger.
@@ -134,7 +151,7 @@ impl BudgetTracker {
         }
         let state = match worst {
             Some((_, ratio)) if ratio >= 1.0 => BudgetState::Exhausted,
-            Some((_, ratio)) if ratio >= self.restricted_at => BudgetState::Restricted,
+            Some((_, ratio)) if ratio >= self.restricted_at() => BudgetState::Restricted,
             _ => BudgetState::Healthy,
         };
         BudgetStatus {

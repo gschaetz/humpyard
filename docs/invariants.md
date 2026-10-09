@@ -51,6 +51,11 @@ in an ADR (`docs/adr/`) in the same change.
     and client errors never count against an endpoint. *Enforced by* `tests/health.rs`; see
     [ADR-0009](adr/0009-endpoint-health-lives-in-the-pool.md).
 
+15. **A reload is all or nothing.** A config that fails to load, validate or build, or that changes
+    a setting a live process cannot change, leaves the running configuration untouched, and a
+    request uses one configuration from start to finish. *Enforced by* `tests/reload.rs` and
+    `tests/reload_process.rs`; see [ADR-0012](adr/0012-config-snapshot-reloaded-on-sighup.md).
+
 ## Data and secrets
 
 8. **No plaintext secrets.** Provider keys come from environment variables; client keys exist only

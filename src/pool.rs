@@ -12,7 +12,7 @@ use switchyard_protocol::{
 };
 
 use crate::clock::Clock;
-use crate::config::{Config, Endpoint, Price, Provider};
+use crate::config::{Config, Endpoint, HealthConfig, Price, Provider};
 use crate::error::TIMEOUT_MARKER;
 use crate::health::{Admission, Breaker, Snapshot, Transition};
 
@@ -24,7 +24,10 @@ struct EndpointClient {
     model: String,
     price: Option<Price>,
     client: TranslatingLlmClient,
-    breaker: Breaker,
+    /// Shared with the next snapshot on a reload, so health survives edits that do not touch it.
+    breaker: Arc<Breaker>,
+    /// Part of the endpoint's identity: a different URL is a different endpoint.
+    base_url: String,
 }
 
 /// One endpoint's health, for reporting.
@@ -245,8 +248,7 @@ impl EndpointClient {
 fn endpoint_client(
     provider: &Provider,
     endpoint: &Endpoint,
-    config: &Config,
-    clock: &Arc<dyn Clock>,
+    breaker: Arc<Breaker>,
 ) -> Result<TargetEndpoint, String> {
     let backend = Backend::OpenAiChat(HttpBackendConfig {
         base_url: provider.base_url.clone(),
@@ -269,35 +271,63 @@ fn endpoint_client(
         model: endpoint.model.clone(),
         price: endpoint.price,
         client,
-        breaker: Breaker::new(config.health, clock.clone()),
+        breaker,
+        base_url: provider.base_url.clone(),
     })
 }
 
 type TargetEndpoint = EndpointClient;
 
-/// Builds one client per configured target.
+impl TargetClient {
+    /// The breaker of the endpoint with this identity, when this target has one and it was built
+    /// with the same health settings, so a reload can keep what is known about it.
+    fn reusable_breaker(
+        &self,
+        provider: &str,
+        model: &str,
+        base_url: &str,
+        health: HealthConfig,
+    ) -> Option<Arc<Breaker>> {
+        self.endpoints
+            .iter()
+            .find(|e| e.provider == provider && e.model == model && e.base_url == base_url)
+            .map(|e| e.breaker.clone())
+            .filter(|b| b.config() == health)
+    }
+}
+
+// The map type is this crate's own and always uses the default hasher.
+#[allow(clippy::implicit_hasher)]
+/// Builds one client per configured target. With `previous` (the targets of the config being
+/// replaced, on a reload) the health state of every endpoint that did not change is carried over.
 pub fn build(
     config: &Config,
     clock: &Arc<dyn Clock>,
+    previous: Option<&HashMap<ModelId, Arc<TargetClient>>>,
 ) -> Result<HashMap<ModelId, Arc<TargetClient>>, String> {
     let mut targets = HashMap::new();
     for (id, endpoints) in &config.targets {
+        let key = ModelId::from(id.as_str());
+        let old = previous.and_then(|p| p.get(&key));
         let clients = endpoints
             .iter()
             .map(|endpoint| {
-                endpoint_client(
-                    &config.providers[&endpoint.provider],
-                    endpoint,
-                    config,
-                    clock,
-                )
+                let provider = &config.providers[&endpoint.provider];
+                let breaker = old
+                    .and_then(|t| {
+                        t.reusable_breaker(
+                            &endpoint.provider,
+                            &endpoint.model,
+                            &provider.base_url,
+                            config.health,
+                        )
+                    })
+                    .unwrap_or_else(|| Arc::new(Breaker::new(config.health, clock.clone())));
+                endpoint_client(provider, endpoint, breaker)
             })
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| format!("target `{id}`: {e}"))?;
-        targets.insert(
-            ModelId::from(id.as_str()),
-            Arc::new(TargetClient { endpoints: clients }),
-        );
+        targets.insert(key, Arc::new(TargetClient { endpoints: clients }));
     }
     Ok(targets)
 }

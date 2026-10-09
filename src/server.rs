@@ -3,6 +3,7 @@
 
 use std::collections::HashMap;
 use std::convert::Infallible;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use axum::Router;
@@ -13,6 +14,7 @@ use axum::response::sse::{Event, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use futures::{Stream, StreamExt};
+use parking_lot::{Mutex, RwLock};
 use serde_json::{Value, json};
 use std::time::Duration;
 use tokio::sync::{mpsc, watch};
@@ -53,17 +55,50 @@ mod explain;
 const ROUTE_HEADER: &str = "x-humpyard-route";
 const RULE_HEADER: &str = "x-humpyard-rule";
 
-pub struct AppState {
+/// Everything derived from the config file. It is replaced whole on a reload (ADR 0012): a request
+/// takes the current snapshot once and uses it to the end, so rules never change under it.
+struct Snapshot {
     config: Config,
-    /// Flips to `true` when shutdown gives up waiting: running requests are cancelled.
-    hard_stop: watch::Receiver<bool>,
     targets: HashMap<ModelId, Arc<TargetClient>>,
-    accounting: Arc<Accounting>,
-    tracker: Option<Arc<BudgetTracker>>,
     routes: Routes,
     selectors: Selectors,
     policy: Arc<dyn RoutingPolicy>,
     keys: Arc<dyn KeyStore>,
+    /// Short hash of the config file this snapshot came from, for `GET /v1/health`.
+    fingerprint: String,
+    loaded_at_ms: i64,
+}
+
+pub struct AppState {
+    /// The current configuration; swapped by a reload.
+    snapshot: RwLock<Arc<Snapshot>>,
+    /// Flips to `true` when shutdown gives up waiting: running requests are cancelled.
+    hard_stop: watch::Receiver<bool>,
+    accounting: Arc<Accounting>,
+    tracker: Option<Arc<BudgetTracker>>,
+    clock: Arc<dyn Clock>,
+    /// The embedder's policy; it is composed with the budget policy of every snapshot.
+    extra_policy: Arc<dyn RoutingPolicy>,
+    /// The outcome of the latest reload attempt.
+    reload: Mutex<ReloadStatus>,
+    /// Serializes reloads.
+    reloading: tokio::sync::Mutex<()>,
+}
+
+impl AppState {
+    fn snapshot(&self) -> Arc<Snapshot> {
+        self.snapshot.read().clone()
+    }
+}
+
+/// What the last reload attempt did, for `GET /v1/health`.
+#[derive(Clone, Default)]
+struct ReloadStatus {
+    /// How many reloads have been attempted since start (successful or not).
+    attempts: u64,
+    at_ms: Option<i64>,
+    ok: Option<bool>,
+    message: Option<String>,
 }
 
 pub async fn router(config: Config) -> Result<Router, String> {
@@ -94,7 +129,7 @@ pub struct Options {
 }
 
 pub async fn router_with_options(config: Config, options: Options) -> Result<Router, String> {
-    Ok(build(config, options).await?.router)
+    Ok(build(config, options, "startup".to_string()).await?.router)
 }
 
 /// How long, after giving up on in-flight requests, to wait for their connections to close.
@@ -115,9 +150,17 @@ pub async fn run(
     config: Config,
     listener: tokio::net::TcpListener,
     mut signals: mpsc::Receiver<()>,
+    reload: Option<Reload>,
 ) -> Result<(), String> {
     let grace = Duration::from_secs(config.shutdown_grace_secs);
-    let built = build(config, Options::default()).await?;
+    let poll_secs = config.reload_poll_secs;
+    let initial_fingerprint = reload
+        .as_ref()
+        .and_then(|r| std::fs::read_to_string(&r.path).ok())
+        .map_or_else(|| "startup".to_string(), |text| fingerprint(&text));
+    let built = build(config, Options::default(), initial_fingerprint).await?;
+    let poll = (poll_secs > 0).then(|| Duration::from_secs(poll_secs));
+    let reloader = reload.map(|r| tokio::spawn(reload_loop(built.state.clone(), r, poll)));
     let (drain_tx, drain_rx) = tokio::sync::oneshot::channel::<()>();
     let server = axum::serve(listener, built.router)
         .with_graceful_shutdown(async move {
@@ -144,6 +187,9 @@ pub async fn run(
                 }
             }
         }
+    }
+    if let Some(reloader) = reloader {
+        reloader.abort();
     }
     if cancelled {
         let _ = built.hard_stop.send(true);
@@ -180,16 +226,179 @@ pub async fn run(
     Ok(())
 }
 
+/// Where a running gateway re-reads its config from, and what asks it to.
+pub struct Reload {
+    /// The config file to re-read.
+    pub path: PathBuf,
+    /// Each message asks for one reload (the binary sends one per SIGHUP).
+    pub triggers: mpsc::Receiver<()>,
+}
+
+/// Reloads on every trigger, and, when `poll` is set, whenever the file's content differs from the
+/// last version looked at (a bad file is attempted once, not on every tick). Triggers that arrive
+/// while a reload runs are merged into one more.
+async fn reload_loop(state: Arc<AppState>, mut reload: Reload, poll: Option<Duration>) {
+    let mut ticker = poll.map(|every| {
+        let mut ticker = tokio::time::interval(every);
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        ticker
+    });
+    let mut last_seen = state.snapshot().fingerprint.clone();
+    loop {
+        let signalled = if let Some(ticker) = ticker.as_mut() {
+            tokio::select! {
+                trigger = reload.triggers.recv() => {
+                    if trigger.is_none() { return; }
+                    true
+                }
+                _ = ticker.tick() => false,
+            }
+        } else {
+            if reload.triggers.recv().await.is_none() {
+                return;
+            }
+            true
+        };
+        if !signalled {
+            let Ok(text) = std::fs::read_to_string(&reload.path) else {
+                continue;
+            };
+            let seen = fingerprint(&text);
+            if seen == last_seen {
+                continue;
+            }
+            last_seen = seen;
+        }
+        loop {
+            reload_config(&state, &reload.path).await;
+            if let Ok(text) = std::fs::read_to_string(&reload.path) {
+                last_seen = fingerprint(&text);
+            }
+            if reload.triggers.try_recv().is_err() {
+                break;
+            }
+            while reload.triggers.try_recv().is_ok() {}
+        }
+    }
+}
+
+/// Reads, validates and builds the config at `path` and, only if all of that works, swaps it in.
+/// A failure of any kind keeps the previous configuration serving and is recorded.
+async fn reload_config(state: &AppState, path: &std::path::Path) {
+    let _one_at_a_time = state.reloading.lock().await;
+    let outcome = try_reload(state, path);
+    let mut status = state.reload.lock();
+    status.attempts += 1;
+    status.at_ms = Some(state.clock.now_ms());
+    match outcome {
+        Ok(fingerprint) => {
+            tracing::info!(%fingerprint, "configuration reloaded");
+            status.ok = Some(true);
+            status.message = Some(format!("loaded {fingerprint}"));
+        }
+        Err(error) => {
+            tracing::error!(%error, "configuration reload failed; the previous configuration keeps serving");
+            status.ok = Some(false);
+            status.message = Some(error);
+        }
+    }
+}
+
+fn try_reload(state: &AppState, path: &std::path::Path) -> Result<String, String> {
+    let text = std::fs::read_to_string(path)
+        .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+    let config =
+        Config::from_toml(&text, |name| std::env::var(name).ok()).map_err(|e| e.to_string())?;
+    let current = state.snapshot();
+    restart_only_changes(&current.config, &config)?;
+    let fingerprint = fingerprint(&text);
+    let next = Snapshot::build(
+        config,
+        &state.clock,
+        &state.extra_policy,
+        Some(&current),
+        fingerprint.clone(),
+    )?;
+    if let Some(tracker) = &state.tracker {
+        tracker.set_restricted_at(next.config.budget.restricted_at);
+    }
+    *state.snapshot.write() = Arc::new(next);
+    Ok(fingerprint)
+}
+
+/// Settings a live process cannot change; a reload that touches one is refused as a whole.
+fn restart_only_changes(old: &Config, new: &Config) -> Result<(), String> {
+    let refuse = |what: &str| {
+        Err(format!(
+            "`{what}` changed: that needs a restart, so nothing was reloaded"
+        ))
+    };
+    if old.listen != new.listen {
+        return refuse("listen");
+    }
+    if old.ledger != new.ledger {
+        return refuse("ledger path");
+    }
+    if old.shutdown_grace_secs != new.shutdown_grace_secs {
+        return refuse("shutdown_grace_secs");
+    }
+    if old.reload_poll_secs != new.reload_poll_secs {
+        return refuse("reload_poll_secs");
+    }
+    if old.keys.is_empty() != new.keys.is_empty() {
+        return refuse(
+            "having keys at all (the budget tracker is only created for keyed gateways)",
+        );
+    }
+    Ok(())
+}
+
 /// Everything `run` needs to serve and then shut down cleanly.
 struct Built {
     router: Router,
+    state: Arc<AppState>,
     accounting: Arc<Accounting>,
     hard_stop: watch::Sender<bool>,
 }
 
-async fn build(config: Config, options: Options) -> Result<Built, String> {
+impl Snapshot {
+    /// Builds everything the config describes. With `previous` (the snapshot being replaced) the
+    /// state of unchanged endpoints and routes is carried over.
+    fn build(
+        config: Config,
+        clock: &Arc<dyn Clock>,
+        extra_policy: &Arc<dyn RoutingPolicy>,
+        previous: Option<&Snapshot>,
+        fingerprint: String,
+    ) -> Result<Self, String> {
+        let targets = pool::build(&config, clock, previous.map(|p| &p.targets))?;
+        let routes = Routes::build(&config, previous.map(|p| (&p.config, &p.routes)))?;
+        let policy: Arc<dyn RoutingPolicy> = Arc::new(All(vec![
+            extra_policy.clone(),
+            Arc::new(BudgetPolicy::new(&config)),
+        ]));
+        Ok(Self {
+            selectors: Selectors::new(&config.select),
+            keys: Arc::new(ConfigKeyStore::new(&config.keys)),
+            loaded_at_ms: clock.now_ms(),
+            config,
+            targets,
+            routes,
+            policy,
+            fingerprint,
+        })
+    }
+}
+
+/// A short, stable name for a config file's content.
+fn fingerprint(text: &str) -> String {
+    use sha2::{Digest, Sha256};
+    hex::encode(Sha256::digest(text.as_bytes()))[..12].to_string()
+}
+
+async fn build(config: Config, options: Options, fingerprint: String) -> Result<Built, String> {
     let clock: Arc<dyn Clock> = options.clock.unwrap_or_else(|| Arc::new(SystemClock));
-    let targets = pool::build(&config, &clock)?;
+    let extra_policy: Arc<dyn RoutingPolicy> = options.policy.unwrap_or_else(|| Arc::new(AllowAll));
     let ledger = match &config.ledger {
         Some(path) => Some(Ledger::open(path).await.map_err(|e| e.to_string())?),
         None => None,
@@ -199,25 +408,18 @@ async fn build(config: Config, options: Options) -> Result<Built, String> {
     if let (Some(tracker), Some(ledger)) = (&tracker, &ledger) {
         tracker.hydrate(ledger).await.map_err(|e| e.to_string())?;
     }
-    let accounting = Arc::new(Accounting::new(ledger, clock, tracker.clone()));
-    let policy: Arc<dyn RoutingPolicy> = Arc::new(All(vec![
-        options.policy.unwrap_or_else(|| Arc::new(AllowAll)),
-        Arc::new(BudgetPolicy::new(&config)),
-    ]));
-    let routes = Routes::build(&config)?;
-    let keys: Arc<dyn KeyStore> = Arc::new(ConfigKeyStore::new(&config.keys));
+    let accounting = Arc::new(Accounting::new(ledger, clock.clone(), tracker.clone()));
+    let snapshot = Snapshot::build(config, &clock, &extra_policy, None, fingerprint)?;
     let (hard_stop_tx, hard_stop) = watch::channel(false);
-    let selectors = Selectors::new(&config.select);
     let state = Arc::new(AppState {
-        config,
+        snapshot: RwLock::new(Arc::new(snapshot)),
         hard_stop,
-        targets,
         accounting: accounting.clone(),
         tracker,
-        routes,
-        selectors,
-        policy,
-        keys,
+        clock,
+        extra_policy,
+        reload: Mutex::new(ReloadStatus::default()),
+        reloading: tokio::sync::Mutex::new(()),
     });
     let app = Router::new()
         .route("/healthz", get(|| async { StatusCode::OK }))
@@ -245,20 +447,22 @@ async fn build(config: Config, options: Options) -> Result<Built, String> {
             "/v1/messages",
             post(|s, h, b| infer(s, WireFormat::AnthropicMessages, h, b)),
         )
-        .with_state(state);
+        .with_state(state.clone());
     Ok(Built {
         router: app,
+        state,
         accounting,
         hard_stop: hard_stop_tx,
     })
 }
 
 async fn list_models(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response {
-    let caller = match authenticate(&state, &headers).await {
+    let snap = state.snapshot();
+    let caller = match authenticate(&snap, &headers).await {
         Ok(caller) => caller,
         Err(error) => return error.into_response_for(WireFormat::OpenAiChat),
     };
-    let data: Vec<Value> = state
+    let data: Vec<Value> = snap
         .config
         .model_names()
         .into_iter()
@@ -279,17 +483,18 @@ async fn count_tokens(
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
+    let snap = state.snapshot();
     let counted = async {
-        let caller = authenticate(&state, &headers).await?;
+        let caller = authenticate(&snap, &headers).await?;
         let decoded = decode(format, &body)?;
         let info = request_info(&headers);
         let stream = decoded.body["stream"].as_bool().unwrap_or(false);
         select_route(
-            &state,
+            &snap,
             caller.as_ref(),
             &decoded.model,
             stream,
-            request_features(&decoded.llm_request, &state.selectors),
+            request_features(&decoded.llm_request, &snap.selectors),
             &selector_headers(&headers),
             &info,
         )?;
@@ -321,10 +526,11 @@ async fn count_tokens(
 /// Each endpoint's health: who is being skipped and for how long. Needs a key when the gateway
 /// has keys, like every other `/v1` call.
 async fn endpoint_health(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response {
-    if let Err(error) = authenticate(&state, &headers).await {
+    let snap = state.snapshot();
+    if let Err(error) = authenticate(&snap, &headers).await {
         return error.into_response_for(WireFormat::OpenAiChat);
     }
-    let mut targets: Vec<_> = state.targets.iter().collect();
+    let mut targets: Vec<_> = snap.targets.iter().collect();
     targets.sort_by(|a, b| a.0.cmp(b.0));
     let report: Vec<_> = targets
         .into_iter()
@@ -345,13 +551,25 @@ async fn endpoint_health(State(state): State<Arc<AppState>>, headers: HeaderMap)
             json!({"target": target.to_string(), "endpoints": endpoints})
         })
         .collect();
-    axum::Json(json!({"targets": report})).into_response()
+    let reload = state.reload.lock().clone();
+    axum::Json(json!({
+        "targets": report,
+        "config": {"fingerprint": snap.fingerprint, "loaded_at_ms": snap.loaded_at_ms},
+        "reload": {
+            "attempts": reload.attempts,
+            "at_ms": reload.at_ms,
+            "ok": reload.ok,
+            "message": reload.message,
+        },
+    }))
+    .into_response()
 }
 
 /// The calling key's id, limits, spend and budget state.
 async fn key_info(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response {
+    let snap = state.snapshot();
     let format = WireFormat::OpenAiChat;
-    let caller = match authenticate(&state, &headers).await {
+    let caller = match authenticate(&snap, &headers).await {
         Ok(Some(caller)) => caller,
         Ok(None) => {
             return GatewayError::ModelNotFound("key info needs a key: the gateway is open".into())
@@ -411,10 +629,10 @@ async fn stopped(mut stop: watch::Receiver<bool>) {
 
 /// Identifies the caller. `None` means the gateway is open (no keys configured).
 async fn authenticate(
-    state: &AppState,
+    snap: &Snapshot,
     headers: &HeaderMap,
 ) -> Result<Option<KeyRecord>, GatewayError> {
-    if !state.keys.enforces_auth() {
+    if !snap.keys.enforces_auth() {
         return Ok(None);
     }
     let key = presented_key(headers).ok_or_else(|| {
@@ -422,7 +640,7 @@ async fn authenticate(
             "missing API key: send `Authorization: Bearer <key>` or `x-api-key`".into(),
         )
     })?;
-    match state.keys.lookup(&hash_key(key)).await {
+    match snap.keys.lookup(&hash_key(key)).await {
         Some(record) => Ok(Some(record)),
         None => Err(GatewayError::Unauthorized("invalid API key".into())),
     }
@@ -434,8 +652,9 @@ async fn infer(
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
+    let snap = state.snapshot();
     let started = std::time::Instant::now();
-    let caller = match authenticate(&state, &headers).await {
+    let caller = match authenticate(&snap, &headers).await {
         Ok(caller) => caller,
         Err(error) => {
             tracing::warn!(%format, status = error.status().as_u16(), error = %error, "request rejected");
@@ -444,7 +663,7 @@ async fn infer(
     };
     let key_id = caller.as_ref().map_or("-", |k| k.id.as_str()).to_string();
     let outcome = tokio::select! {
-        outcome = handle(&state, format, &headers, &body, caller.as_ref()) => outcome,
+        outcome = handle(&state, &snap, format, &headers, &body, caller.as_ref()) => outcome,
         () = stopped(state.hard_stop.clone()) => {
             Err(GatewayError::Unavailable("gateway is shutting down".into()))
         }
@@ -510,6 +729,7 @@ struct Executed {
 /// four succeed.
 async fn handle(
     state: &AppState,
+    snap: &Snapshot,
     format: WireFormat,
     headers: &HeaderMap,
     raw: &[u8],
@@ -523,17 +743,17 @@ async fn handle(
     let info = request_info(headers);
     let stream = body["stream"].as_bool().unwrap_or(false);
     let selection = select_route(
-        state,
+        snap,
         caller,
         &model,
         stream,
-        request_features(&llm_request, &state.selectors),
+        request_features(&llm_request, &snap.selectors),
         &selector_headers(headers),
         &info,
     )?;
     let budget = check_budget(state, caller)?;
     let plan = plan_route(
-        state,
+        snap,
         selection.route,
         &selection.name,
         caller,
@@ -552,7 +772,7 @@ async fn handle(
         info.session_id,
         selection.name.clone(),
     );
-    let executed = execute(state, &ctx, plan, request).await?;
+    let executed = execute(snap, &ctx, plan, request).await?;
     let (target, mut response) = encode(format, state.hard_stop.clone(), executed, &extensions)?;
     set_header(&mut response, ROUTE_HEADER, &selection.name);
     set_header(&mut response, RULE_HEADER, &selection.rule);
@@ -592,7 +812,7 @@ fn decode(format: WireFormat, raw: &[u8]) -> Result<Decoded, GatewayError> {
 
 /// Stage 2: the key may use this route, and the route exists.
 fn authorize<'a>(
-    state: &'a AppState,
+    snap: &'a Snapshot,
     caller: Option<&KeyRecord>,
     model: &str,
 ) -> Result<&'a Route, GatewayError> {
@@ -603,8 +823,7 @@ fn authorize<'a>(
             "this key may not use `{model}`"
         )));
     }
-    state
-        .routes
+    snap.routes
         .get(model)
         .ok_or_else(|| GatewayError::ModelNotFound(model.to_string()))
 }
@@ -657,7 +876,7 @@ fn selector_headers(headers: &HeaderMap) -> HashMap<String, String> {
 /// route, so client headers can narrow the flow but never widen it (ADR 0011). With no applicable
 /// rule the requested model names the route, subject to the key's allowlist as before.
 fn select_route<'a>(
-    state: &'a AppState,
+    snap: &'a Snapshot,
     caller: Option<&KeyRecord>,
     model: &str,
     stream: bool,
@@ -665,7 +884,7 @@ fn select_route<'a>(
     header_facts: &HashMap<String, String>,
     info: &RequestInfo,
 ) -> Result<Selection<'a>, GatewayError> {
-    if !state.selectors.is_empty() {
+    if !snap.selectors.is_empty() {
         let facts = Facts {
             model,
             key: caller.map(|k| k.id.as_str()),
@@ -676,11 +895,11 @@ fn select_route<'a>(
             stream,
             features,
         };
-        let chosen = state
+        let chosen = snap
             .selectors
             .choose(&facts, |route| caller.is_none_or(|key| key.may_use(route)));
         if let Some(chosen) = chosen
-            && let Some(route) = state.routes.get(chosen.route)
+            && let Some(route) = snap.routes.get(chosen.route)
         {
             return Ok(Selection {
                 route,
@@ -689,7 +908,7 @@ fn select_route<'a>(
             });
         }
     }
-    let route = authorize(state, caller, model)?;
+    let route = authorize(snap, caller, model)?;
     Ok(Selection {
         route,
         name: model.to_string(),
@@ -738,7 +957,7 @@ fn check_budget(
 
 /// Stage 4: let the routing policy narrow the targets; nothing eligible is a refusal.
 fn plan_route(
-    state: &AppState,
+    snap: &Snapshot,
     route: &Route,
     model: &str,
     caller: Option<&KeyRecord>,
@@ -755,7 +974,7 @@ fn plan_route(
         }),
     };
     route
-        .plan(model, |target| state.policy.is_eligible(&context, target))
+        .plan(model, |target| snap.policy.is_eligible(&context, target))
         .ok_or_else(|| {
             if budget == Some(BudgetState::Exhausted) {
                 GatewayError::BudgetExceeded(format!(
@@ -771,13 +990,13 @@ fn plan_route(
 
 /// Stage 5: run the route's algorithm over the metered clients and settle the usage accounting.
 async fn execute(
-    state: &AppState,
+    snap: &Snapshot,
     ctx: &Arc<CallContext>,
     plan: Plan,
     request: Request,
 ) -> Result<Executed, GatewayError> {
     let names: Vec<ModelId> = plan.models.models_for(&Category::Any).to_vec();
-    let clients = ctx.router(&state.targets, &names, &plan.fallback);
+    let clients = ctx.router(&snap.targets, &names, &plan.fallback);
     let models = Arc::new(plan.models);
     let (selected, mut response) =
         match run_algorithm(plan.algorithm, clients, request, models, None).await {

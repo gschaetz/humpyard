@@ -37,6 +37,9 @@ pub struct Config {
     pub listen: SocketAddr,
     /// How long to wait for in-flight requests after SIGINT/SIGTERM (0 to 3600 seconds).
     pub shutdown_grace_secs: u64,
+    /// How often to check the config file for changes and reload; 0 turns polling off (SIGHUP
+    /// still works). Needs a restart to change.
+    pub reload_poll_secs: u64,
     pub providers: BTreeMap<String, Provider>,
     pub targets: BTreeMap<String, Vec<Endpoint>>,
     pub routes: BTreeMap<String, RouteSpec>,
@@ -157,6 +160,7 @@ impl Config {
         Ok(Self {
             listen: raw.listen,
             shutdown_grace_secs: raw.shutdown_grace_secs,
+            reload_poll_secs: raw.reload_poll_secs,
             providers,
             targets: raw
                 .targets

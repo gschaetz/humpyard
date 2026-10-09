@@ -14,7 +14,9 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use switchyard_protocol::{Category, Metadata, ModelId, WireFormat};
 
-use super::{AppState, GatewayError, RequestInfo, authenticate, check_budget, plan_route};
+use super::{
+    AppState, GatewayError, RequestInfo, Snapshot, authenticate, check_budget, plan_route,
+};
 use crate::config::CREDENTIAL_HEADERS;
 use crate::policy::{BudgetState, RequestMeta};
 use crate::select::{Facts, Features};
@@ -51,7 +53,8 @@ pub(super) async fn explain_route(
     body: Bytes,
 ) -> Response {
     let format = WireFormat::OpenAiChat;
-    let caller = match authenticate(&state, &headers).await {
+    let snap = state.snapshot();
+    let caller = match authenticate(&snap, &headers).await {
         Ok(caller) => caller,
         Err(error) => return error.into_response_for(format),
     };
@@ -64,7 +67,7 @@ pub(super) async fn explain_route(
             .into_response_for(format);
         }
     };
-    axum::Json(explain(&state, caller.as_ref(), &request)).into_response()
+    axum::Json(explain(&state, &snap, caller.as_ref(), &request)).into_response()
 }
 
 impl Hypothetical {
@@ -93,6 +96,7 @@ impl Hypothetical {
 
 fn explain(
     state: &AppState,
+    snap: &Snapshot,
     caller: Option<&crate::auth::KeyRecord>,
     request: &Hypothetical,
 ) -> Value {
@@ -113,7 +117,7 @@ fn explain(
         },
     };
     let permitted = |route: &str| caller.is_none_or(|key| key.may_use(route));
-    let trace = state.selectors.trace(&facts, permitted);
+    let trace = snap.selectors.trace(&facts, permitted);
     let rules: Vec<Value> = trace
         .iter()
         .map(|t| {
@@ -129,7 +133,7 @@ fn explain(
 
     // Resolve the route exactly as a real request does.
     let (route_name, rule, source) = match super::select_route(
-        state,
+        snap,
         caller,
         &request.model,
         request.stream,
@@ -171,8 +175,8 @@ fn explain(
         }
     };
     report["budget"] = json!(budget.map(budget_name));
-    let route = state.routes.get(&route_name);
-    match route.map(|r| plan_route(state, r, &route_name, caller, budget, &info)) {
+    let route = snap.routes.get(&route_name);
+    match route.map(|r| plan_route(snap, r, &route_name, caller, budget, &info)) {
         Some(Ok(plan)) => {
             report["outcome"] = json!("ok");
             report["fallback_on"] = match plan.fallback.classes() {
@@ -183,7 +187,7 @@ fn explain(
                 .models
                 .models_for(&Category::Any)
                 .iter()
-                .map(|name| target_report(state, name))
+                .map(|name| target_report(snap, name))
                 .collect();
             report["targets"] = Value::Array(targets);
         }
@@ -198,8 +202,8 @@ fn explain(
     report
 }
 
-fn target_report(state: &AppState, name: &ModelId) -> Value {
-    let endpoints: Vec<Value> = state
+fn target_report(snap: &Snapshot, name: &ModelId) -> Value {
+    let endpoints: Vec<Value> = snap
         .targets
         .get(name)
         .map(|client| {

@@ -40,7 +40,7 @@ pub struct Plan {
 }
 
 pub struct Routes {
-    by_name: HashMap<String, Route>,
+    by_name: HashMap<String, Arc<Route>>,
 }
 
 fn ids(names: &[String]) -> Vec<ModelId> {
@@ -276,24 +276,87 @@ fn build_route(name: &str, spec: &RouteSpec) -> Result<Route, String> {
 
 impl Routes {
     /// Builds every configured route, plus an implicit passthrough route per target.
-    pub fn build(config: &Config) -> Result<Self, String> {
+    /// Builds every route. With `previous` (the old config and its routes, on a reload), a route
+    /// whose definition did not change is reused as is, which keeps its per-session algorithm
+    /// state (escalation latches and the like).
+    pub fn build(config: &Config, previous: Option<(&Config, &Routes)>) -> Result<Self, String> {
         let mut by_name = HashMap::new();
         for target in config.targets.keys() {
             by_name.insert(
                 target.clone(),
-                Route::new(
+                Arc::new(Route::new(
                     Arc::new(Passthrough),
                     HashMap::from([(Category::Any, vec![ModelId::from(target.as_str())])]),
-                ),
+                )),
             );
         }
         for (name, spec) in &config.routes {
-            by_name.insert(name.clone(), build_route(name, spec)?);
+            let reused = previous
+                .filter(|(old, _)| old.routes.get(name) == Some(spec))
+                .and_then(|(_, routes)| routes.by_name.get(name).cloned());
+            let route = match reused {
+                Some(route) => route,
+                None => Arc::new(build_route(name, spec)?),
+            };
+            by_name.insert(name.clone(), route);
         }
         Ok(Self { by_name })
     }
 
     pub fn get(&self, name: &str) -> Option<&Route> {
-        self.by_name.get(name)
+        self.by_name.get(name).map(AsRef::as_ref)
+    }
+}
+
+#[cfg(test)]
+mod reuse_tests {
+    use super::*;
+
+    fn config(extra: &str) -> Config {
+        let toml = format!(
+            r#"listen = "127.0.0.1:0"
+[providers.p]
+base_url = "http://127.0.0.1:1"
+api_key_env = "K"
+[targets.a]
+endpoints = [{{ provider = "p", model = "m" }}]
+[targets.b]
+endpoints = [{{ provider = "p", model = "n" }}]
+[routes.steady]
+type = "stage_router"
+efficient = ["a"]
+capable = ["b"]
+[routes.moving]
+type = "passthrough"
+targets = ["a"]
+{extra}"#
+        );
+        Config::from_toml(&toml, |_| Some("k".into())).unwrap()
+    }
+
+    #[test]
+    fn a_reload_keeps_routes_whose_definition_did_not_change() {
+        let old_config = config("");
+        let old = Routes::build(&old_config, None).unwrap();
+
+        // `moving` now lists another target; `steady` is untouched.
+        let mut new_config = config("");
+        new_config.routes.insert(
+            "moving".into(),
+            crate::config::RouteSpec::Passthrough {
+                targets: vec!["b".into()],
+                fallback_on: None,
+            },
+        );
+        let new = Routes::build(&new_config, Some((&old_config, &old))).unwrap();
+
+        let same = |name: &str| Arc::ptr_eq(&old.by_name[name], &new.by_name[name]);
+        assert!(
+            same("steady"),
+            "unchanged route keeps its instance (and its session state)"
+        );
+        assert!(!same("moving"), "a changed route is rebuilt");
+        // Bare-target routes are stateless and always rebuilt; they must still exist.
+        assert!(new.get("a").is_some() && new.get("b").is_some());
     }
 }
