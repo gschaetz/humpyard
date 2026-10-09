@@ -25,6 +25,9 @@ pub(super) struct RawConfig {
     pub(super) budget: RawBudget,
     #[serde(default)]
     pub(super) health: RawHealth,
+    /// Ordered rules choosing the route from request facts (`[[select]]`).
+    #[serde(default)]
+    pub(super) select: Vec<SelectorSpec>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -212,6 +215,50 @@ fn default_confirmations() -> u32 {
 pub enum ClassifierMode {
     Capability,
     Escalation,
+}
+
+/// One routing rule: when every given condition holds, the request follows `route`.
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct SelectorSpec {
+    /// Shown in the `x-humpyard-rule` response header; defaults to `select[<index>]`.
+    pub name: Option<String>,
+    #[serde(default)]
+    pub when: When,
+    pub route: String,
+}
+
+/// Conditions of a rule, all of which must hold. Text conditions are globs (`*` matches any text).
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct When {
+    /// The model (route or target) the client asked for.
+    pub model: Option<String>,
+    /// The authenticated key's id.
+    pub key: Option<String>,
+    /// The client's `x-humpyard-profile` header.
+    pub profile: Option<String>,
+    /// The agent id the client reports.
+    pub agent: Option<String>,
+    /// The task id the client reports.
+    pub task: Option<String>,
+    /// Whether the client marked the request as coming from a sub-agent.
+    pub subagent: Option<bool>,
+    /// Whether the client asked for a streamed response.
+    pub stream: Option<bool>,
+    /// Header name to glob. Credential headers cannot be matched.
+    #[serde(default)]
+    pub header: BTreeMap<String, String>,
+    /// Tag name to glob: the value of the client's `x-humpyard-tag-<name>` header.
+    #[serde(default)]
+    pub tag: BTreeMap<String, String>,
+}
+
+impl When {
+    /// A rule with no conditions matches every request.
+    pub fn is_catch_all(&self) -> bool {
+        *self == Self::default()
+    }
 }
 
 /// Why a call to a target failed, as far as handing the request to the next target is concerned.

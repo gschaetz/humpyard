@@ -13,8 +13,9 @@ use std::path::{Path, PathBuf};
 use schema::RawConfig;
 pub use schema::{
     ClassifierMode, ClassifyTrigger, Endpoint, FallbackClass, FallbackOn, OverBudget, PickerMode,
-    Price, RouteSpec,
+    Price, RouteSpec, SelectorSpec, When,
 };
+pub use validate::CREDENTIAL_HEADERS;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
@@ -44,6 +45,8 @@ pub struct Config {
     pub ledger: Option<PathBuf>,
     pub budget: BudgetConfig,
     pub health: HealthConfig,
+    /// Routing rules, first match wins.
+    pub select: Vec<SelectorSpec>,
 }
 
 /// Endpoint circuit-breaker settings. A `failure_threshold` of 0 disables health tracking.
@@ -183,6 +186,7 @@ impl Config {
                 })
                 .collect::<Result<_, ConfigError>>()?,
             ledger: raw.ledger.map(|l| l.path),
+            select: raw.select,
             health: HealthConfig {
                 failure_threshold: raw.health.failure_threshold,
                 cooldown_secs: raw.health.cooldown_secs,

@@ -3,7 +3,7 @@
 Living document. Update it in the same PR as any change that alters structure, request flow or
 component status (see [AGENTS.md](../AGENTS.md)). Diagrams are Mermaid and render on GitHub.
 
-Last updated: 2026-10-08 (`add-packaging`: tag-only release workflow, container image, launchd service; the modelrelay migration, database-managed keys and target-level health eligibility are next).
+Last updated: 2026-10-08 (`add-route-selectors`: routing rules on request facts; next steps of the same direction are request-feature conditions, an `explain` call and hot reload).
 
 ## Component status
 
@@ -18,6 +18,7 @@ Last updated: 2026-10-08 (`add-packaging`: tag-only release workflow, container 
 | Routing-policy seam (eligibility hook, tier substitution, 503 when none eligible) | Implemented | `add-switchyard-routing` (group 5) |
 | Virtual keys (hashed, `KeyStore` trait), usage ledger (SQLite, async), per-endpoint pricing | Implemented | `add-cost-tracking` |
 | Budgets: UTC daily/monthly USD+token limits, restricted/exhausted states, 402, free-only, `/v1/key/info` | Implemented | `add-cost-tracking` |
+| Route selectors: ordered rules choose the route from the key, headers, tags and agent metadata; clients narrow, never widen | Implemented | `add-route-selectors` (ADR 0011) |
 | Endpoint health: per-endpoint circuit breaker with cooldown and probe, fail-open, `GET /v1/health` | Implemented | `add-endpoint-health` (ADR 0009) |
 | Health-driven target eligibility in the routing policy (tier substitution on a cold target) | Planned | not yet proposed |
 | Engineering hardening: invariants + architecture test, lints, structure refactors, CI gates, property tests, ADRs | Implemented | `harden-engineering` |
@@ -112,6 +113,7 @@ Switchyard decides the macro question (which target); the provider pool answers 
 | `ledger.rs` | SQLite usage ledger with async batching writer and period queries |
 | `metering.rs` | Per-request metered clients, stream tap, answer/judge classification, `Accounting` |
 | `pricing.rs` / `clock.rs` | micro-USD cost from usage; clock and UTC periods |
+| `select.rs` | Route selection rules: first-match evaluation of conditions on the key, requested model, headers, tags and agent metadata (pure, no HTTP types) |
 | `routing.rs` | Builds one long-lived Switchyard algorithm (and target groups) per route and per bare target; applies policy eligibility, tier substitution and random-weight realignment |
 | `pool.rs` | Per-target `RoutedLlmClient`: ordered endpoints, failover, circuit breaking via `health`, provider attribution header |
 | `health.rs` | Per-endpoint circuit breaker (cooldown, doubling, single probe) with an injected clock |

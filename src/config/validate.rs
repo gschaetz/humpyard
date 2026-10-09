@@ -61,6 +61,7 @@ pub(super) fn validate(raw: &RawConfig) -> Result<(), ConfigError> {
     }
     validate_budgets(raw)?;
     validate_health(raw)?;
+    validate_selectors(raw)?;
     for (id, target) in &raw.targets {
         if target.endpoints.is_empty() {
             return Err(invalid(format!("target `{id}` has no endpoints")));
@@ -88,6 +89,68 @@ pub(super) fn validate(raw: &RawConfig) -> Result<(), ConfigError> {
             }
         }
         validate_route(id, route)?;
+    }
+    Ok(())
+}
+
+/// Headers that carry credentials: a rule can neither match on them nor leak them into routing.
+pub const CREDENTIAL_HEADERS: [&str; 5] = [
+    "authorization",
+    "x-api-key",
+    "cookie",
+    "set-cookie",
+    "proxy-authorization",
+];
+
+pub(super) fn validate_selectors(raw: &RawConfig) -> Result<(), ConfigError> {
+    let mut names = std::collections::BTreeSet::new();
+    let mut catch_all_seen: Option<String> = None;
+    for (index, rule) in raw.select.iter().enumerate() {
+        let label = rule
+            .name
+            .clone()
+            .unwrap_or_else(|| format!("select[{index}]"));
+        if !names.insert(label.clone()) {
+            return Err(invalid(format!("selector name `{label}` is used twice")));
+        }
+        if !raw.routes.contains_key(&rule.route) && !raw.targets.contains_key(&rule.route) {
+            return Err(invalid(format!(
+                "selector `{label}` names unknown route `{}`",
+                rule.route
+            )));
+        }
+        if let Some(earlier) = &catch_all_seen {
+            return Err(invalid(format!(
+                "selector `{label}` can never match: the catch-all `{earlier}` before it matches everything"
+            )));
+        }
+        for name in rule.when.header.keys() {
+            let lower = name.to_ascii_lowercase();
+            if CREDENTIAL_HEADERS.contains(&lower.as_str()) {
+                return Err(invalid(format!(
+                    "selector `{label}` cannot match the credential header `{name}`"
+                )));
+            }
+            if http::HeaderName::from_bytes(name.as_bytes()).is_err() {
+                return Err(invalid(format!(
+                    "selector `{label}` has an invalid header name `{name}`"
+                )));
+            }
+        }
+        for name in rule.when.tag.keys() {
+            if name.is_empty()
+                || !name
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+            {
+                return Err(invalid(format!(
+                    "selector `{label}` has an invalid tag name `{name}` (letters, digits, - and _)"
+                )));
+            }
+        }
+        if rule.when.is_catch_all() {
+            catch_all_seen = Some(label);
+        }
     }
     Ok(())
 }

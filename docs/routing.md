@@ -23,6 +23,72 @@ the selected target (failing over across its endpoints), then encode the answer 
 Algorithms keep per-session state (escalation latches, capable-hold turns). Clients identify a
 session with the `x-switchyard-session-id` header; without it, state-dependent behavior is limited.
 
+## Selecting the route
+
+By default the client's `model` names the route. Selector rules let the operator decide the route
+from facts about the request instead, so different clients, keys or agents follow different flows
+(for example private, then paid, then public for one client and paid only for CI). Rules are
+evaluated top to bottom and the first one that matches wins; with no match the requested model is
+the route.
+
+```toml
+[[select]]
+name = "subagents"                       # optional; shown in x-humpyard-rule
+when = { subagent = true }
+route = "cheap-first"
+
+[[select]]
+when = { profile = "deep" }              # the client sent x-humpyard-profile: deep
+route = "paid-only"
+
+[[select]]
+when = { tag = { team = "infra" } }      # x-humpyard-tag-team: infra
+route = "paid-only"
+
+[[select]]
+when = { key = "ci-*" }                  # the authenticated key's id
+route = "paid-only"
+
+[[select]]
+when = { header = { "x-client" = "openclaw" } }
+route = "cheap-first"
+
+[[select]]
+route = "default"                        # no conditions: matches everything
+```
+
+All conditions of a rule must hold. Text conditions are globs (`*` matches any text, everything
+else is literal and case-sensitive). The conditions are:
+
+| Condition | Matches |
+|---|---|
+| `model` | the model the client asked for |
+| `key` | the authenticated key's id (never matches on an open gateway) |
+| `profile` | the client's `x-humpyard-profile` header |
+| `tag` | `{ name = glob }` against `x-humpyard-tag-<name>` headers |
+| `header` | `{ name = glob }` against any other request header (names are case-insensitive) |
+| `agent`, `task` | the agent and task ids the client reports (`x-switchyard-agent-id`, `x-switchyard-task-id`) |
+| `subagent` | whether the client marked the request as coming from a sub-agent |
+| `stream` | whether the client asked for a streamed response |
+
+**Standard client headers.** Clients such as agent harnesses can describe themselves with
+`x-humpyard-profile: <name>` and `x-humpyard-tag-<name>: <value>`; they mean nothing until a rule
+uses them.
+
+**Clients can narrow, never widen.** A rule only applies if the key may use its route
+(`allowed_routes`); otherwise it is skipped and the next rule, or the requested model, applies, so
+a header can neither reach a route the key may not use nor turn a working request into a refusal.
+Give any key whose clients you do not fully trust an `allowed_routes` list. Credential headers
+(`authorization`, `x-api-key`, `cookie`, `proxy-authorization`) cannot be matched. A rule can also
+rescue a model name the gateway does not know, which helps clients that hard-code one.
+
+Responses carry `x-humpyard-route` (the route that served) and `x-humpyard-rule` (the rule's name,
+`select[<index>]` when unnamed, or `default` when the requested model named the route); the log
+line has both and the ledger's route column records the route. Selection happens before the budget
+check and the routing policy, which then apply to the chosen route. Loading the config fails when
+a rule names an unknown route, an unknown condition, a credential header, repeats a name, or
+follows a catch-all (it could never match). See [ADR 0011](adr/0011-selectors-choose-the-route.md).
+
 ## Failover
 
 - **Within a target**, endpoints are tried in order. The gateway moves to the next endpoint on

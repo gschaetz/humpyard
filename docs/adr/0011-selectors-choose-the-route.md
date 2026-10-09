@@ -3,7 +3,7 @@
 - Status: accepted
 - Date: 2026-10-08
 - Supersedes: none
-- Change: `openspec/changes/add-route-selectors` (or its archive path)
+- Change: [add-route-selectors](../../openspec/changes/archive/2026-10-08-add-route-selectors)
 
 ## Context
 
