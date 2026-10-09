@@ -46,6 +46,20 @@ every behavior below, so the table is verified, not aspirational.
   so name targets by provider tier (`pub-fast`) and keep client-facing names for routes.
 - **Ordered pools are sequential, not balanced.** The first model in a target takes all traffic
   until it fails or hits its quota; use a `random` route for even spreading.
+- **Retries are broader.** Provider `max_retries` retries any retryable failure (429, 5xx,
+  connection errors) on the same endpoint before falling through; LiteLLM's rate-limit retry
+  policy retried only rate limits. With `max_retries = 2` a failing 503 costs three attempts
+  (measured: about a second of backoff). Use `max_retries = 0` where the first failure should
+  count.
+- **Picks are per request, not per conversation.** A `random` route or an ordered pool chooses
+  anew for every request, so a multi-turn tool conversation can move between models in the pool
+  (as LiteLLM's shuffle did). Nothing is sticky yet.
+- **Many SDK clients send no identity.** An agent built on the OpenAI JS SDK sent only a
+  generic user-agent: no session id, agent id or metadata. Use one key per consumer with
+  `allowed_routes` to tell consumers apart, and, for clients that can add request headers, the
+  `x-humpyard-profile` and `x-humpyard-tag-*` headers.
+- **`openai/<name>` aliases** (LiteLLM's `model_group_alias`) are one selector rule each:
+  `when = { model = "openai/fast" }`, `route = "fast"`.
 - **Streams fail over only before the first byte**, as in LiteLLM; a stream that breaks midway
   ends with an error event.
 - **No admin UI or database.** Keys and routes are config; see the

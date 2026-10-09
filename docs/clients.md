@@ -53,6 +53,39 @@ Notes from the verified run (a read-only agent in a scratch directory, `claude -
   against two real providers it ran 1.07x to 2.14x the true prompt size (median 1.23x), never below
   it: clients compact slightly early rather than overflow. Don't use it for billing.
 
+## OpenClaw (verified 2026-10-08, openclaw 2026.9.5)
+
+OpenClaw talks to any OpenAI-compatible endpoint through `models.providers` in its config
+(`api = "openai-completions"`). Declare the gateway as a provider and list your route names as
+models:
+
+```json
+{
+  "models": { "providers": { "humpyard": {
+    "baseUrl": "http://127.0.0.1:8080/v1",
+    "api": "openai-completions",
+    "apiKey": "sk-humpyard-...",
+    "models": [ { "id": "agent", "name": "agent", "contextWindow": 128000, "input": ["text"] } ]
+  } } },
+  "agents": { "defaults": { "model": { "primary": "humpyard/agent" } } }
+}
+```
+
+`openclaw agent --local --model humpyard/agent --message "..."` then runs an embedded agent turn
+through the gateway. What was verified, with real paid models behind the routes:
+
+- **Heavy requests work.** Each turn carries 50+ tool definitions and prompts of 30,000 to 70,000
+  tokens, streamed with `include_usage`; they translate and stream back correctly.
+- **A tool round trip works.** The agent called its `exec` tool, received the result and answered
+  correctly over two turns.
+- **It sends no identity.** The requests carry the OpenAI JS SDK's user-agent and nothing else: no
+  session id, agent id or metadata. Tell consumers apart with one gateway key each (and
+  `allowed_routes`); the provider entry also accepts `headers`, so `x-humpyard-profile` or
+  `x-humpyard-tag-*` can be added if rules should depend on them.
+- **Plan prompt-size thresholds around its size.** Even "reply with pong" is a 30,000-token
+  prompt, so a `prompt_tokens` rule or a model with a small context window will see every request
+  as large.
+
 ## Codex CLI (verified 2026-10-08, codex-cli 0.161.0, `brew install --cask codex`)
 
 Codex speaks the OpenAI Responses protocol, which humpyard serves at `/v1/responses`. Point it at
