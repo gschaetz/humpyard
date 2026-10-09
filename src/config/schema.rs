@@ -279,6 +279,21 @@ pub enum FallbackClass {
     Forbidden,
 }
 
+impl FallbackClass {
+    /// The name used in config and reports.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Overflow => "overflow",
+            Self::RateLimit => "rate_limit",
+            Self::Timeout => "timeout",
+            Self::ServerError => "server_error",
+            Self::Connection => "connection",
+            Self::Forbidden => "forbidden",
+        }
+    }
+}
+
 /// Which failures make a route hand the request to its next target. The default is all of them.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct FallbackOn(Option<std::collections::BTreeSet<FallbackClass>>);
@@ -286,6 +301,11 @@ pub struct FallbackOn(Option<std::collections::BTreeSet<FallbackClass>>);
 impl FallbackOn {
     pub fn only(classes: &[FallbackClass]) -> Self {
         Self(Some(classes.iter().copied().collect()))
+    }
+
+    /// The configured classes, or `None` when every failure falls through.
+    pub fn classes(&self) -> Option<Vec<FallbackClass>> {
+        self.0.as_ref().map(|set| set.iter().copied().collect())
     }
 
     pub fn allows(&self, class: FallbackClass) -> bool {

@@ -48,6 +48,8 @@ use crate::select::{Facts, Selectors};
 const TARGET_HEADER: &str = "x-humpyard-target";
 const TOKEN_COUNT_HEADER: &str = "x-humpyard-token-count";
 /// Response headers naming the route that served a request and the selector rule that chose it.
+mod explain;
+
 const ROUTE_HEADER: &str = "x-humpyard-route";
 const RULE_HEADER: &str = "x-humpyard-rule";
 
@@ -222,6 +224,7 @@ async fn build(config: Config, options: Options) -> Result<Built, String> {
         .route("/v1/models", get(list_models))
         .route("/v1/key/info", get(key_info))
         .route("/v1/health", get(endpoint_health))
+        .route("/v1/route/explain", post(explain::explain_route))
         .route(
             "/v1/messages/count_tokens",
             post(|s, h, b| count_tokens(s, WireFormat::AnthropicMessages, h, b)),
@@ -286,7 +289,7 @@ async fn count_tokens(
             caller.as_ref(),
             &decoded.model,
             stream,
-            &headers,
+            &selector_headers(&headers),
             &info,
         )?;
         let upstream_form = encode_request(&decoded.llm_request, WireFormat::OpenAiChat)
@@ -518,7 +521,14 @@ async fn handle(
     } = decode(format, raw)?;
     let info = request_info(headers);
     let stream = body["stream"].as_bool().unwrap_or(false);
-    let selection = select_route(state, caller, &model, stream, headers, &info)?;
+    let selection = select_route(
+        state,
+        caller,
+        &model,
+        stream,
+        &selector_headers(headers),
+        &info,
+    )?;
     let budget = check_budget(state, caller)?;
     let plan = plan_route(
         state,
@@ -624,15 +634,14 @@ fn select_route<'a>(
     caller: Option<&KeyRecord>,
     model: &str,
     stream: bool,
-    headers: &HeaderMap,
+    header_facts: &HashMap<String, String>,
     info: &RequestInfo,
 ) -> Result<Selection<'a>, GatewayError> {
     if !state.selectors.is_empty() {
-        let header_facts = selector_headers(headers);
         let facts = Facts {
             model,
             key: caller.map(|k| k.id.as_str()),
-            headers: &header_facts,
+            headers: header_facts,
             agent: info.meta.agent_id.as_deref(),
             task: info.meta.task_id.as_deref(),
             subagent: info.meta.is_subagent,
