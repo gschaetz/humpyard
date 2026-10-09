@@ -70,6 +70,41 @@ What was verified, with a real model behind the route:
   tokens (14,592 cached) and 314 output tokens; the ledger rows sum to the same figures. All
   upstream requests were HTTP 200.
 - **Cosmetic:** Codex prints "Model metadata for `agent` not found" for non-OpenAI model names.
+- **Longer sessions need request adaptation (found 2026-10-08).** Short runs passed, but the first
+  real multi-step coding task failed with upstream 400s once the conversation had history: Codex
+  replays its earlier reasoning items and injects `developer`-role messages, neither of which chat
+  providers accept. The pool now drops Responses-shaped reasoning details and sends `developer` as
+  `system` (change `adapt-requests-for-chat-providers`); with that, Codex found and fixed two bugs
+  in a small Python project through the gateway (6 requests, all HTTP 200).
+- **Model limits.** Codex has no metadata for non-OpenAI model names; give it the limits in its
+  config (`model_context_window`, `model_auto_compact_token_limit`).
+
+### Daily use with a local container
+
+Run the gateway container (see [deployment.md](deployment.md)) and give Codex its own `CODEX_HOME`
+so your normal setup is untouched:
+
+```toml
+# ~/.codex-humpyard/config.toml
+model_provider = "humpyard"
+model = "agent"                       # a route name from the gateway config
+model_context_window = 128000
+model_auto_compact_token_limit = 100000
+
+[model_providers.humpyard]
+name = "humpyard"
+base_url = "http://127.0.0.1:8080/v1"
+env_key = "HUMPYARD_KEY"
+wire_api = "responses"
+```
+
+```sh
+#!/bin/sh   # ~/.local/bin/codex-hy
+HUMPYARD_KEY=$(cat "$HOME/.config/humpyard/codex-key") || exit 1
+export HUMPYARD_KEY CODEX_HOME="$HOME/.codex-humpyard"
+exec codex "$@"
+```
+
 - **Token counting and compaction.** `POST /v1/responses/input_tokens` is answered with the same
   local estimate as `count_tokens` (`{"object": "response.input_tokens", "input_tokens": n}`).
   `POST /v1/responses/compact` is deliberately **not** implemented: it returns OpenAI-specific
