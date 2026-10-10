@@ -14,8 +14,8 @@ Each [GitHub release](https://github.com/gschaetz/humpyard/releases) has tarball
 
 ```sh
 shasum -a 256 -c SHA256SUMS --ignore-missing      # sha256sum -c on Linux
-tar xzf humpyard-v0.1.0-aarch64-apple-darwin.tar.gz
-install -m 755 humpyard-v0.1.0-aarch64-apple-darwin/humpyard ~/.local/bin/
+tar xzf humpyard-v0.2.0-aarch64-apple-darwin.tar.gz
+install -m 755 humpyard-v0.2.0-aarch64-apple-darwin/humpyard ~/.local/bin/
 ```
 
 - The binaries are not signed. If macOS quarantines a downloaded one:
@@ -30,7 +30,7 @@ docker run -d --name humpyard -p 8080:8080 \
   -v "$PWD/config.toml:/etc/humpyard/config.toml:ro" \
   -v humpyard-data:/data \
   -e GROQ_API_KEY -e OPENROUTER_API_KEY \
-  ghcr.io/gschaetz/humpyard:0.1.0
+  ghcr.io/gschaetz/humpyard:0.2.0
 ```
 
 In the config, set `listen = "0.0.0.0:8080"` (inside the container the default loopback address is
@@ -108,7 +108,7 @@ Releases are made only by pushing a version tag (ADR
 [0010](adr/0010-tag-only-native-releases.md)); nothing publishes from branches or pull requests.
 
 1. In a PR, bump `version` in `Cargo.toml` and merge it.
-2. From an up-to-date `main`: `git tag v0.1.0 && git push origin v0.1.0`.
+2. From an up-to-date `main`: `git tag vX.Y.Z && git push origin vX.Y.Z`.
 3. The `release` workflow verifies that the tag equals the `Cargo.toml` version and that the commit
    is on `main`, builds each target on a runner of its own architecture, builds the two image
    architectures, and only when all of that has succeeded creates the GitHub release
