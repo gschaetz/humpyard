@@ -1,6 +1,6 @@
 [package]
 name = "humpyard"
-version = "0.9.3"
+version = "0.9.4"
 edition = "2024"
 rust-version = "1.96.1"
 description = "A gateway that sorts each LLM request onto the right model: protocol translation, Switchyard routing, failover and budgets"

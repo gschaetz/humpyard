@@ -15,8 +15,8 @@ Each [GitHub release](https://github.com/gschaetz/humpyard/releases) has tarball
 
 ```sh
 shasum -a 256 -c SHA256SUMS --ignore-missing      # sha256sum -c on Linux
-tar xzf humpyard-v0.9.3-aarch64-apple-darwin.tar.gz
-install -m 755 humpyard-v0.9.3-aarch64-apple-darwin/humpyard ~/.local/bin/
+tar xzf humpyard-v0.9.4-aarch64-apple-darwin.tar.gz
+install -m 755 humpyard-v0.9.4-aarch64-apple-darwin/humpyard ~/.local/bin/
 ```
 
 - The binaries are not signed. If macOS quarantines a downloaded one:
@@ -31,7 +31,7 @@ docker run -d --name humpyard -p 127.0.0.1:8080:8080 \
   -v "$PWD/config.toml:/etc/humpyard/config.toml:ro" \
   -v humpyard-data:/data \
   -e GROQ_API_KEY -e OPENROUTER_API_KEY \
-  ghcr.io/gschaetz/humpyard:0.9.3
+  ghcr.io/gschaetz/humpyard:0.9.4
 ```
 
 In the config, set `listen = "0.0.0.0:8080"` (inside the container the default loopback address is

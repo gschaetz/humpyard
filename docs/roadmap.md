@@ -4,7 +4,7 @@ What has shipped, what is being built, and what comes next, at a glance. The det
 lives in the [component status table](architecture.md#component-status), the OpenSpec change named
 in it, and the [decision records](adr/README.md). Update this page in the same PR as the change.
 
-Last updated: 2026-10-14. Latest release: 0.9.3. Community: [Discord](https://discord.gg/qfTGr7KTfq) for questions and feedback; GitHub issues for bugs and requests.
+Last updated: 2026-10-14. Latest release: 0.9.4. Community: [Discord](https://discord.gg/qfTGr7KTfq) for questions and feedback; GitHub issues for bugs and requests.
 
 ## Shipped
 
@@ -28,6 +28,7 @@ Last updated: 2026-10-14. Latest release: 0.9.3. Community: [Discord](https://di
 | 0.9.1 | 2026-10-17 | `humpyard migrate-modelrelay`: prints a config fragment (providers, one target per usable model with its tags as strengths and its context window, and `auto-fastest` / `tag:<strength>` / `+min_ctx:N` pool routes) from ModelRelay's admin API or saved responses; never requests or writes a key and never edits a file; checked against ModelRelay 1.28. See [Moving from ModelRelay](migrating-from-modelrelay.md) |
 | 0.9.2 | 2026-10-17 | Free pools that survive and renew themselves: a dead or removed model (404, 401, 403, or a 400 naming a missing model) now counts against its endpoint and, on `fastest` and pool routes, moves the request to the next target (before, a dead first target failed every request of a `fastest` pool); and model discovery, `humpyard models check` and `models sync`, which keep opted-in free providers current from a generated file `serve` reads and never fetches, off until switched on globally and per provider (see [Keeping pools current](discovery.md)). No schema change |
 | 0.9.3 | 2026-10-17 | Quality-aware ordering: a target can declare `quality` (0 to 1), a pool can set `min_quality`, and a `fastest` route can set `quality_weight` to blend declared quality with observed speed (default 0, which keeps the pure speed order); `explain` shows qualities and scores; `migrate-modelrelay` declares ModelRelay's measured scores as `quality` and keeps its estimates as comments (`--estimated-quality` to include them). No schema change |
+| 0.9.4 | 2026-10-17 | A guarded tail for pool routes: `then = { targets, on }` on a `fastest` pool route names fixed targets (for example a paid one) reached only when a listed failure class (default `overflow`) ends the pool's last member, so a prompt too big for every free model is still served while free models keep failing over among themselves; cold members are retried before the tail is used; `explain` shows the tail. `migrate-modelrelay` gains `--rename FROM=TO` and `--quality-weight W`. [ADR 0024](adr/0024-a-pool-route-can-end-in-a-guarded-tail.md). |
 
 ## Building now
 
