@@ -1518,6 +1518,8 @@ fn plan_route(
         latency,
         &quality,
     );
+    // A pool whose members are all cold must try them again before a paid tail is used (ADR 0024).
+    let warm_plan = warm_plan.filter(|plan| !plan.tail_only || cold.is_empty());
     let (plan, cold_skipped, fail_open) = if let Some(plan) = warm_plan {
         (Some(plan), cold, false)
     } else {
@@ -1567,7 +1569,14 @@ async fn execute(
     request: Request,
 ) -> Result<Executed, GatewayError> {
     let names: Vec<ModelId> = plan.models.models_for(&Category::Any).to_vec();
-    let clients = ctx.router(&snap.targets, &names, &plan.fallback);
+    let clients = ctx.router(
+        &snap.targets,
+        &names,
+        &plan.fallback,
+        plan.tail_guard
+            .as_ref()
+            .map(|g| (g.last_member.as_str(), &g.on)),
+    );
     let models = Arc::new(plan.models);
     let (selected, mut response) =
         match run_algorithm(plan.algorithm, clients, request, models, None).await {

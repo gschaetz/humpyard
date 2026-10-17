@@ -17,7 +17,8 @@ pub use pools::{LeftOut, PoolReport};
 use schema::RawConfig;
 pub use schema::{
     ClassifierMode, ClassifyTrigger, DiscoverSpec, Endpoint, FallbackClass, FallbackOn, OverBudget,
-    PickerMode, PoolSpec, Price, PriceTier, Rates, RouteSpec, SelectorSpec, TokenRange, When,
+    PickerMode, PoolSpec, Price, PriceTier, Rates, RouteSpec, SelectorSpec, TailSpec, TokenRange,
+    When,
 };
 use validate::invalid;
 pub use validate::{CREDENTIAL_HEADERS, QUOTA_SOURCES, parse_price_source};

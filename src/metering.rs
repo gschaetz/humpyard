@@ -190,6 +190,7 @@ impl CallContext {
         targets: &HashMap<ModelId, Arc<TargetClient>>,
         names: &[ModelId],
         fallback: &FallbackOn,
+        tail_guard: Option<(&str, &FallbackOn)>,
     ) -> ClientRouter {
         let clients: HashMap<ModelId, Arc<dyn RoutedLlmClient>> = names
             .iter()
@@ -199,7 +200,11 @@ impl CallContext {
                     inner,
                     target: name.to_string(),
                     ctx: self.clone(),
-                    fallback: fallback.clone(),
+                    // The last pool member hands over to a guarded tail only for the tail's classes.
+                    fallback: match tail_guard {
+                        Some((last, on)) if last == name.as_str() => on.clone(),
+                        _ => fallback.clone(),
+                    },
                 };
                 Some((name.clone(), Arc::new(metered) as Arc<dyn RoutedLlmClient>))
             })

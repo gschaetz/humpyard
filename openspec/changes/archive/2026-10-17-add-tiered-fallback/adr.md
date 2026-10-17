@@ -7,4 +7,4 @@ endpoints and fallback classes). None is contradicted; the tail reuses the fallb
 
 ## Outcome
 
-A new ADR records the guarded tail: why a per-tail guard rather than a route-wide `fallback_on`.
+ADR 0024 records the guarded tail: why a guard on the last member rather than a route-wide `fallback_on`.

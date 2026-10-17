@@ -135,13 +135,27 @@ fn plan_report(
     );
     // A `fastest` route tries its targets by speed: show the order a request would use now (without
     // exploration, which is a per-request draw) and how often it explores.
+    let tail: Vec<String> = snap
+        .routes
+        .get(route)
+        .map(crate::routing::Route::tail_names)
+        .unwrap_or_default();
     if let Some(route) = snap.routes.get(route) {
-        let names: Vec<String> = models.iter().map(ToString::to_string).collect();
+        // The tail is never ranked with the members: it follows them (ADR 0024).
+        let names: Vec<String> = models
+            .iter()
+            .map(ToString::to_string)
+            .filter(|n| !tail.contains(n))
+            .collect();
         let quality = |target: &str| snap.config.target_quality.get(target).copied();
         if let Some(ranked) = route.speed_order(latency, &names, &quality) {
             models = ranked
                 .order
                 .iter()
+                .chain(
+                    tail.iter()
+                        .filter(|t| models.iter().any(|m| m.as_str() == t.as_str())),
+                )
                 .map(|n| ModelId::from(n.as_str()))
                 .collect();
             report["ordering"] = json!({
@@ -158,6 +172,18 @@ fn plan_report(
                 })).collect::<Vec<_>>(),
             });
         }
+    }
+    if let Some(spec) = snap.config.routes.get(route).and_then(|s| s.tail()) {
+        report["tail"] = json!({
+            "targets": spec.targets,
+            "on": spec
+                .guard()
+                .classes()
+                .unwrap_or_default()
+                .iter()
+                .map(|c| c.as_str())
+                .collect::<Vec<_>>(),
+        });
     }
     // A pool route: what it was asked to contain and who qualified (ADR 0021).
     if let Some(pool) = snap.config.pools.get(route) {

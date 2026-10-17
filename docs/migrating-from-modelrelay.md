@@ -44,6 +44,12 @@ port-forward otherwise).
 - `--quality-weight 0.5` writes `quality_weight` on every generated route, so the pools prefer models with a
   declared quality instead of being purely speed-ordered (see [Quality scores](#quality-scores)).
 
+## Keeping a paid fallback for oversized prompts
+
+ModelRelay-style tiers often mean "the free pool, and only for a prompt no free model fits, a paid model".
+Add a guarded tail to the generated route (see [routing](routing.md#a-guarded-tail-free-first-paid-only-when-needed)):
+`then = { targets = ["my-paid-target"], on = ["overflow"] }`.
+
 ## What you get
 
 | ModelRelay | In the fragment |

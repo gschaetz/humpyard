@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 use std::net::SocketAddr;
 
-use super::schema::{RawConfig, RawKey, RawMetrics, RouteSpec};
+use super::schema::{RawConfig, RawKey, RawMetrics, RouteSpec, TailSpec};
 use super::{ConfigError, MetricsConfig};
 
 /// Parses `sha256:<64 hex>` (the prefix is optional).
@@ -225,6 +225,17 @@ fn validate_strict(id: &str, route: &RouteSpec, raw: &RawConfig) -> Result<(), C
         return Err(invalid(format!(
             "route `{id}`: allowed class `{bad}` must be 1 to 32 lowercase letters, digits, - or _"
         )));
+    }
+    if let Some(tail) = route.tail() {
+        for name in &tail.targets {
+            let class = raw.targets.get(name).and_then(|t| t.class.as_deref());
+            if !class.is_some_and(|c| allowed.iter().any(|a| a == c)) {
+                return Err(invalid(format!(
+                    "route `{id}`: `then` target `{name}` is not of an allowed class ({}); a tail the route forbids could never be reached",
+                    allowed.join(", ")
+                )));
+            }
+        }
     }
     let mut any_allowed = false;
     for name in route.target_refs() {
@@ -542,6 +553,43 @@ pub(super) fn validate_headers(
     Ok(())
 }
 
+/// A pool route's tail: only on a pool, at least one target, none of them a pool member or listed twice.
+fn validate_tail(
+    id: &str,
+    tail: &TailSpec,
+    members: &[String],
+    is_pool: bool,
+) -> Result<(), ConfigError> {
+    if !is_pool {
+        return Err(invalid(format!(
+            "route `{id}`: `then` is only for a pool route (one with `pool = {{ ... }}`)"
+        )));
+    }
+    if tail.targets.is_empty() {
+        return Err(invalid(format!(
+            "route `{id}`: `then.targets` must not be empty"
+        )));
+    }
+    if tail.on.as_ref().is_some_and(Vec::is_empty) {
+        return Err(invalid(format!(
+            "route `{id}`: `then.on` must list at least one class, or be left out for overflow"
+        )));
+    }
+    for (index, name) in tail.targets.iter().enumerate() {
+        if members.contains(name) {
+            return Err(invalid(format!(
+                "route `{id}`: `then` target `{name}` is also a pool member"
+            )));
+        }
+        if tail.targets[..index].contains(name) {
+            return Err(invalid(format!(
+                "route `{id}`: `then` target `{name}` is listed twice"
+            )));
+        }
+    }
+    Ok(())
+}
+
 pub(super) fn validate_route(id: &str, route: &RouteSpec) -> Result<(), ConfigError> {
     let non_empty = |label: &str, list: &[String]| {
         if list.is_empty() {
@@ -556,6 +604,8 @@ pub(super) fn validate_route(id: &str, route: &RouteSpec) -> Result<(), ConfigEr
         RouteSpec::Passthrough { targets, .. } => non_empty("targets", targets),
         RouteSpec::Fastest {
             targets,
+            pool,
+            then,
             explore,
             min_samples,
             max_age_secs,
@@ -565,6 +615,9 @@ pub(super) fn validate_route(id: &str, route: &RouteSpec) -> Result<(), ConfigEr
             ..
         } => {
             non_empty("targets", targets)?;
+            if let Some(tail) = then {
+                validate_tail(id, tail, targets, pool.is_some())?;
+            }
             if !(0.0..=1.0).contains(quality_weight) || !(0.0..=1.0).contains(unknown_quality) {
                 return Err(invalid(format!(
                     "route `{id}`: `quality_weight` and `unknown_quality` must be between 0 and 1"

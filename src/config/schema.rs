@@ -619,6 +619,27 @@ impl FallbackOn {
     }
 }
 
+/// A guarded tail for a pool route: fixed targets tried after every pool member, reached only when a
+/// failure of one of the listed classes ends the members (ADR 0024).
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct TailSpec {
+    pub targets: Vec<String>,
+    /// The failure classes that may reach the tail; `overflow` when absent.
+    #[serde(default)]
+    pub on: Option<Vec<FallbackClass>>,
+}
+
+impl TailSpec {
+    /// Which failures of the last pool member may move on to the tail.
+    pub fn guard(&self) -> FallbackOn {
+        match &self.on {
+            Some(classes) => FallbackOn::only(classes),
+            None => FallbackOn::only(&[FallbackClass::Overflow]),
+        }
+    }
+}
+
 /// A pool: every target that carries `strength` (and, when set, declares a context window of at least
 /// `min_context_window`), resolved when the configuration loads (ADR 0021).
 #[derive(Clone, Debug, Deserialize, PartialEq)]
@@ -685,6 +706,9 @@ pub enum RouteSpec {
         /// Target classes this route may use at all (ADR 0017).
         #[serde(default)]
         allowed_classes: Option<Vec<String>>,
+        /// Targets tried after the pool's members, reached only on the listed failures (ADR 0024).
+        #[serde(default)]
+        then: Option<TailSpec>,
     },
     Random {
         #[serde(default)]
@@ -818,12 +842,23 @@ impl RouteSpec {
         }
     }
 
+    /// The guarded tail of a pool route, if it has one.
+    pub fn tail(&self) -> Option<&TailSpec> {
+        match self {
+            Self::Fastest { then, .. } => then.as_ref(),
+            _ => None,
+        }
+    }
+
     /// Every target name the route mentions.
     pub fn target_refs(&self) -> Vec<&str> {
         let lists: Vec<&Vec<String>> = match self {
-            Self::Passthrough { targets, .. }
-            | Self::Fastest { targets, .. }
-            | Self::Random { targets, .. } => vec![targets],
+            Self::Fastest { targets, then, .. } => {
+                let mut lists = vec![targets];
+                lists.extend(then.as_ref().map(|t| &t.targets));
+                lists
+            }
+            Self::Passthrough { targets, .. } | Self::Random { targets, .. } => vec![targets],
             Self::StageRouter {
                 efficient, capable, ..
             } => vec![efficient, capable],

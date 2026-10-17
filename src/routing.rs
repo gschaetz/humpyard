@@ -28,6 +28,10 @@ pub struct Route {
     fastest: Option<FastestSpec>,
     /// Which failures hand the request to the next target.
     fallback: FallbackOn,
+    /// A pool route's guarded tail (ADR 0024): tried after every member, in this order.
+    tail: Vec<ModelId>,
+    /// Which failures of the last member may reach the tail.
+    tail_on: FallbackOn,
 }
 
 /// How a `fastest` route weighs its targets, and the draws that decide when it explores.
@@ -48,6 +52,17 @@ pub struct Plan {
     pub fallback: FallbackOn,
     /// For a `fastest` route, the order this request will try its targets in, and why.
     pub ranking: Option<Ranked>,
+    /// Set when members and tail are both eligible: only the named last member may hand over to the tail.
+    pub tail_guard: Option<TailGuard>,
+    /// Every pool member was removed, so only the tail is left. The caller plans again with the members
+    /// it set aside (cold ones) before settling for this.
+    pub tail_only: bool,
+}
+
+/// The guard on a tail (ADR 0024): after the last member fails, the request moves on only for these classes.
+pub struct TailGuard {
+    pub last_member: String,
+    pub on: FallbackOn,
 }
 
 pub struct Routes {
@@ -82,7 +97,14 @@ impl Route {
             random: None,
             fastest: None,
             fallback: FallbackOn::default(),
+            tail: Vec::new(),
+            tail_on: FallbackOn::default(),
         }
+    }
+
+    /// The tail targets, in order (empty for a route without one).
+    pub fn tail_names(&self) -> Vec<String> {
+        self.tail.iter().map(|id| id.as_str().to_string()).collect()
     }
 
     /// Every target the route can use, in category order.
@@ -130,7 +152,8 @@ impl Route {
             .iter()
             .map(|(category, ids)| (category.clone(), keep(ids)))
             .collect();
-        if Self::all_targets(&groups).is_empty() {
+        let tail = keep(&self.tail);
+        if Self::all_targets(&groups).is_empty() && tail.is_empty() {
             return None;
         }
         // Degrade: an emptied tier borrows from the tiers that survive (capable <-> efficient;
@@ -185,11 +208,31 @@ impl Route {
             }
             _ => None,
         };
+        let members_left = !Self::all_targets(&groups).is_empty();
+        let last_member = groups
+            .get(&Category::Any)
+            .and_then(|g| g.last())
+            .map(|id| id.as_str().to_string());
+        if !tail.is_empty() {
+            groups
+                .entry(Category::Any)
+                .or_default()
+                .extend(tail.clone());
+        }
+        let tail_guard = match (&last_member, tail.is_empty()) {
+            (Some(last), false) => Some(TailGuard {
+                last_member: last.clone(),
+                on: self.tail_on.clone(),
+            }),
+            _ => None,
+        };
         Some(Plan {
             algorithm,
             models: runtime_models(groups),
             fallback: self.fallback.clone(),
             ranking,
+            tail_guard,
+            tail_only: !tail.is_empty() && !members_left,
         })
     }
 
@@ -293,7 +336,12 @@ fn build_route(name: &str, spec: &RouteSpec) -> Result<Route, String> {
         RouteSpec::Fastest { targets, seed, .. } => {
             let settings = fastest_settings(spec)
                 .ok_or_else(|| algorithm_error(name, "not a fastest route"))?;
-            fastest_route(targets, settings, *seed)
+            let mut route = fastest_route(targets, settings, *seed);
+            if let Some(tail) = spec.tail() {
+                route.tail = ids(&tail.targets);
+                route.tail_on = tail.guard();
+            }
+            route
         }
         RouteSpec::Random {
             targets,

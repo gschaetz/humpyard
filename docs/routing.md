@@ -399,6 +399,27 @@ pool = { strength = "general", min_context_window = 32000 }
   tags (`x-humpyard-tag-*`, which describe the request). See
   [ADR 0021](adr/0021-strengths-build-pools-at-load-time-and-never-remove-a-target.md).
 
+### A guarded tail: free first, paid only when needed
+
+A `fastest` pool route can end in fixed targets that are reached only on certain failures:
+
+```toml
+[routes.public-fast]
+type = "fastest"
+pool = { strength = "general", min_context_window = 32000 }
+then = { targets = ["paid-fast", "paid-deep"], on = ["overflow"] }   # on defaults to overflow
+```
+
+The pool's members are ordered and fail over among themselves as usual. The tail follows them in written
+order, and a failure moves a request from the **last member** to the tail only for the classes in `on`
+(the same names as `fallback_on`, such as `rate_limit`, `timeout`, `overflow`); any other failure ends the
+request there, so a paid target never serves because a free one was merely rate-limited unless you listed it.
+A prompt larger than every member's declared window removes the members in planning, so the first tail target
+serves it directly. If every member is only cold (see [Endpoint health](#endpoint-health)), they are tried again
+before the tail is used. The tail needs a `pool`, names targets that are not members, and on a strict route
+must be of an allowed class. `explain` shows the tail and its guard. See
+[ADR 0024](adr/0024-a-pool-route-can-end-in-a-guarded-tail.md).
+
 ## Fastest routes
 
 A route of `type = "fastest"` lists `targets` like a passthrough route, but tries them by speed instead of
