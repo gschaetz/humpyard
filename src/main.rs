@@ -120,6 +120,21 @@ struct MigrateArgs {
     /// Declare ModelRelay's estimated quality scores too (by default only measured ones become `quality`).
     #[arg(long)]
     estimated_quality: bool,
+    /// Name a ModelRelay provider differently in the fragment, as `FROM=TO` (repeatable), for example
+    /// `--rename opencode=opencode-zen` when your config already has a provider called `opencode`.
+    #[arg(long, value_parser = parse_rename)]
+    rename: Vec<(String, String)>,
+    /// Write `quality_weight = W` (0 to 1) on every generated `fastest` route, so pools prefer models with a
+    /// declared quality.
+    #[arg(long)]
+    quality_weight: Option<f64>,
+}
+
+fn parse_rename(text: &str) -> Result<(String, String), String> {
+    text.split_once('=')
+        .filter(|(from, to)| !from.is_empty() && !to.is_empty())
+        .map(|(from, to)| (from.to_string(), to.to_string()))
+        .ok_or_else(|| format!("`{text}` is not FROM=TO"))
 }
 
 #[derive(clap::Args)]
@@ -346,15 +361,15 @@ async fn migrate_command(args: MigrateArgs) -> Result<(), String> {
     };
     let providers = migrate::parse_config(&config_text).map_err(|e| e.to_string())?;
     let models = migrate::parse_models(&models_text).map_err(|e| e.to_string())?;
-    let migration = migrate::migrate(
-        &providers,
-        &models,
-        &migrate::Options {
-            class: args.class,
-            min_ctx: args.min_ctx,
-            estimated_quality: args.estimated_quality,
-        },
-    );
+    let options = migrate::Options {
+        class: args.class,
+        min_ctx: args.min_ctx,
+        estimated_quality: args.estimated_quality,
+        rename: args.rename.into_iter().collect(),
+        quality_weight: args.quality_weight,
+    };
+    migrate::check_options(&providers, &options)?;
+    let migration = migrate::migrate(&providers, &models, &options);
     migrate::self_check(&migration.fragment)
         .map_err(|e| format!("the generated fragment does not load, so it was not written: {e}"))?;
     match &args.out {

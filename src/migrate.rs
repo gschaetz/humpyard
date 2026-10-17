@@ -186,7 +186,7 @@ pub fn parse_models(text: &str) -> Result<Vec<ModelRow>, MigrateError> {
 }
 
 /// What the operator chose.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct Options {
     /// The `class` given to every generated target.
     pub class: String,
@@ -194,6 +194,51 @@ pub struct Options {
     pub min_ctx: Vec<u64>,
     /// Declare ModelRelay's estimated scores as `quality` too (by default only measured ones are).
     pub estimated_quality: bool,
+    /// ModelRelay provider key to the name used in the fragment (`--rename`).
+    pub rename: BTreeMap<String, String>,
+    /// Written as `quality_weight` on every generated `fastest` route (`--quality-weight`).
+    pub quality_weight: Option<f64>,
+}
+
+/// A name a provider can be given: lowercase letters, digits and dashes, 1 to 32 characters.
+fn valid_provider_name(name: &str) -> bool {
+    (1..=32).contains(&name.len())
+        && !name.starts_with('-')
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+}
+
+/// Checks the options against the providers before anything is printed: a weight in range, renames that name
+/// a real ModelRelay provider with a valid new name, and no two providers ending up with the same name.
+pub fn check_options(providers: &[ProviderRow], options: &Options) -> Result<(), String> {
+    if let Some(weight) = options.quality_weight
+        && !(0.0..=1.0).contains(&weight)
+    {
+        return Err("--quality-weight must be between 0 and 1".to_string());
+    }
+    for (from, to) in &options.rename {
+        if !providers.iter().any(|p| &p.key == from) {
+            return Err(format!("--rename: ModelRelay has no provider `{from}`"));
+        }
+        if !valid_provider_name(to) {
+            return Err(format!(
+                "--rename {from}={to}: the new name must be lowercase letters, digits and dashes (1 to 32 characters)"
+            ));
+        }
+    }
+    let mut ignored = Report::default();
+    let used = select_providers(providers, options, &mut ignored);
+    let mut names: BTreeMap<&str, &str> = BTreeMap::new();
+    for (key, (resolved, _)) in &used {
+        if let Some(other) = names.insert(resolved.name.as_str(), key.as_str()) {
+            return Err(format!(
+                "providers `{other}` and `{key}` would both be named `{}`; rename one of them",
+                resolved.name
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// What was carried over and what was not.
@@ -337,7 +382,7 @@ struct TargetPlan {
 type Used = BTreeMap<String, (Resolved, bool)>;
 
 /// Which providers carry over; the rest are reported with the reason.
-fn select_providers(providers: &[ProviderRow], report: &mut Report) -> Used {
+fn select_providers(providers: &[ProviderRow], options: &Options, report: &mut Report) -> Used {
     let mut used = Used::new();
     for row in providers {
         if !row.enabled {
@@ -347,7 +392,12 @@ fn select_providers(providers: &[ProviderRow], report: &mut Report) -> Used {
             continue;
         }
         let resolved = match resolve_provider(row) {
-            Ok(resolved) => resolved,
+            Ok(mut resolved) => {
+                if let Some(to) = options.rename.get(&row.key) {
+                    resolved.name.clone_from(to);
+                }
+                resolved
+            }
             Err(reason) => {
                 report
                     .skipped
@@ -477,7 +527,7 @@ fn plan_targets(
 /// Builds the fragment and the report from the two responses.
 pub fn migrate(providers: &[ProviderRow], models: &[ModelRow], options: &Options) -> Migration {
     let mut report = Report::default();
-    let mut used = select_providers(providers, &mut report);
+    let mut used = select_providers(providers, options, &mut report);
     let targets = plan_targets(models, &mut used, &mut report, options);
 
     let mut out = String::new();
@@ -579,9 +629,13 @@ fn render_routes(
             let min = window
                 .map(|w| format!(", min_context_window = {w}"))
                 .unwrap_or_default();
+            let weight = options
+                .quality_weight
+                .map(|w| format!("quality_weight = {w:?}\n"))
+                .unwrap_or_default();
             let _ = writeln!(
                 out,
-                "[routes.{}]\ntype = \"fastest\"\npool = {{ strength = {}{min} }}\n",
+                "[routes.{}]\ntype = \"fastest\"\n{weight}pool = {{ strength = {}{min} }}\n",
                 quoted(&route),
                 quoted(strength)
             );
@@ -671,7 +725,7 @@ mod tests {
         Options {
             class: "public".into(),
             min_ctx: min_ctx.to_vec(),
-            estimated_quality: false,
+            ..Options::default()
         }
     }
 
@@ -945,5 +999,103 @@ mod tests {
             "{:?}",
             m.report.skipped
         );
+    }
+
+    fn renamed(pairs: &[(&str, &str)]) -> Options {
+        Options {
+            rename: pairs
+                .iter()
+                .map(|(a, b)| ((*a).to_string(), (*b).to_string()))
+                .collect(),
+            ..options(&[32_000])
+        }
+    }
+
+    #[test]
+    fn a_renamed_provider_is_renamed_everywhere_and_still_loads() {
+        let cfg = providers(CONFIG);
+        let opts = renamed(&[("groq", "groq-free")]);
+        assert_eq!(check_options(&cfg, &opts), Ok(()));
+        let m = migrate(&cfg, &models(MODELS), &opts);
+        assert!(
+            m.fragment.contains("[providers.groq-free]"),
+            "{}",
+            m.fragment
+        );
+        assert!(
+            m.fragment.contains("api_key_env = \"GROQ_FREE_API_KEY\""),
+            "{}",
+            m.fragment
+        );
+        assert!(
+            m.fragment
+                .contains("[targets.groq-free-llama-3-3-70b-versatile]"),
+            "{}",
+            m.fragment
+        );
+        assert!(m.fragment.contains("provider = \"groq-free\""));
+        assert!(!m.fragment.contains("[providers.groq]") && !m.fragment.contains("GROQ_API_KEY"));
+        assert_eq!(self_check(&m.fragment), Ok(()), "{}", m.fragment);
+    }
+
+    #[test]
+    fn bad_renames_and_weights_are_refused_before_anything_is_printed() {
+        let cfg = providers(CONFIG);
+        let refused = |opts: Options| check_options(&cfg, &opts).unwrap_err();
+        assert!(refused(renamed(&[("nope", "x")])).contains("no provider `nope`"));
+        assert!(refused(renamed(&[("groq", "Has Space")])).contains("lowercase"));
+        assert!(refused(renamed(&[("groq", "-lead")])).contains("lowercase"));
+        assert!(refused(renamed(&[("groq", "")])).contains("lowercase"));
+        // Two providers ending up with the same name, or one taking another's.
+        assert!(
+            refused(renamed(&[("groq", "same"), ("cerebras", "same")]))
+                .contains("both be named `same`")
+        );
+        assert!(refused(renamed(&[("groq", "cerebras")])).contains("both be named `cerebras`"));
+        for weight in [-0.1, 1.5, f64::NAN] {
+            let opts = Options {
+                quality_weight: Some(weight),
+                ..options(&[])
+            };
+            assert!(
+                check_options(&cfg, &opts)
+                    .unwrap_err()
+                    .contains("--quality-weight"),
+                "{weight}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_quality_weight_is_written_on_every_route_and_loads() {
+        let opts = Options {
+            quality_weight: Some(0.5),
+            ..options(&[32_000])
+        };
+        let m = migrate(&providers(CONFIG), &models(MODELS), &opts);
+        let routes = m.fragment.matches("type = \"fastest\"").count();
+        assert!(routes >= 6, "{routes}");
+        assert_eq!(
+            m.fragment.matches("quality_weight = 0.5\n").count(),
+            routes,
+            "{}",
+            m.fragment
+        );
+        assert_eq!(self_check(&m.fragment), Ok(()), "{}", m.fragment);
+        // And a whole number is still a float in the file.
+        let whole = Options {
+            quality_weight: Some(1.0),
+            ..options(&[])
+        };
+        let m = migrate(&providers(CONFIG), &models(MODELS), &whole);
+        assert!(
+            m.fragment.contains("quality_weight = 1.0\n"),
+            "{}",
+            m.fragment
+        );
+        assert_eq!(self_check(&m.fragment), Ok(()));
+        // Without the option nothing is written.
+        let none = migrate(&providers(CONFIG), &models(MODELS), &options(&[]));
+        assert!(!none.fragment.contains("quality_weight"));
     }
 }

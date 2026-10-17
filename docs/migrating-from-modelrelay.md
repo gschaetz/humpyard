@@ -34,6 +34,16 @@ humpyard migrate-modelrelay --config config.json --models models.json
 `--url` accepts https, or http on the same machine (the token is sent with the request; use a
 port-forward otherwise).
 
+## Options for merging into an existing configuration
+
+- `--rename FROM=TO` (repeatable) names a ModelRelay provider differently in the fragment, for a clash with a
+  provider you already have: ModelRelay's `opencode` is OpenCode **Zen** (the free tier), so if your config
+  already has an `opencode` provider for another plan, use `--rename opencode=opencode-zen`. The new name is used
+  for the provider table, its environment variable (`OPENCODE_ZEN_API_KEY`) and its targets' name prefix; a
+  rename that repeats another provider's name, or names a provider ModelRelay does not have, is refused.
+- `--quality-weight 0.5` writes `quality_weight` on every generated route, so the pools prefer models with a
+  declared quality instead of being purely speed-ordered (see [Quality scores](#quality-scores)).
+
 ## What you get
 
 | ModelRelay | In the fragment |

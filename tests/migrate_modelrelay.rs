@@ -391,3 +391,47 @@ fn the_estimated_quality_flag_declares_the_estimates_too() {
     assert!(!fragment.contains("is not declared"), "{fragment}");
     assert!(text(&out.stderr).contains("5 of "), "{}", text(&out.stderr));
 }
+
+#[test]
+fn rename_and_quality_weight_options_shape_the_fragment() {
+    let out = offline(&[
+        "--rename",
+        "groq=groq-free",
+        "--quality-weight",
+        "0.5",
+        "--min-ctx",
+        "32000",
+    ]);
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    let fragment = text(&out.stdout);
+    assert!(
+        fragment.contains("[providers.groq-free]") && fragment.contains("GROQ_FREE_API_KEY"),
+        "{fragment}"
+    );
+    assert!(!fragment.contains("[providers.groq]"), "{fragment}");
+    assert!(fragment.contains("quality_weight = 0.5"), "{fragment}");
+    Config::from_toml(&format!("listen = \"127.0.0.1:0\"\n{fragment}"), |_| {
+        Some("k".into())
+    })
+    .unwrap();
+
+    for (args, needle) in [
+        (vec!["--rename", "groq=Bad Name"], "lowercase"),
+        (vec!["--rename", "nope=x"], "no provider"),
+        (vec!["--rename", "groq=cerebras"], "both be named"),
+        (vec!["--rename", "missing-equals"], "FROM=TO"),
+        (vec!["--quality-weight", "2"], "--quality-weight"),
+    ] {
+        let out = offline(&args);
+        assert!(!out.status.success(), "{args:?}");
+        assert!(
+            text(&out.stderr).contains(needle),
+            "{args:?}: {}",
+            text(&out.stderr)
+        );
+        assert!(
+            text(&out.stdout).is_empty(),
+            "nothing printed on a refusal: {args:?}"
+        );
+    }
+}
