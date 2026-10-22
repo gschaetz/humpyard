@@ -115,7 +115,7 @@ The documentation SHALL state that the gateway does not run discovery itself, an
 - **THEN** every generated `fastest` route has `quality_weight = 0.5` and the fragment loads
 
 ### Requirement: init command
-The CLI SHALL provide `humpyard init`, which writes a new configuration file chosen interactively on a terminal or from flags otherwise. It SHALL read each provider key only from the environment variable the user names, SHALL NOT print, log or write a key value, and SHALL NOT overwrite an existing output file.
+The CLI SHALL provide `humpyard init`, which writes a new configuration file chosen interactively on a terminal or from flags otherwise. It SHALL read each provider key only from the environment variable the user names, SHALL NOT print, log or write a key value, and SHALL NOT overwrite an existing output file. With `--out -` it SHALL print the configuration to standard output instead of creating a file, and send every other message to standard error.
 
 #### Scenario: Existing output file
 - **WHEN** the output path already exists
@@ -128,6 +128,14 @@ The CLI SHALL provide `humpyard init`, which writes a new configuration file cho
 #### Scenario: A missing key
 - **WHEN** a provider's variable is unset
 - **THEN** the provider is written without live checks and the command says which variable to set
+
+#### Scenario: Configuration to standard output
+- **WHEN** `--out -` is given
+- **THEN** standard output holds only the configuration, which loads with the configuration parser, no file is created or checked for, and the progress, the test reply and any message go to standard error
+
+#### Scenario: An exposed listener to standard output
+- **WHEN** `--out -` is given with a non-loopback `--listen`
+- **THEN** the key is printed once on standard error only, and the configuration on standard output holds its hash and never the key
 
 ### Requirement: Models are checked live
 The command SHALL write a model only when the provider lists it and it answers one small request. A model that is not listed or does not answer SHALL be left out and reported with the reason.
