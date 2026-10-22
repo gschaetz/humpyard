@@ -21,6 +21,10 @@ what it decided and why.
 
 Ask a question, share your setup, tell us what to build next.
 
+### [⭐ Star humpyard on GitHub](https://github.com/gschaetz/humpyard)
+
+If humpyard saves you time or money, a star helps other people find it.
+
 </div>
 
 > **Status: pre-alpha.** It runs real traffic (Claude Code, Codex, OpenClaw) but expect rough edges.
