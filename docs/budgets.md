@@ -24,6 +24,10 @@ A key can also set `read_config = true` (default `false`) to read `GET /v1/confi
 (see [`humpyard ctl config`](ctl.md)). Any other key gets 403 `config_not_readable`; the view shows provider
 addresses and prices, so give the setting to an operator key and not to a consumer. A gateway with no `[keys]` is open, and so is the view.
 
+A key can also set `manage_overrides = true` (default `false`), which is separate from `read_config`: it is the
+permission to create and remove [runtime overrides](configuration.md) once they are available, so a key that only
+watches the gateway can never switch a target off. Give it to a dedicated operator key, never to a client.
+
 ## Prices and cost
 
 Each endpoint may declare `price = { input, output, cached_input }` in USD per million tokens.

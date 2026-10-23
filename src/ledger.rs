@@ -2,6 +2,7 @@
 //! path never waits on the database.
 
 mod decisions;
+mod overrides;
 mod quota;
 mod sessions;
 mod stats;
@@ -22,11 +23,12 @@ use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 
 pub use decisions::{Attempt, Decision, DecisionQuery, Incapable, Ranking};
+pub use overrides::{NewOverride, OverrideAudit, OverrideRecord};
 pub use quota::{QuotaPoint, QuotaQuery, QuotaSample};
 pub use sessions::{SessionQuery, SessionScan, SessionStats, Switch};
 pub use stats::{GroupBy, GroupStats, Stats, StatsQuery, TokenTotals, percentile};
 
-const SCHEMA_VERSION: i64 = 8;
+const SCHEMA_VERSION: i64 = 9;
 /// How often the writer deletes decisions past their retention.
 const PRUNE_EVERY: std::time::Duration = std::time::Duration::from_secs(3600);
 /// Decision retention when none is given, in days.
@@ -255,6 +257,37 @@ impl Ledger {
     }
 
     /// Messages queued for the writer and not yet taken by it.
+    /// Stores an override with its `created` audit row; returns its id. Written at once, not queued: the
+    /// caller needs the id and needs to know it is stored.
+    pub async fn create_override(&self, new: &NewOverride) -> Result<i64, LedgerError> {
+        Ok(overrides::insert(&self.pool, new).await?)
+    }
+
+    /// Revokes an override that is still in force, with an audit row; false if there was none.
+    pub async fn revoke_override(
+        &self,
+        id: i64,
+        at_ms: i64,
+        by: &str,
+    ) -> Result<bool, LedgerError> {
+        Ok(overrides::revoke(&self.pool, id, at_ms, by).await?)
+    }
+
+    /// Writes the `expired` audit row for each override that ran out before `now_ms`, once; returns their ids.
+    pub async fn note_expired_overrides(&self, now_ms: i64) -> Result<Vec<i64>, LedgerError> {
+        Ok(overrides::note_expired(&self.pool, now_ms).await?)
+    }
+
+    /// The history of one override, oldest first.
+    pub async fn override_audit(&self, id: i64) -> Result<Vec<OverrideAudit>, LedgerError> {
+        Ok(overrides::audit(&self.pool, id).await?)
+    }
+
+    /// The overrides in force at `now_ms`.
+    pub async fn active_overrides(&self, now_ms: i64) -> Result<Vec<OverrideRecord>, LedgerError> {
+        Ok(overrides::active(&self.pool, now_ms).await?)
+    }
+
     pub fn queue_depth(&self) -> usize {
         self.tx.max_capacity().saturating_sub(self.tx.capacity())
     }
@@ -406,6 +439,12 @@ async fn prune_decisions(pool: &SqlitePool, retention_days: u64) {
         Ok(removed) => tracing::info!(removed, "pruned decisions past their retention"),
         Err(error) => tracing::warn!(%error, "could not prune decisions"),
     }
+    // Override history follows the decision retention; an override in force is never pruned.
+    match overrides::prune(pool, now_ms.saturating_sub(window_ms)).await {
+        Ok(0) => {}
+        Ok(removed) => tracing::info!(removed, "pruned override history past its retention"),
+        Err(error) => tracing::warn!(%error, "could not prune override history"),
+    }
     // Quota samples follow the decision retention.
     match quota::prune(pool, now_ms.saturating_sub(window_ms)).await {
         Ok(0) => {}
@@ -492,6 +531,10 @@ async fn migrate(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     if version < 8 {
         // v8 (ADR 0020): the order a `fastest` route used for a request.
         decisions::migrate_v8(pool).await?;
+    }
+    if version < 9 {
+        // v9 (`add-runtime-overrides`): expiring runtime overrides and their audit trail.
+        overrides::migrate_v9(pool).await?;
     }
     if version < SCHEMA_VERSION {
         // PRAGMA does not take bound parameters; the value is a compile-time constant.

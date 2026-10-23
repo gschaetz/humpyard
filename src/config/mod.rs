@@ -87,6 +87,7 @@ pub struct Config {
     pub ledger: Option<PathBuf>,
     pub budget: BudgetConfig,
     pub health: HealthConfig,
+    pub overrides: OverridesConfig,
     pub metrics: MetricsConfig,
     /// Routing rules, first match wins.
     pub select: Vec<SelectorSpec>,
@@ -104,6 +105,35 @@ pub struct HealthConfig {
     pub skip_cold_targets: bool,
 }
 
+/// Runtime-override limits: every override expires, by default after `default_secs` and never later than
+/// `max_secs`. Needs a reload to change.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct OverridesConfig {
+    pub default_secs: u64,
+    pub max_secs: u64,
+}
+
+impl From<&schema::RawHealth> for HealthConfig {
+    fn from(raw: &schema::RawHealth) -> Self {
+        Self {
+            failure_threshold: raw.failure_threshold,
+            cooldown_secs: raw.cooldown_secs,
+            max_cooldown_secs: raw.max_cooldown_secs,
+            max_retry_after_secs: raw.max_retry_after_secs,
+            skip_cold_targets: raw.skip_cold_targets,
+        }
+    }
+}
+
+impl From<&schema::RawOverrides> for OverridesConfig {
+    fn from(raw: &schema::RawOverrides) -> Self {
+        Self {
+            default_secs: raw.default_secs,
+            max_secs: raw.max_secs,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct KeyConfig {
     pub sha256: [u8; 32],
@@ -112,6 +142,8 @@ pub struct KeyConfig {
     pub limits: Limits,
     /// May read the effective configuration (`GET /v1/config`).
     pub read_config: bool,
+    /// May create and remove runtime overrides (`/v1/overrides`).
+    pub manage_overrides: bool,
 }
 
 /// Per-period limits; `None` means unlimited.
@@ -333,6 +365,7 @@ impl Config {
                             allowed_routes: key.allowed_routes,
                             over_budget: key.over_budget,
                             read_config: key.read_config,
+                            manage_overrides: key.manage_overrides,
                             limits: Limits {
                                 daily_usd: key.daily_usd,
                                 monthly_usd: key.monthly_usd,
@@ -343,16 +376,11 @@ impl Config {
                     ))
                 })
                 .collect::<Result<_, ConfigError>>()?,
+            overrides: OverridesConfig::from(&raw.overrides),
             metrics,
             ledger: raw.ledger.map(|l| l.path),
             select: raw.select,
-            health: HealthConfig {
-                failure_threshold: raw.health.failure_threshold,
-                cooldown_secs: raw.health.cooldown_secs,
-                max_cooldown_secs: raw.health.max_cooldown_secs,
-                max_retry_after_secs: raw.health.max_retry_after_secs,
-                skip_cold_targets: raw.health.skip_cold_targets,
-            },
+            health: HealthConfig::from(&raw.health),
             budget: BudgetConfig {
                 restricted_at: raw.budget.restricted_at,
                 restricted_max_output_price: raw.budget.restricted_max_output_price,

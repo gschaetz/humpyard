@@ -37,6 +37,9 @@ pub(super) struct RawConfig {
     pub(super) budget: RawBudget,
     #[serde(default)]
     pub(super) health: RawHealth,
+    /// Expiring runtime overrides: how long one lasts by default and at most (`add-runtime-overrides`).
+    #[serde(default)]
+    pub(super) overrides: RawOverrides,
     /// The Prometheus `/metrics` endpoint (off by default).
     #[serde(default)]
     pub(super) metrics: RawMetrics,
@@ -167,6 +170,34 @@ pub(super) struct RawHealth {
     pub(super) skip_cold_targets: bool,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct RawOverrides {
+    /// How long an override lasts when its creator names no time, in seconds.
+    #[serde(default = "default_override_default_secs")]
+    pub(super) default_secs: u64,
+    /// The longest an override may last, in seconds (at most seven days).
+    #[serde(default = "default_override_max_secs")]
+    pub(super) max_secs: u64,
+}
+
+impl Default for RawOverrides {
+    fn default() -> Self {
+        Self {
+            default_secs: default_override_default_secs(),
+            max_secs: default_override_max_secs(),
+        }
+    }
+}
+
+fn default_override_default_secs() -> u64 {
+    4 * 60 * 60
+}
+
+fn default_override_max_secs() -> u64 {
+    24 * 60 * 60
+}
+
 impl Default for RawHealth {
     fn default() -> Self {
         Self {
@@ -214,6 +245,9 @@ pub(super) struct RawKey {
     /// May read the effective configuration (`GET /v1/config`); off by default.
     #[serde(default)]
     pub(super) read_config: bool,
+    /// May create and remove runtime overrides (`/v1/overrides`); off by default.
+    #[serde(default)]
+    pub(super) manage_overrides: bool,
 }
 
 #[derive(Debug, Deserialize)]

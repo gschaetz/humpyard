@@ -16,6 +16,7 @@ pub mod metering;
 pub mod metrics;
 pub mod migrate;
 pub mod num;
+pub mod overrides;
 pub mod policy;
 pub mod pool;
 pub mod prices;

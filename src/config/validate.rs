@@ -113,6 +113,16 @@ pub(super) fn validate(raw: &RawConfig) -> Result<(), ConfigError> {
             "quota_stale_secs must be at least quota_poll_secs and at most 86400",
         ));
     }
+    if !(1..=604_800).contains(&raw.overrides.max_secs) {
+        return Err(invalid(
+            "overrides.max_secs must be between 1 and 604800 (seven days)",
+        ));
+    }
+    if !(1..=raw.overrides.max_secs).contains(&raw.overrides.default_secs) {
+        return Err(invalid(
+            "overrides.default_secs must be at least 1 and not above overrides.max_secs",
+        ));
+    }
     if raw.decision_retention_days > 3650 {
         return Err(invalid(
             "decision_retention_days must be between 0 and 3650",

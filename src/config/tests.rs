@@ -487,3 +487,45 @@ fn bad_price_tiers_are_rejected_with_the_target_named() {
         assert!(message.contains(expected), "{tiers}: {message}");
     }
 }
+
+#[test]
+fn override_settings_default_to_four_hours_and_a_day() {
+    let o = Config::from_toml(VALID, env).unwrap().overrides;
+    assert_eq!((o.default_secs, o.max_secs), (14_400, 86_400));
+    let text = format!("{VALID}\n[overrides]\ndefault_secs = 60\nmax_secs = 600\n");
+    let o = Config::from_toml(&text, env).unwrap().overrides;
+    assert_eq!((o.default_secs, o.max_secs), (60, 600));
+}
+
+#[test]
+fn override_settings_are_validated() {
+    for (section, key) in [
+        ("default_secs = 90000", "default_secs"),
+        ("default_secs = 0", "default_secs"),
+        ("max_secs = 0", "max_secs"),
+        ("max_secs = 604801", "max_secs"),
+        ("default_secs = 7200\nmax_secs = 3600", "default_secs"),
+    ] {
+        let message = err(&format!("{VALID}\n[overrides]\n{section}\n"));
+        assert!(message.contains(key), "{section}: {message}");
+    }
+    // The ceiling itself is allowed, and so is a default equal to the maximum.
+    let text = format!("{VALID}\n[overrides]\ndefault_secs = 604800\nmax_secs = 604800\n");
+    assert!(Config::from_toml(&text, env).is_ok());
+}
+
+#[test]
+fn manage_overrides_is_off_unless_a_key_sets_it() {
+    let ops = format!("sha256:{}", "0".repeat(64));
+    let app = format!("sha256:{}", "1".repeat(64));
+    let text = format!(
+        "{VALID}\n[keys.ops]\nsha256 = \"{ops}\"\nmanage_overrides = true\n[keys.app]\nsha256 = \"{app}\"\n"
+    );
+    let config = Config::from_toml(&text, env).unwrap();
+    assert!(config.keys["ops"].manage_overrides);
+    assert!(!config.keys["app"].manage_overrides);
+    assert!(
+        !config.keys["ops"].read_config,
+        "the two settings are independent"
+    );
+}

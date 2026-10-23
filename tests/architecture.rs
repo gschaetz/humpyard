@@ -56,6 +56,8 @@ fn rules() -> BTreeMap<&'static str, Module> {
         ("retry_after", module(Core, &[])),
         ("health", module(Core, &["clock", "config"])),
         ("select", module(Core, &["config"])),
+        // Expiring runtime overrides: the store only; nothing here changes a plan yet (`add-runtime-overrides`).
+        ("overrides", module(Core, &["config", "ledger"])),
         ("config", module(Core, &[])),
         ("policy", module(Core, &[])),
         ("auth", module(Core, &["config"])),

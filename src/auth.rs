@@ -19,6 +19,8 @@ pub struct KeyRecord {
     pub over_budget: OverBudget,
     /// May read the effective configuration.
     pub read_config: bool,
+    /// May create and remove runtime overrides.
+    pub manage_overrides: bool,
 }
 
 impl KeyRecord {
@@ -55,6 +57,7 @@ impl ConfigKeyStore {
                         limits: key.limits,
                         over_budget: key.over_budget,
                         read_config: key.read_config,
+                        manage_overrides: key.manage_overrides,
                     },
                 )
             })
@@ -156,6 +159,7 @@ mod tests {
             limits: Limits::default(),
             over_budget: OverBudget::Block,
             read_config: false,
+            manage_overrides: false,
         };
         assert!(record.may_use("anything"));
         record.allowed_routes = Some(vec!["auto".into()]);
@@ -177,6 +181,7 @@ mod tests {
                 over_budget: OverBudget::Block,
                 limits: Limits::default(),
                 read_config: false,
+                manage_overrides: false,
             },
         )]
         .into();

@@ -63,6 +63,11 @@ See the [example configs](examples.md); `humpyard check-config <file>` validates
   states, default 300) and `skip_cold_targets` (default true: leave a target whose endpoints are all
   cooling down out of a request's plan when another target remains, never refusing a request for it);
   `GET /v1/health` shows which endpoints are being skipped. See [Endpoint health](routing.md#endpoint-health).
+- `[overrides]`: optional limits for **runtime overrides**, an operator's expiring instruction to stop using a
+  target or provider (OpenSpec change `add-runtime-overrides`). `default_secs` (default 14400, four hours) is
+  how long one lasts when its creator names no time, and `max_secs` (default 86400, a day; at most 604800)
+  is the longest one may last. Every override expires, and `default_secs` may not exceed `max_secs`. The
+  settings are accepted now; the endpoints that create overrides are still being built.
 
 - `[discovery]` and `discover` on a provider (optional): the settings for **model discovery** (ADR 0022),
   which keeps free pools current from a generated file; see [Keeping pools current](discovery.md), including
