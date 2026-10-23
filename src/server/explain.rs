@@ -69,7 +69,16 @@ pub(super) async fn explain_route(
         }
     };
     let recent = recent_by_target(&state, caller.as_ref()).await;
-    axum::Json(explain(&state, &snap, caller.as_ref(), &request, &recent)).into_response()
+    let overrides = state.active_overrides().await;
+    axum::Json(explain(
+        &state,
+        &snap,
+        caller.as_ref(),
+        &request,
+        &recent,
+        &overrides,
+    ))
+    .into_response()
 }
 
 impl Hypothetical {
@@ -291,6 +300,7 @@ fn explain(
     caller: Option<&crate::auth::KeyRecord>,
     request: &Hypothetical,
     recent: &HashMap<String, GroupStats>,
+    overrides: &[crate::overrides::Override],
 ) -> Value {
     let header_facts = request.header_facts();
     let info = request.request_info();
@@ -371,6 +381,7 @@ fn explain(
                 info: &info,
                 features: &features,
                 latency: None,
+                overrides,
             },
         )
     }) {

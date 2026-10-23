@@ -31,8 +31,9 @@ const CAPABILITY_REASONS: [&str; 3] = ["tools", "vision", "context"];
 const PROTOCOLS: [&str; 3] = ["openai_chat", "openai_responses", "anthropic_messages"];
 
 /// Outcomes that mean the gateway refused the request before any upstream call.
-const REFUSALS: [&str; 7] = [
+const REFUSALS: [&str; 8] = [
     "no_capable_target",
+    "override_no_target",
     "unauthorized",
     "forbidden",
     "budget_exhausted",

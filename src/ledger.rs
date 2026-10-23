@@ -23,7 +23,7 @@ use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 
 pub use decisions::{Attempt, Decision, DecisionQuery, Incapable, Ranking};
-pub use overrides::{NewOverride, OverrideAudit, OverrideRecord};
+pub use overrides::{NewOverride, OverrideAudit, OverrideDb, OverrideRecord};
 pub use quota::{QuotaPoint, QuotaQuery, QuotaSample};
 pub use sessions::{SessionQuery, SessionScan, SessionStats, Switch};
 pub use stats::{GroupBy, GroupStats, Stats, StatsQuery, TokenTotals, percentile};
@@ -257,35 +257,10 @@ impl Ledger {
     }
 
     /// Messages queued for the writer and not yet taken by it.
-    /// Stores an override with its `created` audit row; returns its id. Written at once, not queued: the
-    /// caller needs the id and needs to know it is stored.
-    pub async fn create_override(&self, new: &NewOverride) -> Result<i64, LedgerError> {
-        Ok(overrides::insert(&self.pool, new).await?)
-    }
-
-    /// Revokes an override that is still in force, with an audit row; false if there was none.
-    pub async fn revoke_override(
-        &self,
-        id: i64,
-        at_ms: i64,
-        by: &str,
-    ) -> Result<bool, LedgerError> {
-        Ok(overrides::revoke(&self.pool, id, at_ms, by).await?)
-    }
-
-    /// Writes the `expired` audit row for each override that ran out before `now_ms`, once; returns their ids.
-    pub async fn note_expired_overrides(&self, now_ms: i64) -> Result<Vec<i64>, LedgerError> {
-        Ok(overrides::note_expired(&self.pool, now_ms).await?)
-    }
-
-    /// The history of one override, oldest first.
-    pub async fn override_audit(&self, id: i64) -> Result<Vec<OverrideAudit>, LedgerError> {
-        Ok(overrides::audit(&self.pool, id).await?)
-    }
-
-    /// The overrides in force at `now_ms`.
-    pub async fn active_overrides(&self, now_ms: i64) -> Result<Vec<OverrideRecord>, LedgerError> {
-        Ok(overrides::active(&self.pool, now_ms).await?)
+    /// The override tables, as a handle that outlives this borrow.
+    #[must_use]
+    pub fn override_db(&self) -> OverrideDb {
+        OverrideDb::new(self.pool.clone())
     }
 
     pub fn queue_depth(&self) -> usize {

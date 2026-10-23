@@ -6,13 +6,11 @@
 //! The store is a trait so a shared backend can replace the ledger-backed one without touching callers,
 //! as `KeyStore` does for keys.
 
-use std::sync::Arc;
-
 use async_trait::async_trait;
 use parking_lot::RwLock;
 
 use crate::config::OverridesConfig;
-use crate::ledger::{Ledger, LedgerError, NewOverride, OverrideRecord};
+use crate::ledger::{LedgerError, NewOverride, OverrideDb, OverrideRecord};
 
 /// What an override does.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -81,6 +79,25 @@ impl Override {
             created_by: record.created_by,
         })
     }
+}
+
+/// Whether the overrides in `active` take `target` out of `route`'s candidates: it is disabled, or the route
+/// is pinned and no pin names it. Several pins on one route keep every target they name. A drained
+/// provider acts on endpoints, not on a whole target, so it is not decided here.
+#[must_use]
+pub fn removes(active: &[Override], route: &str, target: &str) -> bool {
+    let (mut pinned, mut kept) = (false, false);
+    for o in active {
+        match o.kind {
+            Kind::DisableTarget if o.subject == target => return true,
+            Kind::PinRoute if o.route.as_deref() == Some(route) => {
+                pinned = true;
+                kept |= o.subject == target;
+            }
+            _ => {}
+        }
+    }
+    pinned && !kept
 }
 
 /// A request to create an override.
@@ -155,24 +172,26 @@ pub trait OverrideStore: Send + Sync {
 /// Overrides kept in the ledger and held in memory while in force. State is per instance, like health and
 /// budgets.
 pub struct LedgerOverrides {
-    ledger: Arc<Ledger>,
+    db: OverrideDb,
     active: RwLock<Vec<Override>>,
 }
 
 impl LedgerOverrides {
-    /// Loads the overrides still in force, so they survive a restart.
+    /// Loads the overrides still in force, so they survive a restart, and audits any that ran out while
+    /// the gateway was down.
     ///
     /// # Errors
     /// A ledger query fails.
-    pub async fn open(ledger: Arc<Ledger>, now_ms: i64) -> Result<Self, OverrideError> {
-        let active = ledger
-            .active_overrides(now_ms)
+    pub async fn open(db: OverrideDb, now_ms: i64) -> Result<Self, OverrideError> {
+        db.note_expired(now_ms).await?;
+        let active = db
+            .active(now_ms)
             .await?
             .into_iter()
             .filter_map(Override::from_record)
             .collect();
         Ok(Self {
-            ledger,
+            db,
             active: RwLock::new(active),
         })
     }
@@ -206,7 +225,7 @@ impl OverrideStore for LedgerOverrides {
             expires_ms,
             created_by: request.created_by.clone(),
         };
-        let id = self.ledger.create_override(&new).await?;
+        let id = self.db.create(&new).await?;
         let created = Override {
             id,
             kind: request.kind,
@@ -222,7 +241,7 @@ impl OverrideStore for LedgerOverrides {
     }
 
     async fn revoke(&self, id: i64, by: &str, now_ms: i64) -> Result<bool, OverrideError> {
-        let revoked = self.ledger.revoke_override(id, now_ms, by).await?;
+        let revoked = self.db.revoke(id, now_ms, by).await?;
         if revoked {
             self.active.write().retain(|o| o.id != id);
         }
@@ -230,8 +249,12 @@ impl OverrideStore for LedgerOverrides {
     }
 
     async fn sweep(&self, now_ms: i64) -> Result<(), OverrideError> {
+        // Cheap on the request path: nothing to do until something in memory has run out.
+        if !self.active.read().iter().any(|o| !o.in_force(now_ms)) {
+            return Ok(());
+        }
         self.active.write().retain(|o| o.in_force(now_ms));
-        self.ledger.note_expired_overrides(now_ms).await?;
+        self.db.note_expired(now_ms).await?;
         Ok(())
     }
 

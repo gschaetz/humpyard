@@ -42,6 +42,7 @@ use crate::ledger::Incapable;
 use crate::ledger::{Decision, Ledger};
 use crate::metering::{Accounting, CALL_ID_HEADER, CallContext, StreamTemplate};
 use crate::num::f64_from_u64;
+use crate::overrides::{LedgerOverrides, Override, OverrideStore};
 use crate::policy::{
     All, AllowAll, BudgetState, KeyContext, PolicyContext, RequestMeta, RoutingPolicy,
 };
@@ -56,6 +57,7 @@ mod config_view;
 mod decisions;
 mod explain;
 mod metrics;
+mod overrides;
 mod quota;
 mod sessions;
 mod stats;
@@ -89,6 +91,8 @@ pub struct AppState {
     clock: Arc<dyn Clock>,
     /// The latest provider quota snapshots (kept across reloads).
     quota: Arc<crate::quota::QuotaStore>,
+    /// Runtime overrides, kept across reloads; none without a ledger, because nothing would survive a restart.
+    overrides: Option<Arc<dyn OverrideStore>>,
     /// Operational metrics, served at `/metrics` when enabled (ADR 0016).
     metrics: Arc<crate::metrics::Metrics>,
     /// The embedder's policy; it is composed with the budget policy of every snapshot.
@@ -102,6 +106,19 @@ pub struct AppState {
 impl AppState {
     fn snapshot(&self) -> Arc<Snapshot> {
         self.snapshot.read().clone()
+    }
+
+    /// The overrides in force now. Notices any that have run out first (writing their audit row), which costs
+    /// nothing until one has.
+    async fn active_overrides(&self) -> Vec<Override> {
+        let Some(store) = &self.overrides else {
+            return Vec::new();
+        };
+        let now_ms = self.clock.now_ms();
+        if let Err(error) = store.sweep(now_ms).await {
+            tracing::warn!(%error, "could not record an expired override");
+        }
+        store.active(now_ms)
     }
 }
 
@@ -487,6 +504,20 @@ fn fingerprint(text: &str) -> String {
     hex::encode(Sha256::digest(text.as_bytes()))[..12].to_string()
 }
 
+/// The runtime-override store, which lives in the ledger; none without one.
+async fn open_overrides(
+    ledger: Option<&Ledger>,
+    now_ms: i64,
+) -> Result<Option<Arc<dyn OverrideStore>>, String> {
+    let Some(ledger) = ledger else {
+        return Ok(None);
+    };
+    let store = LedgerOverrides::open(ledger.override_db(), now_ms)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(Some(Arc::new(store)))
+}
+
 async fn build(config: Config, options: Options, fingerprint: String) -> Result<Built, String> {
     let clock: Arc<dyn Clock> = options.clock.unwrap_or_else(|| Arc::new(SystemClock));
     let extra_policy: Arc<dyn RoutingPolicy> = options.policy.unwrap_or_else(|| Arc::new(AllowAll));
@@ -502,6 +533,7 @@ async fn build(config: Config, options: Options, fingerprint: String) -> Result<
         ),
         None => None,
     };
+    let overrides = open_overrides(ledger.as_ref(), clock.now_ms()).await?;
     let tracker = (!config.keys.is_empty())
         .then(|| Arc::new(BudgetTracker::new(clock.clone(), &config.budget)));
     if let (Some(tracker), Some(ledger)) = (&tracker, &ledger) {
@@ -525,6 +557,7 @@ async fn build(config: Config, options: Options, fingerprint: String) -> Result<
         tracker,
         clock: clock.clone(),
         quota: Arc::new(crate::quota::QuotaStore::default()),
+        overrides,
         metrics,
         extra_policy,
         reload: Mutex::new(ReloadStatus::default()),
@@ -536,6 +569,14 @@ async fn build(config: Config, options: Options, fingerprint: String) -> Result<
         .route("/v1/key/info", get(key_info))
         .route("/v1/health", get(endpoint_health))
         .route("/v1/config", get(config_view::get_config))
+        .route(
+            "/v1/overrides",
+            get(overrides::list_overrides).post(overrides::create_override),
+        )
+        .route(
+            "/v1/overrides/{id}",
+            axum::routing::delete(overrides::remove_override),
+        )
         .route("/v1/route/explain", post(explain::explain_route))
         .route("/v1/decisions", get(decisions::list_decisions))
         .route("/v1/stats", get(stats::get_stats))
@@ -1079,6 +1120,7 @@ async fn handle(
     guard.decision.excluded_targets = excluded_targets(snap, &selection.name);
     let budget = check_budget(state, caller)?;
     guard.decision.budget = budget.map(|b| budget_label(b).to_string());
+    let overrides = state.active_overrides().await;
     let Planned {
         plan,
         cold_skipped,
@@ -1094,6 +1136,7 @@ async fn handle(
             info: &info,
             features: &features,
             latency: Some(state.accounting.latency()),
+            overrides: &overrides,
         },
     )
     .map_err(|failure| {
@@ -1462,6 +1505,8 @@ struct PlanInput<'a> {
     features: &'a Features,
     /// Orders a `fastest` route's targets; `None` leaves the written order (explain does not explore).
     latency: Option<&'a Latency>,
+    /// The runtime overrides in force; they only ever remove candidates.
+    overrides: &'a [Override],
 }
 
 /// Stage 4: let the routing policy narrow the targets, a strict route drop the targets of classes it
@@ -1479,6 +1524,7 @@ fn plan_route(
         info,
         features,
         latency,
+        overrides,
     } = *input;
     let context = PolicyContext {
         route: model,
@@ -1508,7 +1554,11 @@ fn plan_route(
             }
         }
     }
-    let eligible = |target: &str| base(target) && !incapable.iter().any(|i| i.target == target);
+    // Runtime overrides come next, after strictness and capabilities and before health, so health and a
+    // guarded tail see the reduced set. They only remove candidates.
+    let capable = |target: &str| base(target) && !incapable.iter().any(|i| i.target == target);
+    let eligible =
+        |target: &str| capable(target) && !crate::overrides::removes(overrides, model, target);
     // The cold targets among those capable, in the route's order.
     let mut cold: Vec<String> = Vec::new();
     if snap.config.health.skip_cold_targets
@@ -1558,6 +1608,10 @@ fn plan_route(
         GatewayError::NoCapableTarget(format!(
             "no target of route `{model}` can serve this request: {}",
             reasons.join("; ")
+        ))
+    } else if !overrides.is_empty() && route.plan(model, capable).is_some() {
+        GatewayError::OverrideNoTarget(format!(
+            "runtime overrides removed every target of route `{model}`; remove the override to restore service"
         ))
     } else if budget == Some(BudgetState::Exhausted) {
         GatewayError::BudgetExceeded(format!(

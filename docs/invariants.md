@@ -60,7 +60,11 @@ in an ADR (`docs/adr/`) in the same change.
     `tests/health.rs` and `tests/health_eligibility.rs`
     (`health_never_denies_service_when_everything_is_cold`, `a_single_cold_target_is_still_tried`); see
     [ADR-0009](adr/0009-endpoint-health-lives-in-the-pool.md) and
-    [ADR-0018](adr/0018-cold-targets-are-skipped-only-when-an-alternative-remains.md).
+    [ADR-0018](adr/0018-cold-targets-are-skipped-only-when-an-alternative-remains.md). The one deliberate
+    exception is a [runtime override](routing.md#runtime-overrides): an operator who disables the last target of a
+    route gets a 503 `override_no_target`, because that is what they asked for and removing the override restores
+    service at once. Health itself still never refuses a request. *Enforced by* `tests/overrides_api.rs`
+    (`disabling_the_last_target_refuses_and_removing_it_restores_service`).
 
 15. **A reload is all or nothing.** A config that fails to load, validate or build, or that changes
     a setting a live process cannot change, leaves the running configuration untouched, and a

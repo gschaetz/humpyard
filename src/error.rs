@@ -34,6 +34,10 @@ pub enum GatewayError {
     /// any upstream call (ADR 0019).
     #[error("{0}")]
     NoCapableTarget(String),
+    /// Runtime overrides removed every target the route had left (`add-runtime-overrides`). Unlike health,
+    /// this does not fail open: an override is an operator's explicit instruction.
+    #[error("{0}")]
+    OverrideNoTarget(String),
     #[error("{0}")]
     Internal(String),
 }
@@ -49,7 +53,7 @@ impl GatewayError {
             Self::Unauthorized(_) => StatusCode::UNAUTHORIZED,
             Self::Forbidden(_) => StatusCode::FORBIDDEN,
             Self::BudgetExceeded(_) => StatusCode::PAYMENT_REQUIRED,
-            Self::Unavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
+            Self::Unavailable(_) | Self::OverrideNoTarget(_) => StatusCode::SERVICE_UNAVAILABLE,
             Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
@@ -68,6 +72,7 @@ impl GatewayError {
             Self::BudgetExceeded(_) => "budget_exhausted",
             Self::Unavailable(_) => "no_eligible_target",
             Self::NoCapableTarget(_) => "no_capable_target",
+            Self::OverrideNoTarget(_) => "override_no_target",
             Self::Internal(_) => "internal_error",
         }
     }

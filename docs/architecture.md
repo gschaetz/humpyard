@@ -5,7 +5,7 @@ component status (see [AGENTS.md](../AGENTS.md)). Diagrams are Mermaid and rende
 
 At-a-glance view of what shipped and what is next: [roadmap.md](roadmap.md).
 
-Last updated: 2026-10-22 (`init --out -` in the `init.rs` row; expiring runtime overrides added to the status table as a merged proposal). Earlier, 2026-10-17 (the request-flow diagram redrawn top to bottom and split from the accounting diagram; capability eligibility, ADR 0019; health-driven eligibility, ADR 0018; strict routes, ADR 0017; `/metrics` on one metrics registry, ADR 0016; quota history; roadmap page added). Earlier, 2026-10-10 (roadmap refresh: auto-routing, pool classes with opt-in strict fallback, stickiness, advisory cost-aware ordering and a native Anthropic upstream added; packaging row corrected). Operator-surface order: `/metrics`, health-driven eligibility, native Anthropic upstream, then the admin API and database-managed keys.
+Last updated: 2026-10-22 (`/v1/overrides` and the override step in planning; `init --out -` in the `init.rs` row; expiring runtime overrides added to the status table as a merged proposal). Earlier, 2026-10-17 (the request-flow diagram redrawn top to bottom and split from the accounting diagram; capability eligibility, ADR 0019; health-driven eligibility, ADR 0018; strict routes, ADR 0017; `/metrics` on one metrics registry, ADR 0016; quota history; roadmap page added). Earlier, 2026-10-10 (roadmap refresh: auto-routing, pool classes with opt-in strict fallback, stickiness, advisory cost-aware ordering and a native Anthropic upstream added; packaging row corrected). Operator-surface order: `/metrics`, health-driven eligibility, native Anthropic upstream, then the admin API and database-managed keys.
 
 ## Component status
 
@@ -45,7 +45,7 @@ Last updated: 2026-10-22 (`init --out -` in the `init.rs` row; expiring runtime 
 | `count_tokens` / `responses/input_tokens`: local, conservative prompt-size estimates (no upstream call). `responses/compact` intentionally not implemented | Implemented | `add-count-tokens`, `add-responses-input-tokens` |
 | Packaging: tag-only release workflow (native runners), GHCR image, launchd service; releases published since 0.1.0 | Implemented | `add-packaging` (ADR 0010) |
 | Database-managed keys + a versioned, documented admin API (separate admin credential) | Planned (designed for in `add-cost-tracking`) | not yet proposed |
-| Expiring runtime overrides: `disable_target`, `drain_provider` and `pin_route` on `/v1/overrides` and `humpyard ctl overrides`, mandatory expiry, audited, subtract-only, per instance (ADR 0025) | In progress: settings, key setting and store built; endpoints, planning and `ctl` not yet | `add-runtime-overrides` |
+| Expiring runtime overrides: `disable_target`, `drain_provider` and `pin_route` on `/v1/overrides` and `humpyard ctl overrides`, mandatory expiry, audited, subtract-only, per instance (ADR 0025) | In progress: store, `/v1/overrides` and planning for `disable_target` and `pin_route` built; `drain_provider`, decision and `explain` detail, metrics and `ctl` not yet | `add-runtime-overrides` |
 | Price import and drift check: `humpyard prices import/check` from public sources (models.dev first), tiered prices, never applied or fetched at runtime (ADR 0014) | Core implemented: `prices import`/`check` against models.dev; tiered prices implemented (cost by prompt size, highest tier for policy); `price_source` in config implemented; the scheduled check still to do | `add-price-import` |
 | Quota-aware routing: poll a provider's published usage windows (OpenCode Go first), expose them, and let selector rules match on them; advisory, fails open, measured before use (ADR 0015) | Snapshot, poller, `GET /v1/quota` and stored history (`GET /v1/quota/history`) implemented; measuring now; selector condition after that | `add-quota-routing` |
 | `/metrics` endpoint (Prometheus format) on one metrics registry | Implemented | `add-metrics` |
@@ -150,11 +150,12 @@ Switchyard decides the macro question (which target); the provider pool answers 
 | `ledger/stats.rs` | Read-only aggregation over decisions and usage: group stats, outcome mix, nearest-rank percentiles |
 | `ledger/overrides.rs` | Runtime override rows and their audit trail (schema v9); written at once, not queued, pruned with the decisions, never an override still in force |
 | `ledger/decisions.rs` | Routing decision rows (one per request), attempts, per-key queries, retention pruning |
-| `overrides.rs` | The runtime-override store: kinds, mandatory expiry within `[overrides]` limits, create and revoke with an audit row, the in-memory set of overrides in force, behind the `OverrideStore` trait so a shared backend can replace the ledger-backed one; nothing applies them to a plan yet |
+| `overrides.rs` | The runtime-override store: kinds, mandatory expiry within `[overrides]` limits, create and revoke with an audit row, the in-memory set of overrides in force, behind the `OverrideStore` trait so a shared backend can replace the ledger-backed one; `removes` is the one rule that decides what an active override takes out of a route |
 | `ledger.rs` | SQLite usage ledger with async batching writer and period queries |
 | `metering.rs` | Per-request metered clients, stream tap, answer/judge classification, `Accounting` |
 | `pricing.rs` / `clock.rs` | micro-USD cost from usage; clock and UTC periods |
 | `server/explain.rs` | The `explain` dry run: reuses selection, budget and policy planning, adds a per-rule trace |
+| `server/overrides.rs` | `/v1/overrides`: create, list and remove runtime overrides; checks the caller's `manage_overrides`, that the ledger exists, and that the subject exists in the configuration being served and a pin adds no reach |
 | `server/config_view.rs` | `GET /v1/config`: the effective configuration as JSON with each target's and route's source and the fingerprint, secrets omitted; readable by keys with `read_config` (or any caller on a keyless gateway) |
 | `select.rs` | Route selection rules: first-match evaluation of conditions on the key, requested model, headers, tags and agent metadata (pure, no HTTP types) |
 | `routing.rs` | Builds one long-lived Switchyard algorithm (and target groups) per route and per bare target; applies policy eligibility, tier substitution and random-weight realignment |

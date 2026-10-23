@@ -67,7 +67,7 @@ See the [example configs](examples.md); `humpyard check-config <file>` validates
   target or provider (OpenSpec change `add-runtime-overrides`). `default_secs` (default 14400, four hours) is
   how long one lasts when its creator names no time, and `max_secs` (default 86400, a day; at most 604800)
   is the longest one may last. Every override expires, and `default_secs` may not exceed `max_secs`. The
-  settings are accepted now; the endpoints that create overrides are still being built.
+  settings take effect through `/v1/overrides`; see [Runtime overrides](routing.md#runtime-overrides).
 
 - `[discovery]` and `discover` on a provider (optional): the settings for **model discovery** (ADR 0022),
   which keeps free pools current from a generated file; see [Keeping pools current](discovery.md), including

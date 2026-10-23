@@ -46,6 +46,60 @@ pub struct NewOverride {
     pub created_by: String,
 }
 
+/// A handle on the override tables: the ledger's pool, cheap to clone, so the override store can outlive
+/// the borrow of the `Ledger` that owns the writer. All SQL stays in this module.
+#[derive(Clone)]
+pub struct OverrideDb {
+    pool: SqlitePool,
+}
+
+impl OverrideDb {
+    pub(super) fn new(pool: SqlitePool) -> Self {
+        Self { pool }
+    }
+
+    /// Stores an override with its `created` audit row; returns its id. Written at once, not queued: the
+    /// caller needs the id and needs to know it is stored.
+    ///
+    /// # Errors
+    /// The database refuses the write.
+    pub async fn create(&self, new: &NewOverride) -> Result<i64, super::LedgerError> {
+        Ok(insert(&self.pool, new).await?)
+    }
+
+    /// Revokes an override that is still in force, with an audit row; false if there was none.
+    ///
+    /// # Errors
+    /// The database refuses the write.
+    pub async fn revoke(&self, id: i64, at_ms: i64, by: &str) -> Result<bool, super::LedgerError> {
+        Ok(revoke(&self.pool, id, at_ms, by).await?)
+    }
+
+    /// Writes the `expired` audit row for each override that ran out before `now_ms`, once; returns their ids.
+    ///
+    /// # Errors
+    /// The database refuses the write.
+    pub async fn note_expired(&self, now_ms: i64) -> Result<Vec<i64>, super::LedgerError> {
+        Ok(note_expired(&self.pool, now_ms).await?)
+    }
+
+    /// The overrides in force at `now_ms`.
+    ///
+    /// # Errors
+    /// The database refuses the read.
+    pub async fn active(&self, now_ms: i64) -> Result<Vec<OverrideRecord>, super::LedgerError> {
+        Ok(active(&self.pool, now_ms).await?)
+    }
+
+    /// The history of one override, oldest first.
+    ///
+    /// # Errors
+    /// The database refuses the read.
+    pub async fn audit(&self, id: i64) -> Result<Vec<OverrideAudit>, super::LedgerError> {
+        Ok(audit(&self.pool, id).await?)
+    }
+}
+
 pub(super) async fn migrate_v9(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     sqlx::query(
         "CREATE TABLE IF NOT EXISTS overrides (\

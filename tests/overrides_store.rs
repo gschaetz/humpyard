@@ -26,7 +26,9 @@ async fn setup() -> Setup {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("ledger.db");
     let ledger = Arc::new(Ledger::open(&path).await.unwrap());
-    let store = LedgerOverrides::open(ledger.clone(), NOW).await.unwrap();
+    let store = LedgerOverrides::open(ledger.override_db(), NOW)
+        .await
+        .unwrap();
     Setup {
         _dir: dir,
         path,
@@ -154,7 +156,7 @@ async fn revoking_ends_it_once_and_the_audit_names_the_key_id() {
     );
     assert!(!s.store.revoke(9999, "ops2", NOW).await.unwrap(), "unknown");
 
-    let audit = s.ledger.override_audit(o.id).await.unwrap();
+    let audit = s.ledger.override_db().audit(o.id).await.unwrap();
     let events: Vec<_> = audit
         .iter()
         .map(|a| (a.event.as_str(), a.at_ms, a.by.as_deref()))
@@ -189,7 +191,7 @@ async fn an_expiry_is_audited_once_at_the_time_it_ran_out() {
         .unwrap();
     s.store.sweep(NOW + 30_000).await.unwrap();
     assert_eq!(
-        s.ledger.override_audit(o.id).await.unwrap().len(),
+        s.ledger.override_db().audit(o.id).await.unwrap().len(),
         1,
         "not expired yet"
     );
@@ -197,7 +199,7 @@ async fn an_expiry_is_audited_once_at_the_time_it_ran_out() {
     // Noticed late: the row says when it ended, not when someone looked.
     s.store.sweep(NOW + 10 * HOUR_MS).await.unwrap();
     s.store.sweep(NOW + 11 * HOUR_MS).await.unwrap();
-    let audit = s.ledger.override_audit(o.id).await.unwrap();
+    let audit = s.ledger.override_db().audit(o.id).await.unwrap();
     assert_eq!(audit.len(), 2, "{audit:?}");
     assert_eq!(
         (audit[1].event.as_str(), audit[1].at_ms, audit[1].by.clone()),
@@ -234,7 +236,9 @@ async fn an_override_in_force_survives_a_restart_and_an_ended_one_does_not() {
     Arc::try_unwrap(ledger).ok().unwrap().shutdown().await;
 
     let ledger = Arc::new(Ledger::open(&path).await.unwrap());
-    let reopened = LedgerOverrides::open(ledger, NOW + HOUR_MS).await.unwrap();
+    let reopened = LedgerOverrides::open(ledger.override_db(), NOW + HOUR_MS)
+        .await
+        .unwrap();
     assert_eq!(reopened.active(NOW + HOUR_MS), vec![keep]);
 }
 
@@ -257,9 +261,10 @@ async fn history_is_pruned_but_an_override_in_force_never_is() {
         expires_ms,
         created_by: "ops".into(),
     };
-    let old = ledger.create_override(&new(1000, 2000)).await.unwrap();
+    let old = ledger.override_db().create(&new(1000, 2000)).await.unwrap();
     let live = ledger
-        .create_override(&new(real_now, real_now + HOUR_MS))
+        .override_db()
+        .create(&new(real_now, real_now + HOUR_MS))
         .await
         .unwrap();
 
@@ -268,10 +273,10 @@ async fn history_is_pruned_but_an_override_in_force_never_is() {
     ledger.flush().await;
 
     assert!(
-        ledger.override_audit(old).await.unwrap().is_empty(),
+        ledger.override_db().audit(old).await.unwrap().is_empty(),
         "an ended override's history is pruned"
     );
-    assert_eq!(ledger.override_audit(live).await.unwrap().len(), 1);
-    let active = ledger.active_overrides(real_now).await.unwrap();
+    assert_eq!(ledger.override_db().audit(live).await.unwrap().len(), 1);
+    let active = ledger.override_db().active(real_now).await.unwrap();
     assert_eq!(active.iter().map(|o| o.id).collect::<Vec<_>>(), [live]);
 }

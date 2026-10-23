@@ -539,6 +539,40 @@ skip_cold_targets = true  # leave a cold target out of the plan when another tar
 - Not yet: the `Retry-After` header is not read (a retry time stated in the error body is, above). See [ADR 0009](adr/0009-endpoint-health-lives-in-the-pool.md)
   and [ADR 0018](adr/0018-cold-targets-are-skipped-only-when-an-alternative-remains.md).
 
+## Runtime overrides
+
+An override is a quick, temporary switch: "stop using this target for the next two hours", with no config edit and
+no reload. It undoes itself, and every create, removal and expiry is recorded with the id of the key that did it.
+
+```sh
+# stop sending traffic to `deep` for 2 hours (the key needs manage_overrides = true)
+curl -s -H "Authorization: Bearer $OPS_KEY" -H 'content-type: application/json' \
+  -d '{"kind":"disable_target","subject":"deep","reason":"bad answers","expires_in_secs":7200}' \
+  http://127.0.0.1:8080/v1/overrides
+curl -s -H "Authorization: Bearer $OPS_KEY" http://127.0.0.1:8080/v1/overrides
+curl -s -X DELETE -H "Authorization: Bearer $OPS_KEY" http://127.0.0.1:8080/v1/overrides/1
+```
+
+- **Kinds.** `disable_target` removes a target from every route. `pin_route` (with a `route` and a target) cuts
+  that route to the target; several pins on one route keep every target they name. (`drain_provider` is planned
+  and is refused for now.)
+- **They only remove.** An override never adds a target, changes a price or widens a key. It is applied after
+  [strict routes](#strict-routes) and [capabilities](#capabilities) and before [health](#endpoint-health), so a
+  pin cannot reach a target a route's classes forbid, and health sees only what is left. A request, `explain`
+  and the decision all use the same overrides.
+- **They expire.** Each lasts `expires_in_secs`, or `[overrides] default_secs` (four hours) when omitted, and never
+  more than `max_secs` (a day by default). At the expiry the target is eligible again with nothing else to do.
+- **Subjects must exist.** A target or route that is not in the loaded configuration is refused, and so is a pin
+  to a target the route does not list. If a reload later removes what an override names, it stays stored, shows
+  `stale: true` in the list, and does nothing.
+- **Unlike health, this fails closed.** If overrides remove every target a route has left, the request is refused
+  with 503 (`override_no_target`, before any upstream call) and the message says an override caused it. Disabling
+  the only target of a route means the route is down until the override expires or is removed, which restores
+  service at once. Health never refuses a request; an override is an operator's explicit instruction, so it does.
+- **Who and where.** Overrides need a `[ledger]` (without one, creating is refused with 409, because nothing would
+  survive a restart) and live on this instance only: with several replicas, each has its own. A gateway with no
+  `[keys]` allows anyone to manage them, like the rest of the admin surface.
+
 ## Routing policy
 
 A policy decides, per request, which targets are eligible. Ineligible targets are removed from
