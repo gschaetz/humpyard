@@ -14,10 +14,16 @@ use serde_json::{Value, json};
 use switchyard_protocol::WireFormat;
 
 use super::{AppState, authenticate};
-use crate::config::Config;
+use crate::config::{Config, Endpoint};
+use crate::overrides::Override;
 
 /// The effective configuration of `config` as JSON, labelled with its fingerprint and load time.
-pub(super) fn view(config: &Config, fingerprint: &str, loaded_at_ms: i64) -> Value {
+pub(super) fn view(
+    config: &Config,
+    fingerprint: &str,
+    loaded_at_ms: i64,
+    overrides: &[Override],
+) -> Value {
     let providers: serde_json::Map<String, Value> = config
         .providers
         .iter()
@@ -44,7 +50,7 @@ pub(super) fn view(config: &Config, fingerprint: &str, loaded_at_ms: i64) -> Val
             (
                 name.clone(),
                 json!({
-                    "source": source(config, name),
+                    "source": source(config, name, endpoints, overrides),
                     "class": config.target_classes.get(name),
                     "strengths": config.target_strengths.get(name),
                     "quality": config.target_quality.get(name),
@@ -115,8 +121,20 @@ pub(super) fn view(config: &Config, fingerprint: &str, loaded_at_ms: i64) -> Val
     })
 }
 
-fn source(config: &Config, target: &str) -> &'static str {
-    if config.generated_targets.contains(target) {
+/// Where a target came from; `override` while an active runtime override has taken it out of use (disabled, or
+/// every endpoint on a drained provider).
+fn source(
+    config: &Config,
+    target: &str,
+    endpoints: &[Endpoint],
+    overrides: &[Override],
+) -> &'static str {
+    let providers: Vec<&str> = endpoints.iter().map(|e| e.provider.as_str()).collect();
+    if !overrides.is_empty()
+        && crate::overrides::removed_by(overrides, "", target, &providers).is_some()
+    {
+        "override"
+    } else if config.generated_targets.contains(target) {
         "generated"
     } else {
         "file"
@@ -141,5 +159,12 @@ pub(super) async fn get_config(State(state): State<Arc<AppState>>, headers: Head
         )
             .into_response();
     }
-    Json(view(&snap.config, &snap.fingerprint, snap.loaded_at_ms)).into_response()
+    let overrides = state.active_overrides().await;
+    Json(view(
+        &snap.config,
+        &snap.fingerprint,
+        snap.loaded_at_ms,
+        &overrides,
+    ))
+    .into_response()
 }

@@ -60,6 +60,11 @@ spec:
         labels: {severity: warning}
         annotations:
           summary: "The last humpyard config reload was rejected; the previous config is still serving"
+      - alert: HumpyardOverrideLong
+        expr: humpyard_override_oldest_age_seconds > 6 * 3600
+        labels: {severity: info}
+        annotations:
+          summary: "A humpyard runtime override has been active for over six hours; check it is still wanted (it expires on its own)"
       - alert: HumpyardDown
         expr: absent(humpyard_build_info)
         for: 5m

@@ -563,6 +563,12 @@ curl -s -X DELETE -H "Authorization: Bearer $OPS_KEY" http://127.0.0.1:8080/v1/o
   and the decision all use the same overrides.
 - **They expire.** Each lasts `expires_in_secs`, or `[overrides] default_secs` (four hours) when omitted, and never
   more than `max_secs` (a day by default). At the expiry the target is eligible again with nothing else to do.
+- **Visible.** Each decision (`GET /v1/decisions`) lists in `overrides` the ones that took a target out of its plan
+  (id, kind and subject), including a request they refused. `POST /v1/route/explain` lists `overridden_targets`,
+  each with `override_id` as the reason it was removed. `GET /v1/config` labels a disabled target (or one whose
+  every endpoint is on a drained provider) with the source `override`. `humpyard_overrides_active{kind}` and
+  `humpyard_override_oldest_age_seconds` are in [the metrics](metrics.md), and the shipped alert rules include
+  `HumpyardOverrideLong`, which fires when the oldest override is over six hours old.
 - **Subjects must exist.** A target or route that is not in the loaded configuration is refused, and so is a pin
   to a target the route does not list. If a reload later removes what an override names, it stays stored, shows
   `stale: true` in the list, and does nothing.

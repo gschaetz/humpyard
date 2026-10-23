@@ -38,8 +38,7 @@ use crate::config::OverBudget;
 use crate::error::GatewayError;
 use crate::estimate::estimate_tokens;
 use crate::latency::Latency;
-use crate::ledger::Incapable;
-use crate::ledger::{Decision, Ledger};
+use crate::ledger::{AppliedOverride, Decision, Incapable, Ledger};
 use crate::metering::{Accounting, CALL_ID_HEADER, CallContext, StreamTemplate};
 use crate::num::f64_from_u64;
 use crate::overrides::{Drains, LedgerOverrides, NoDrains, Override, OverrideStore, StoreDrains};
@@ -508,15 +507,88 @@ fn fingerprint(text: &str) -> String {
     hex::encode(Sha256::digest(text.as_bytes()))[..12].to_string()
 }
 
-/// Whether every endpoint of `target` is on a provider the overrides drain, which takes the whole target out of
-/// a plan. With some endpoints left the target stays, and the pool skips the drained ones itself.
-fn fully_drained(snap: &Snapshot, target: &str, overrides: &[Override]) -> bool {
-    snap.config.targets.get(target).is_some_and(|endpoints| {
-        !endpoints.is_empty()
-            && endpoints
-                .iter()
-                .all(|e| crate::overrides::drains(overrides, &e.provider))
-    })
+/// A target a runtime override took out of a request's plan, and the override responsible.
+struct Overridden {
+    target: String,
+    by: AppliedOverride,
+}
+
+/// The override that removes `target` from `route`'s plan, if one does (see [`crate::overrides::removed_by`]).
+fn removed_by_override<'a>(
+    snap: &Snapshot,
+    overrides: &'a [Override],
+    route: &str,
+    target: &str,
+) -> Option<&'a Override> {
+    if overrides.is_empty() {
+        return None;
+    }
+    let providers: Vec<&str> = snap
+        .config
+        .targets
+        .get(target)
+        .map(|endpoints| endpoints.iter().map(|e| e.provider.as_str()).collect())
+        .unwrap_or_default();
+    crate::overrides::removed_by(overrides, route, target, &providers)
+}
+
+/// The targets of route `model` the overrides take out of the plan, in the route's order, among those `capable`
+/// would otherwise leave in. A target stays when only some of its endpoints are drained: the pool skips those.
+fn overridden_targets(
+    snap: &Snapshot,
+    overrides: &[Override],
+    model: &str,
+    capable: &dyn Fn(&str) -> bool,
+) -> Vec<Overridden> {
+    let mut removed: Vec<Overridden> = Vec::new();
+    let Some(spec) = snap.config.routes.get(model) else {
+        return removed;
+    };
+    for target in spec.target_refs() {
+        if capable(target)
+            && !removed.iter().any(|r| r.target == target)
+            && let Some(o) = removed_by_override(snap, overrides, model, target)
+        {
+            removed.push(Overridden {
+                target: target.to_string(),
+                by: AppliedOverride {
+                    id: o.id,
+                    kind: o.kind.as_str().to_string(),
+                    subject: o.subject.clone(),
+                },
+            });
+        }
+    }
+    removed
+}
+
+/// The distinct overrides behind `removed`, for the decision record.
+fn applied_overrides(removed: &[Overridden]) -> Vec<AppliedOverride> {
+    let mut applied: Vec<AppliedOverride> = Vec::new();
+    for r in removed {
+        if !applied.iter().any(|a| a.id == r.by.id) {
+            applied.push(r.by.clone());
+        }
+    }
+    applied
+}
+
+/// The overridden targets as `explain` reports them: each with the override that removed it as the reason.
+fn overridden_report(removed: &[Overridden]) -> serde_json::Value {
+    serde_json::Value::Array(
+        removed
+            .iter()
+            .map(|r| {
+                serde_json::json!({
+                    "target": r.target,
+                    "reason": "override",
+                    "override_id": r.by.id,
+                    "kind": r.by.kind,
+                    "subject": r.by.subject,
+                })
+            })
+            .collect(),
+    )
 }
 
 /// The runtime-override store, which lives in the ledger, and the view of its drains that the pool reads; the
@@ -1145,6 +1217,7 @@ async fn handle(
         plan,
         cold_skipped,
         incapable,
+        overridden,
         ..
     } = plan_route(
         snap,
@@ -1161,10 +1234,12 @@ async fn handle(
     )
     .map_err(|failure| {
         guard.decision.incapable_targets = failure.incapable;
+        guard.decision.overrides = applied_overrides(&failure.overridden);
         failure.error
     })?;
     guard.decision.cold_targets = cold_skipped;
     guard.decision.incapable_targets = incapable;
+    guard.decision.overrides = applied_overrides(&overridden);
     guard.decision.ranking = plan.ranking.as_ref().map(|ranked| crate::ledger::Ranking {
         order: ranked.order.clone(),
         reason: ranked.reason.as_str().to_string(),
@@ -1487,6 +1562,8 @@ fn incapable_sentence(incapable: &Incapable, features: &Features) -> String {
 struct PlanFailure {
     error: GatewayError,
     incapable: Vec<Incapable>,
+    /// Targets the runtime overrides removed (recorded on the decision even when the request is refused).
+    overridden: Vec<Overridden>,
 }
 
 /// A planned route plus what health did to it (ADR 0018).
@@ -1494,6 +1571,8 @@ struct Planned {
     plan: Plan,
     /// Targets removed because none of their endpoints could serve the request (ADR 0019).
     incapable: Vec<Incapable>,
+    /// Targets the runtime overrides removed from the plan.
+    overridden: Vec<Overridden>,
     /// Targets left out because every endpoint was cooling down and another target remained.
     cold_skipped: Vec<String>,
     /// Every eligible target was cold, so none was skipped: the route is tried as it would be without
@@ -1514,6 +1593,31 @@ fn is_cold(snap: &Snapshot, target: &str) -> bool {
                     .iter()
                     .all(|e| e.snapshot.state == crate::health::State::CoolingDown)
         })
+}
+
+/// The targets of route `model` none of whose endpoints can serve this request, among those `base` leaves
+/// eligible, in the route's order (ADR 0019).
+fn find_incapable(
+    snap: &Snapshot,
+    model: &str,
+    features: &Features,
+    base: &dyn Fn(&str) -> bool,
+) -> Vec<Incapable> {
+    let mut incapable: Vec<Incapable> = Vec::new();
+    if let Some(spec) = snap.config.routes.get(model) {
+        for target in spec.target_refs() {
+            if base(target)
+                && !incapable.iter().any(|i| i.target == target)
+                && let Some(reason) = incapable_reason(snap, target, features)
+            {
+                incapable.push(Incapable {
+                    target: target.to_string(),
+                    reason: reason.to_string(),
+                });
+            }
+        }
+    }
+    incapable
 }
 
 /// What planning needs to know about one request besides the route.
@@ -1560,28 +1664,12 @@ fn plan_route(
     };
     // Targets none of whose endpoints can serve this request, among those classes and policy leave
     // eligible, in the route's order (ADR 0019). They are removed before health is consulted.
-    let mut incapable: Vec<Incapable> = Vec::new();
-    if let Some(spec) = snap.config.routes.get(model) {
-        for target in spec.target_refs() {
-            if base(target)
-                && !incapable.iter().any(|i| i.target == target)
-                && let Some(reason) = incapable_reason(snap, target, features)
-            {
-                incapable.push(Incapable {
-                    target: target.to_string(),
-                    reason: reason.to_string(),
-                });
-            }
-        }
-    }
+    let incapable = find_incapable(snap, model, features, &base);
     // Runtime overrides come next, after strictness and capabilities and before health, so health and a
     // guarded tail see the reduced set. They only remove candidates.
     let capable = |target: &str| base(target) && !incapable.iter().any(|i| i.target == target);
-    let eligible = |target: &str| {
-        capable(target)
-            && !crate::overrides::removes(overrides, model, target)
-            && !fully_drained(snap, target, overrides)
-    };
+    let overridden = overridden_targets(snap, overrides, model, &capable);
+    let eligible = |target: &str| capable(target) && !overridden.iter().any(|o| o.target == target);
     // The cold targets among those capable, in the route's order.
     let mut cold: Vec<String> = Vec::new();
     if snap.config.health.skip_cold_targets
@@ -1617,6 +1705,7 @@ fn plan_route(
         return Ok(Planned {
             plan,
             incapable,
+            overridden,
             cold_skipped,
             fail_open,
         });
@@ -1645,7 +1734,11 @@ fn plan_route(
             "no eligible target for route `{model}`: all are excluded by routing policy"
         ))
     };
-    Err(PlanFailure { error, incapable })
+    Err(PlanFailure {
+        error,
+        incapable,
+        overridden,
+    })
 }
 
 /// Stage 5: run the route's algorithm over the metered clients and settle the usage accounting.

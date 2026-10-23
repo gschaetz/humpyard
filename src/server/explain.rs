@@ -215,6 +215,7 @@ fn plan_report(
             .collect(),
     );
     report["incapable_targets"] = json!(planned.incapable);
+    report["overridden_targets"] = super::overridden_report(&planned.overridden);
     report["health_skipped_targets"] = json!(planned.cold_skipped);
     report["health_fail_open"] = json!(planned.fail_open);
     class_report(report, snap, route, &models);
@@ -397,6 +398,7 @@ fn explain(
             report["outcome"] = json!(failure.error.outcome());
             report["message"] = json!(failure.error.to_string());
             report["incapable_targets"] = json!(failure.incapable);
+            report["overridden_targets"] = super::overridden_report(&failure.overridden);
         }
         None => {
             report["outcome"] = json!("unknown_model");

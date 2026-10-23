@@ -84,23 +84,44 @@ impl Override {
     }
 }
 
-/// Whether the overrides in `active` take `target` out of `route`'s candidates: it is disabled, or the route
-/// is pinned and no pin names it. Several pins on one route keep every target they name. A drained
-/// provider acts on endpoints, not on a whole target, so it is not decided here (see [`drains`] and the pool).
+/// The override that takes `target` out of `route`'s candidates, if one does; the first that does when several
+/// would. `providers` are the providers of the target's endpoints.
+///
+/// - A `disable_target` on it removes it.
+/// - A route with pins keeps only the targets a pin names, so any other target is removed by (the first) pin.
+/// - A target whose every endpoint is on a drained provider is removed by that drain; with an endpoint left,
+///   the target stays and the pool skips the drained endpoints itself.
 #[must_use]
-pub fn removes(active: &[Override], route: &str, target: &str) -> bool {
-    let (mut pinned, mut kept) = (false, false);
-    for o in active {
-        match o.kind {
-            Kind::DisableTarget if o.subject == target => return true,
-            Kind::PinRoute if o.route.as_deref() == Some(route) => {
-                pinned = true;
-                kept |= o.subject == target;
-            }
-            _ => {}
-        }
-    }
-    pinned && !kept
+pub fn removed_by<'a>(
+    active: &'a [Override],
+    route: &str,
+    target: &str,
+    providers: &[&str],
+) -> Option<&'a Override> {
+    let pins = || {
+        active
+            .iter()
+            .filter(|o| o.kind == Kind::PinRoute && o.route.as_deref() == Some(route))
+    };
+    active
+        .iter()
+        .find(|o| o.kind == Kind::DisableTarget && o.subject == target)
+        .or_else(|| {
+            let named = pins().any(|o| o.subject == target);
+            pins().next().filter(|_| !named)
+        })
+        .or_else(|| {
+            let first = providers.first()?;
+            providers
+                .iter()
+                .all(|p| drains(active, p))
+                .then(|| {
+                    active
+                        .iter()
+                        .find(|o| o.kind == Kind::DrainProvider && o.subject == *first)
+                })
+                .flatten()
+        })
 }
 
 /// Whether the overrides in `active` drain `provider`.

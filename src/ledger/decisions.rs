@@ -35,6 +35,15 @@ pub struct Ranking {
     pub reason: String,
 }
 
+/// A runtime override that took at least one candidate out of a request's plan (`add-runtime-overrides`).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AppliedOverride {
+    pub id: i64,
+    /// `disable_target`, `drain_provider` or `pin_route`.
+    pub kind: String,
+    pub subject: String,
+}
+
 /// A target removed for capability, and why: `tools`, `vision` or `context`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Incapable {
@@ -68,6 +77,8 @@ pub struct Decision {
     pub cold_targets: Vec<String>,
     /// Targets removed because none of their endpoints could serve the request (ADR 0019).
     pub incapable_targets: Vec<Incapable>,
+    /// The runtime overrides that removed a candidate from this request's plan (`add-runtime-overrides`).
+    pub overrides: Vec<AppliedOverride>,
     /// For a `fastest` route, the order tried and why (ADR 0020).
     pub ranking: Option<Ranking>,
     pub stream: bool,
@@ -156,6 +167,21 @@ pub(super) async fn migrate_v6(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     Ok(())
 }
 
+/// v10: the runtime overrides that applied to a request. Old rows read as none.
+pub(super) async fn migrate_v10(pool: &SqlitePool) -> Result<(), sqlx::Error> {
+    let has: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM pragma_table_info('decisions') WHERE name = 'overrides'",
+    )
+    .fetch_one(pool)
+    .await?;
+    if has == 0 {
+        sqlx::query("ALTER TABLE decisions ADD COLUMN overrides TEXT")
+            .execute(pool)
+            .await?;
+    }
+    Ok(())
+}
+
 /// v8: the order a `fastest` route used. Old rows read as none.
 pub(super) async fn migrate_v8(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     let has: i64 = sqlx::query_scalar(
@@ -235,7 +261,7 @@ pub(super) async fn insert_batch(pool: &SqlitePool, batch: &[Decision]) -> Resul
             "INSERT INTO decisions (request_id, ts_ms, key_id, session_id, format, requested_model, \
              route, rule, source, skipped_rules, budget, eligible_targets, stream, prompt_tokens, \
              tools, images, attempts, status, outcome, message, served_target, served_provider, \
-             latency_ms, excluded_targets, cold_targets, incapable_targets, ranking) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23,?24,?25,?26,?27)",
+             latency_ms, excluded_targets, cold_targets, incapable_targets, ranking, overrides) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23,?24,?25,?26,?27,?28)",
         )
         .bind(&d.request_id)
         .bind(d.ts_ms)
@@ -264,6 +290,7 @@ pub(super) async fn insert_batch(pool: &SqlitePool, batch: &[Decision]) -> Resul
         .bind(json_list(&d.cold_targets))
         .bind(json_list(&d.incapable_targets))
         .bind(d.ranking.as_ref().and_then(|r| serde_json::to_string(r).ok()))
+        .bind(json_list(&d.overrides))
         .execute(&mut *tx)
         .await?;
     }
@@ -342,6 +369,10 @@ pub(super) async fn query(
             ranking: row
                 .get::<Option<String>, _>("ranking")
                 .and_then(|json| serde_json::from_str(&json).ok()),
+            overrides: row
+                .get::<Option<String>, _>("overrides")
+                .and_then(|json| serde_json::from_str(&json).ok())
+                .unwrap_or_default(),
         })
         .collect())
 }

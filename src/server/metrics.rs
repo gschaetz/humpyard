@@ -94,9 +94,48 @@ fn scraped(state: &AppState, snap: &Snapshot) -> Vec<Family> {
             vec![(vec![], Value::Int(ledger.failed()))],
         ));
     }
+    if let Some(store) = &state.overrides {
+        families.extend(override_gauges(
+            &store.active(state.clock.now_ms()),
+            state.clock.now_ms(),
+        ));
+    }
     families.extend(quota(state, snap));
     families.extend(discovery(snap));
     families
+}
+
+/// How many runtime overrides are in force by kind, and how old the oldest is. The kinds are a fixed
+/// vocabulary, so every one is exported, at 0 when none is active.
+fn override_gauges(active: &[crate::overrides::Override], now_ms: i64) -> Vec<Family> {
+    use crate::overrides::Kind;
+    let by_kind = [Kind::DisableTarget, Kind::DrainProvider, Kind::PinRoute]
+        .into_iter()
+        .map(|kind| {
+            let count = active.iter().filter(|o| o.kind == kind).count();
+            (
+                vec![("kind", kind.as_str().to_string())],
+                Value::Int(u64::try_from(count).unwrap_or(u64::MAX)),
+            )
+        })
+        .collect();
+    let oldest_ms = active
+        .iter()
+        .map(|o| now_ms.saturating_sub(o.created_ms))
+        .max()
+        .unwrap_or(0);
+    vec![
+        metrics::gauge(
+            "overrides_active",
+            "Runtime overrides in force, by kind.",
+            by_kind,
+        ),
+        metrics::gauge(
+            "override_oldest_age_seconds",
+            "How long the oldest runtime override in force has been active; 0 when none is.",
+            vec![(vec![], Value::Int(crate::num::from_i64(oldest_ms / 1000)))],
+        ),
+    ]
 }
 
 /// The generated targets file (ADR 0022): how many targets it merged and what became of it. Present only

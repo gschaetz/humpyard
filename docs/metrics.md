@@ -63,6 +63,8 @@ cannot call inference or any other endpoint.
 | `humpyard_config_last_reload_ok` | gauge | none |
 | `humpyard_config_info` | gauge | `fingerprint` (the serving configuration's; one series, always 1) |
 | `humpyard_config_loaded_timestamp_seconds` | gauge | none |
+| `humpyard_overrides_active` | gauge | `kind` (`disable_target`, `drain_provider`, `pin_route`; all three always exported, 0 when none is active) |
+| `humpyard_override_oldest_age_seconds` | gauge | none (how long the oldest [runtime override](routing.md#runtime-overrides) in force has been active; 0 when none is) |
 | `humpyard_quota_percent` | gauge | `provider`, `window` |
 | `humpyard_quota_snapshot_age_seconds` | gauge | `provider` |
 | `humpyard_build_info` | gauge | `version` |
@@ -82,7 +84,8 @@ Notes:
   when every eligible target is cold (the route fails open).
 - **Capability skips** counts requests in which a target was [removed](routing.md#capabilities) because none
   of its endpoints could serve them, with `reason` `tools`, `vision` or `context`. Refusals with reason
-  `no_capable_target` are in `refusals_total`.
+  `no_capable_target` are in `refusals_total`, as are those with reason `override_no_target` (a
+  [runtime override](routing.md#runtime-overrides) removed every target of the route).
 - **A request that matched no route** is counted under `route="none"`.
 - **Refusal reasons** are `unauthorized`, `forbidden`, `budget_exhausted`, `no_eligible_target`,
   `unknown_model`, `bad_request` and `no_capable_target`. Upstream failures show up in `status_class` and in failovers.

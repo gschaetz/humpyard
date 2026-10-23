@@ -129,7 +129,7 @@ id (also returned as `x-humpyard-request-id`, and stored on the request's usage 
 join), the key, session and protocol, the model the client asked for, the route and selector rule
 that applied and whether it came from a `selector` or the `requested_model`, rules that matched but
 were skipped because the key may not use their route, the budget state, the targets that were
-eligible, the `excluded_targets` a strict route removed, the `cold_targets` skipped for health, the `incapable_targets` removed for capability, request features (streaming, estimated prompt size when a rule needs it, tools, images),
+eligible, the `excluded_targets` a strict route removed, the `cold_targets` skipped for health, the `incapable_targets` removed for capability, the `overrides` (id, kind and subject) that took a target out of its plan, request features (streaming, estimated prompt size when a rule needs it, tools, images),
 the **attempts** in order (target, provider, model, class, outcome such as `ok`, `rate_limit`,
 `timeout`, `server_error`, and milliseconds), `fallback_crossed_classes` (whether those attempts spanned
 more than one [target class](routing.md#target-classes)), the final status and `outcome`, the serving target and

@@ -22,13 +22,13 @@ use sqlx::sqlite::{
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 
-pub use decisions::{Attempt, Decision, DecisionQuery, Incapable, Ranking};
+pub use decisions::{AppliedOverride, Attempt, Decision, DecisionQuery, Incapable, Ranking};
 pub use overrides::{NewOverride, OverrideAudit, OverrideDb, OverrideRecord};
 pub use quota::{QuotaPoint, QuotaQuery, QuotaSample};
 pub use sessions::{SessionQuery, SessionScan, SessionStats, Switch};
 pub use stats::{GroupBy, GroupStats, Stats, StatsQuery, TokenTotals, percentile};
 
-const SCHEMA_VERSION: i64 = 9;
+const SCHEMA_VERSION: i64 = 10;
 /// How often the writer deletes decisions past their retention.
 const PRUNE_EVERY: std::time::Duration = std::time::Duration::from_secs(3600);
 /// Decision retention when none is given, in days.
@@ -510,6 +510,10 @@ async fn migrate(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     if version < 9 {
         // v9 (`add-runtime-overrides`): expiring runtime overrides and their audit trail.
         overrides::migrate_v9(pool).await?;
+    }
+    if version < 10 {
+        // v10 (`add-runtime-overrides`): which overrides applied to each decision.
+        decisions::migrate_v10(pool).await?;
     }
     if version < SCHEMA_VERSION {
         // PRAGMA does not take bound parameters; the value is a compile-time constant.

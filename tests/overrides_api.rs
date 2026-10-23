@@ -2,6 +2,7 @@
 //! 1.4): who may write, what may be named, and what a `disable_target` or `pin_route` does to a request.
 //! and what a `drain_provider` does to the endpoints inside a target (part 2b).
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // test scaffolding
+#![allow(clippy::too_many_lines)] // the rig is one configuration string
 
 mod common;
 
@@ -53,6 +54,7 @@ struct Rig {
     ops: String,
     reader: String,
     app: String,
+    metrics_key: String,
     clock: Arc<TestClock>,
     a: Arc<Upstream>,
     b: Arc<Upstream>,
@@ -70,6 +72,7 @@ async fn rig(ledger: bool, keys: bool) -> Rig {
     let (ops, ops_hash) = humpyard::auth::generate_key().unwrap();
     let (reader, reader_hash) = humpyard::auth::generate_key().unwrap();
     let (app, app_hash) = humpyard::auth::generate_key().unwrap();
+    let (metrics_key, metrics_hash) = humpyard::auth::generate_key().unwrap();
     let ledger_toml = if ledger {
         format!(
             "[ledger]\npath = \"{}\"\n",
@@ -92,6 +95,9 @@ async fn rig(ledger: bool, keys: bool) -> Rig {
 # The test clock sits in 1970; retention would prune each decision as it is written.
 decision_retention_days = 0
 {ledger_toml}
+[metrics]
+enabled = true
+bearer_sha256 = "{metrics_hash}"
 [overrides]
 default_secs = 3600
 max_secs = 7200
@@ -155,6 +161,7 @@ allowed_classes = ["private"]
         ops,
         reader,
         app,
+        metrics_key,
         clock,
         a,
         b,
@@ -267,6 +274,32 @@ impl Rig {
             tokio::time::sleep(Duration::from_millis(30)).await;
         }
         panic!("no decision for {route}");
+    }
+
+    /// The configuration view's `source` for a target.
+    async fn source_of(&self, target: &str) -> Value {
+        let view: Value = reqwest::Client::new()
+            .get(format!("{}/v1/config", self.url))
+            .bearer_auth(&self.reader)
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        view["targets"][target]["source"].clone()
+    }
+
+    async fn metrics(&self) -> String {
+        reqwest::Client::new()
+            .get(format!("{}/metrics", self.url))
+            .bearer_auth(&self.metrics_key)
+            .send()
+            .await
+            .unwrap()
+            .text()
+            .await
+            .unwrap()
     }
 
     fn advance(&self, secs: i64) {
@@ -618,5 +651,159 @@ async fn health_never_brings_a_drained_endpoint_back() {
         rig.a.0.load(Ordering::SeqCst),
         before,
         "the drained endpoint never is"
+    );
+}
+
+#[tokio::test]
+async fn a_decision_lists_the_overrides_that_applied_to_it() {
+    let rig = rig(true, true).await;
+    let id = rig.create(Some(&rig.ops), disable("a")).await.1["id"]
+        .as_i64()
+        .unwrap();
+    assert_eq!(rig.ask("duo").await.1, "b");
+    let decision = rig.decision("duo").await;
+    assert_eq!(
+        decision["overrides"],
+        json!([{"id": id, "kind": "disable_target", "subject": "a"}])
+    );
+
+    // A route the override does not touch lists none.
+    assert_eq!(rig.ask("via_mixed").await.0, 200);
+    assert_eq!(rig.decision("via_mixed").await["overrides"], json!([]));
+}
+
+#[tokio::test]
+async fn a_refused_request_still_records_which_override_refused_it() {
+    let rig = rig(true, true).await;
+    let id = rig.create(Some(&rig.ops), disable("a")).await.1["id"]
+        .as_i64()
+        .unwrap();
+    assert_eq!(rig.ask("lone").await.0, 503);
+    let decision = rig.decision("lone").await;
+    assert_eq!(decision["outcome"], "override_no_target");
+    assert_eq!(
+        decision["overrides"],
+        json!([{"id": id, "kind": "disable_target", "subject": "a"}])
+    );
+}
+
+#[tokio::test]
+async fn explain_names_the_override_that_removed_each_target() {
+    let rig = rig(true, true).await;
+    let id = rig.create(Some(&rig.ops), disable("a")).await.1["id"]
+        .as_i64()
+        .unwrap();
+    let report = rig.explain("duo").await;
+    assert_eq!(
+        report["overridden_targets"],
+        json!([{
+            "target": "a", "reason": "override", "override_id": id,
+            "kind": "disable_target", "subject": "a",
+        }])
+    );
+    // Nothing is overridden on a route the override does not touch.
+    assert_eq!(
+        rig.explain("via_mixed").await["overridden_targets"],
+        json!([])
+    );
+
+    // A pin removes every other target of its route, each pointing at the same pin; the decision lists it once.
+    let pin_id = rig.create(Some(&rig.ops), pin("duo", "b")).await.1["id"]
+        .as_i64()
+        .unwrap();
+    rig.remove(Some(&rig.ops), id).await;
+    let report = rig.explain("duo").await;
+    assert_eq!(report["overridden_targets"][0]["override_id"], pin_id);
+    assert_eq!(report["overridden_targets"][0]["kind"], "pin_route");
+    assert_eq!(
+        report["overridden_targets"].as_array().unwrap().len(),
+        1,
+        "only `a` is cut"
+    );
+    rig.ask("duo").await;
+    assert_eq!(
+        rig.decision("duo").await["overrides"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn a_drain_removes_a_whole_target_only_when_every_endpoint_is_drained() {
+    let rig = rig(true, true).await;
+    let id = rig.create(Some(&rig.ops), drain("pa")).await.1["id"]
+        .as_i64()
+        .unwrap();
+    // `a` is only on pa, so it is out; `mixed` still has pb, so it stays and the pool skips pa's endpoint.
+    let on_duo = rig.explain("duo").await;
+    assert_eq!(on_duo["overridden_targets"][0]["target"], "a");
+    assert_eq!(on_duo["overridden_targets"][0]["override_id"], id);
+    assert_eq!(
+        rig.explain("via_mixed").await["overridden_targets"],
+        json!([])
+    );
+    rig.ask("via_mixed").await;
+    assert_eq!(
+        rig.decision("via_mixed").await["overrides"],
+        json!([]),
+        "nothing was removed from that plan; only an endpoint was skipped"
+    );
+}
+
+#[tokio::test]
+async fn the_configuration_view_labels_a_disabled_target_as_an_override() {
+    let rig = rig(true, true).await;
+    assert_eq!(rig.source_of("a").await, "file");
+    let id = rig.create(Some(&rig.ops), disable("a")).await.1["id"]
+        .as_i64()
+        .unwrap();
+    assert_eq!(rig.source_of("a").await, "override");
+    assert_eq!(
+        rig.source_of("b").await,
+        "file",
+        "only the disabled target is labelled"
+    );
+    rig.remove(Some(&rig.ops), id).await;
+    assert_eq!(rig.source_of("a").await, "file");
+
+    // Draining the only provider of `a` disables it in effect; `mixed` keeps pb and is not labelled.
+    rig.create(Some(&rig.ops), drain("pa")).await;
+    assert_eq!(rig.source_of("a").await, "override");
+    assert_eq!(rig.source_of("mixed").await, "file");
+}
+
+#[tokio::test]
+async fn overrides_are_counted_by_kind_with_the_age_of_the_oldest() {
+    let rig = rig(true, true).await;
+    let text = rig.metrics().await;
+    for kind in ["disable_target", "drain_provider", "pin_route"] {
+        assert!(
+            text.contains(&format!("humpyard_overrides_active{{kind=\"{kind}\"}} 0")),
+            "every kind is exported, at 0 when none is active: {text}"
+        );
+    }
+    assert!(
+        text.contains("humpyard_override_oldest_age_seconds 0"),
+        "{text}"
+    );
+
+    rig.create(Some(&rig.ops), disable("a")).await;
+    rig.advance(125);
+    rig.create(Some(&rig.ops), disable("b")).await;
+    rig.create(Some(&rig.ops), pin("duo", "b")).await;
+    let text = rig.metrics().await;
+    assert!(
+        text.contains("humpyard_overrides_active{kind=\"disable_target\"} 2"),
+        "{text}"
+    );
+    assert!(
+        text.contains("humpyard_overrides_active{kind=\"pin_route\"} 1"),
+        "{text}"
+    );
+    assert!(
+        text.contains("humpyard_override_oldest_age_seconds 125"),
+        "the oldest was created 125 s ago: {text}"
     );
 }
