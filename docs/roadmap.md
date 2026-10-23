@@ -4,7 +4,7 @@ What has shipped, what is being built, and what comes next, at a glance. The det
 lives in the [component status table](architecture.md#component-status), the OpenSpec change named
 in it, and the [decision records](adr/README.md). Update this page in the same PR as the change.
 
-Last updated: 2026-10-21. Latest release: 0.12.0. Community: [Discord](https://discord.gg/qfTGr7KTfq) for questions and feedback; GitHub issues for bugs and requests.
+Last updated: 2026-10-22. Latest release: 0.12.0. Community: [Discord](https://discord.gg/qfTGr7KTfq) for questions and feedback; GitHub issues for bugs and requests.
 
 ## Shipped
 
@@ -34,6 +34,8 @@ Last updated: 2026-10-21. Latest release: 0.12.0. Community: [Discord](https://d
 | 0.11.0 | 2026-10-20 | `humpyard ctl`: a read-only client for a running gateway, local or remote (`status`, `models`, `health`, `stats`, `decisions`, `quota`, `explain`, `whoami`). The key comes only from an environment variable, redirects are never followed, plain HTTP is for loopback only, and exit codes tell a refusal (1) from an unreachable gateway (2). Also: a provider's `413 Request too large` is now `overflow` (ADR 0023, amended): the request moves to the next endpoint, pool member or guarded paid tail without counting against the endpoint's health, and the client gets the real 413 if nothing takes it |
 | 0.12.0 | 2026-10-21 | The effective configuration: `GET /v1/config` returns what the gateway is serving, secrets omitted, with each target's and route's source (`file` or `generated`), the pool routes' resolved members and the config fingerprint; a key reads it only with `read_config = true`. The fingerprint is also the metric `humpyard_config_info`, `check-config` prints it, and `humpyard ctl config [--fingerprint]` shows it, so a repository can be compared with a running gateway. Also: `rustls-webpki` and `webpki-root-certs` updated for RUSTSEC-2026-0382 (certificate paths through distrusted emSign intermediates) |
 
+Merged since 0.12.0, not yet released: `humpyard init --out -` prints the configuration to standard output (progress, the one-time key and the test reply go to standard error), so it can be piped, for example into `kubectl create configmap`.
+
 ## Building now
 
 | Item | Why now | Spec |
@@ -45,6 +47,7 @@ Last updated: 2026-10-21. Latest release: 0.12.0. Community: [Discord](https://d
 | # | Item | Depends on | Spec |
 |---|---|---|---|
 | 1 | Rules that match on quota (`when.quota`), shown in `explain` and recorded on decisions, plus a pacing recipe | the measurement above | `add-quota-routing` step 3 |
+| 2 | Expiring runtime overrides: stop sending traffic to a target or provider, or pin a route, for a few hours with no config change and no redeploy (`disable_target`, `drain_provider`, `pin_route`; mandatory expiry, audited, subtract-only; the first `humpyard ctl` command that changes anything). | the effective configuration and `ctl` (shipped) | `add-runtime-overrides` (proposed) |
 | 3 | Session stickiness: find which clients send a usable session id, and whether a conversation can be pinned to a pool. Soft stickiness (keep a session on its previous target while it stays eligible) only if the switch report (shipped in 0.8.4) shows switching is costly | the switch report (shipped) | `add-auto-routing` 3.1 |
 | 3b | Session-level experiments (fast follow): a `random` route that splits per session, not per request, records the arm on the decision and compares cost, latency and errors per arm; quality comparison waits for quality signals | session analytics (shipped) | not yet proposed |
 | 3c | Free-pool routing, to replace ModelRelay: `Retry-After`, latency-ordered routes and strengths with pools are shipped in 0.9.0 (the `Retry-After` header itself waits for Switchyard#904); `migrate-modelrelay` shipped in 0.9.1; dead-model handling and model discovery (`models check` and `models sync`) shipped in 0.9.2; quality-aware ordering (declared `quality`, `min_quality`, `quality_weight`) shipped in 0.9.3; what remains is your own migration and then retirement. See [Replacing ModelRelay](#replacing-modelrelay) | capability eligibility and health skipping (shipped) | retire ModelRelay (operator) |
