@@ -158,8 +158,8 @@ A non-loopback listen address SHALL be refused unless the command also creates a
 - **WHEN** `--listen` is a non-loopback address
 - **THEN** a key with a budget is created and printed once, and the file includes its hash
 
-### Requirement: ctl is a read-only client for a running gateway
-The CLI SHALL provide `humpyard ctl` with the subcommands `status`, `models`, `health`, `stats`, `decisions`, `quota`, `explain` and `whoami`, each calling an existing gateway endpoint with the caller's key. It SHALL NOT change the gateway's configuration, keys or state, and SHALL print the response body unchanged with `--json`.
+### Requirement: ctl is a client for a running gateway
+The CLI SHALL provide `humpyard ctl` with the subcommands `status`, `models`, `health`, `stats`, `decisions`, `quota`, `explain`, `config`, `whoami` and `overrides`, each calling an existing gateway endpoint with the caller's key. Every subcommand except `overrides` SHALL be read-only and SHALL NOT change the gateway's configuration, keys or state; `overrides` MAY create and remove runtime overrides when the key may, and changes nothing else. It SHALL print the response body unchanged with `--json`.
 
 #### Scenario: A summary
 - **WHEN** `humpyard ctl status` is run against a reachable gateway
@@ -219,3 +219,18 @@ The command SHALL exit 0 when the gateway answers successfully, 1 when it answer
 #### Scenario: Matching files
 - **WHEN** `check-config` is run on the files a gateway loaded
 - **THEN** the fingerprint it prints equals the one the gateway reports
+
+### Requirement: ctl overrides manages overrides
+`humpyard ctl overrides` SHALL provide `list` (with `--history`), `add` (with exactly one of `--disable-target`, `--drain-provider` or `--pin ROUTE=TARGET`, a required `--reason`, and an optional `--for` duration) and `remove ID`. `add` SHALL print the override's id and expiry. A refusal because the key may not manage overrides SHALL exit 1.
+
+#### Scenario: Taking a target out for two hours
+- **WHEN** `humpyard ctl overrides add --disable-target T --reason "slow" --for 2h` is run with a permitted key
+- **THEN** it prints the new override's id and its expiry about two hours ahead
+
+#### Scenario: A reason is required
+- **WHEN** `add` is run without `--reason`
+- **THEN** it fails before sending anything
+
+#### Scenario: The history
+- **WHEN** `humpyard ctl overrides list --history` is run
+- **THEN** it also lists overrides that have ended (revoked or expired) from the last 30 days, each with its status

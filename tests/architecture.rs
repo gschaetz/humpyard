@@ -357,6 +357,28 @@ fn only_the_init_command_uses_the_init_module() {
     );
 }
 
+/// Only the pool (which skips drained endpoints) and the server (which plans) may read runtime overrides, so
+/// nothing else can come to change what a request is allowed to reach (`add-runtime-overrides`, ADR 0025).
+#[test]
+fn only_the_pool_and_the_server_read_overrides() {
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut offenders = Vec::new();
+    for path in rust_files(&src) {
+        let module = module_of(path.strip_prefix(&src).unwrap());
+        if matches!(module.as_str(), "overrides" | "pool" | "server" | "lib") {
+            continue;
+        }
+        let code = production_code(&fs::read_to_string(&path).unwrap());
+        if code.contains("crate::overrides") || code.contains("humpyard::overrides") {
+            offenders.push(path.display().to_string());
+        }
+    }
+    assert!(
+        offenders.is_empty(),
+        "these files read runtime overrides, which only the pool and the server may: {offenders:?}"
+    );
+}
+
 /// Only the `ctl` command (`main`) may use the remote-client module, so `serve` can never reach it.
 #[test]
 fn only_the_ctl_command_uses_the_ctl_module() {

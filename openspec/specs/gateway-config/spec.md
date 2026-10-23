@@ -178,3 +178,10 @@ A target MAY declare `quality`, a number from 0 to 1. A pool MAY set `min_qualit
 #### Scenario: Out of range
 - **WHEN** a quality is below 0 or above 1, or `min_quality` is
 - **THEN** the configuration is rejected naming the target or route
+
+### Requirement: Override settings and the manage_overrides key setting
+The configuration MAY set `[overrides] default_secs` (default 14400) and `max_secs` (default 86400, at most 604800), with the default not above the maximum, and a key MAY set `manage_overrides = true` (default false). Invalid values SHALL be rejected when the configuration loads.
+
+#### Scenario: A default above the maximum
+- **WHEN** `default_secs` is greater than `max_secs`
+- **THEN** the configuration is refused
