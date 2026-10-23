@@ -553,9 +553,10 @@ curl -s -H "Authorization: Bearer $OPS_KEY" http://127.0.0.1:8080/v1/overrides
 curl -s -X DELETE -H "Authorization: Bearer $OPS_KEY" http://127.0.0.1:8080/v1/overrides/1
 ```
 
-- **Kinds.** `disable_target` removes a target from every route. `pin_route` (with a `route` and a target) cuts
-  that route to the target; several pins on one route keep every target they name. (`drain_provider` is planned
-  and is refused for now.)
+- **Kinds.** `disable_target` removes a target from every route. `drain_provider` stops every endpoint of one
+  provider being tried: a target with endpoints on other providers keeps serving through those, and a target whose
+  endpoints are all on that provider is left out. `pin_route` (with a `route` and a target) cuts that route to the
+  target; several pins on one route keep every target they name.
 - **They only remove.** An override never adds a target, changes a price or widens a key. It is applied after
   [strict routes](#strict-routes) and [capabilities](#capabilities) and before [health](#endpoint-health), so a
   pin cannot reach a target a route's classes forbid, and health sees only what is left. A request, `explain`
@@ -567,8 +568,10 @@ curl -s -X DELETE -H "Authorization: Bearer $OPS_KEY" http://127.0.0.1:8080/v1/o
   `stale: true` in the list, and does nothing.
 - **Unlike health, this fails closed.** If overrides remove every target a route has left, the request is refused
   with 503 (`override_no_target`, before any upstream call) and the message says an override caused it. Disabling
-  the only target of a route means the route is down until the override expires or is removed, which restores
-  service at once. Health never refuses a request; an override is an operator's explicit instruction, so it does.
+  the only target of a route, or draining the only provider it has, means the route is down until the override
+  expires or is removed, which restores service at once. Health never refuses a request; an override is an
+  operator's explicit instruction, so it does. A drained endpoint is never brought back by health's fail-open
+  rule: when its target's other endpoints are all cooling down they are still tried, but the drained one is not.
 - **Who and where.** Overrides need a `[ledger]` (without one, creating is refused with 409, because nothing would
   survive a restart) and live on this instance only: with several replicas, each has its own. A gateway with no
   `[keys]` allows anyone to manage them, like the rest of the admin surface.

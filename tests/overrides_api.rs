@@ -1,12 +1,12 @@
 //! Runtime overrides over HTTP (spec: `gateway-api`, `request-routing`; `add-runtime-overrides` tasks 1.3 and
 //! 1.4): who may write, what may be named, and what a `disable_target` or `pin_route` does to a request.
-//! `drain_provider` is not available yet and is refused.
+//! and what a `drain_provider` does to the endpoints inside a target (part 2b).
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // test scaffolding
 
 mod common;
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering};
 use std::time::Duration;
 
 use axum::Router;
@@ -26,15 +26,22 @@ impl Clock for TestClock {
     }
 }
 
-struct Upstream(AtomicUsize);
+struct Upstream(AtomicUsize, AtomicBool);
 
-async fn completions(State(up): State<Arc<Upstream>>) -> impl IntoResponse {
+async fn completions(State(up): State<Arc<Upstream>>) -> axum::response::Response {
     up.0.fetch_add(1, Ordering::SeqCst);
-    axum::Json(chat_completion("m", "ok", Some(usage(10, 5))))
+    if up.1.load(Ordering::SeqCst) {
+        return (
+            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            axum::Json(json!({"error": {"message": "down"}})),
+        )
+            .into_response();
+    }
+    axum::Json(chat_completion("m", "ok", Some(usage(10, 5)))).into_response()
 }
 
 async fn upstream() -> (Arc<Upstream>, String) {
-    let up = Arc::new(Upstream(AtomicUsize::new(0)));
+    let up = Arc::new(Upstream(AtomicUsize::new(0), AtomicBool::new(false)));
     let app = Router::new()
         .route("/chat/completions", post(completions))
         .with_state(up.clone());
@@ -89,6 +96,10 @@ decision_retention_days = 0
 default_secs = 3600
 max_secs = 7200
 {keys_toml}
+[health]
+failure_threshold = 1
+cooldown_secs = 60
+max_cooldown_secs = 60
 [providers.pa]
 base_url = "{a_url}"
 api_key_env = "K"
@@ -110,6 +121,12 @@ endpoints = [{{ provider = "pb", model = "m" }}]
 [targets.c]
 class = "public"
 endpoints = [{{ provider = "pc", model = "m" }}]
+[targets.mixed]
+class = "private"
+endpoints = [{{ provider = "pa", model = "m" }}, {{ provider = "pb", model = "m" }}]
+[routes.via_mixed]
+type = "passthrough"
+targets = ["mixed"]
 [routes.duo]
 type = "passthrough"
 targets = ["a", "b"]
@@ -200,6 +217,24 @@ impl Rig {
             .unwrap_or("")
             .to_string();
         (response.status().as_u16(), target)
+    }
+
+    /// Like `ask`, but the provider that served it.
+    async fn ask_provider(&self, route: &str) -> (u16, String) {
+        let response = reqwest::Client::new()
+            .post(format!("{}/v1/chat/completions", self.url))
+            .bearer_auth(&self.app)
+            .json(&chat_request(route, false))
+            .send()
+            .await
+            .unwrap();
+        let provider = response
+            .headers()
+            .get("x-humpyard-provider")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .to_string();
+        (response.status().as_u16(), provider)
     }
 
     async fn explain(&self, route: &str) -> Value {
@@ -442,8 +477,12 @@ async fn an_override_must_be_bounded_and_name_something_real() {
             "a route on a disable",
         ),
         (
-            json!({"kind": "drain_provider", "subject": "pa", "reason": "r"}),
-            "drain is not available yet",
+            json!({"kind": "drain_provider", "subject": "ghost", "reason": "r"}),
+            "unknown provider",
+        ),
+        (
+            json!({"kind": "drain_provider", "subject": "pa", "route": "duo", "reason": "r"}),
+            "a route on a drain",
         ),
     ] {
         let (status, response) = rig.create(Some(&rig.ops), body).await;
@@ -482,4 +521,102 @@ async fn an_open_gateway_allows_overrides_to_anyone() {
     assert_eq!(status, 201, "{created}");
     assert_eq!(created["created_by"], "anonymous");
     assert_eq!(rig.ask("duo").await.1, "b");
+}
+
+fn drain(provider: &str) -> Value {
+    json!({"kind": "drain_provider", "subject": provider, "reason": "provider is down"})
+}
+
+#[tokio::test]
+async fn a_drained_provider_is_never_called_and_a_mixed_target_serves_through_the_others() {
+    let rig = rig(true, true).await;
+    assert_eq!(
+        rig.ask_provider("via_mixed").await,
+        (200, "pa".into()),
+        "pa is first"
+    );
+    let called = rig.a.0.load(Ordering::SeqCst);
+
+    let (status, created) = rig.create(Some(&rig.ops), drain("pa")).await;
+    assert_eq!(status, 201, "{created}");
+    for _ in 0..3 {
+        assert_eq!(rig.ask_provider("via_mixed").await, (200, "pb".into()));
+    }
+    assert_eq!(
+        rig.a.0.load(Ordering::SeqCst),
+        called,
+        "no endpoint of pa is called"
+    );
+
+    // A target whose every endpoint is on pa is left out, and the route moves on.
+    let before = rig.a.0.load(Ordering::SeqCst);
+    assert_eq!(rig.ask("duo").await, (200, "b".into()));
+    assert_eq!(rig.a.0.load(Ordering::SeqCst), before);
+}
+
+#[tokio::test]
+async fn a_drain_ends_at_its_expiry_and_when_removed() {
+    let rig = rig(true, true).await;
+    let mut body = drain("pa");
+    body["expires_in_secs"] = json!(600);
+    rig.create(Some(&rig.ops), body).await;
+    assert_eq!(rig.ask_provider("via_mixed").await.1, "pb");
+    rig.advance(601);
+    assert_eq!(
+        rig.ask_provider("via_mixed").await.1,
+        "pa",
+        "eligible again at the expiry"
+    );
+
+    let id = rig.create(Some(&rig.ops), drain("pa")).await.1["id"]
+        .as_i64()
+        .unwrap();
+    assert_eq!(rig.ask_provider("via_mixed").await.1, "pb");
+    rig.remove(Some(&rig.ops), id).await;
+    assert_eq!(
+        rig.ask_provider("via_mixed").await.1,
+        "pa",
+        "removal takes effect for the next request"
+    );
+}
+
+#[tokio::test]
+async fn draining_the_only_provider_a_route_has_refuses_the_request() {
+    let rig = rig(true, true).await;
+    let id = rig.create(Some(&rig.ops), drain("pa")).await.1["id"]
+        .as_i64()
+        .unwrap();
+    let before = rig.a.0.load(Ordering::SeqCst);
+    assert_eq!(rig.ask("lone").await.0, 503);
+    assert_eq!(
+        rig.a.0.load(Ordering::SeqCst),
+        before,
+        "refused before any upstream call"
+    );
+    assert_eq!(rig.decision("lone").await["outcome"], "override_no_target");
+    rig.remove(Some(&rig.ops), id).await;
+    assert_eq!(rig.ask("lone").await, (200, "a".into()));
+}
+
+#[tokio::test]
+async fn health_never_brings_a_drained_endpoint_back() {
+    // pa is drained and pb is failing, so the target's only usable endpoint is cooling down. Health fails
+    // open and tries it anyway; it must never fall back to the drained pa.
+    let rig = rig(true, true).await;
+    rig.b.1.store(true, Ordering::SeqCst);
+    rig.create(Some(&rig.ops), drain("pa")).await;
+    let before = rig.a.0.load(Ordering::SeqCst);
+    for _ in 0..3 {
+        let (status, _) = rig.ask_provider("via_mixed").await;
+        assert!(status >= 500, "pb is down and pa is drained: {status}");
+    }
+    assert!(
+        rig.b.0.load(Ordering::SeqCst) >= 3,
+        "the cooling endpoint is still tried"
+    );
+    assert_eq!(
+        rig.a.0.load(Ordering::SeqCst),
+        before,
+        "the drained endpoint never is"
+    );
 }

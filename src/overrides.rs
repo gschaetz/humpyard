@@ -6,9 +6,12 @@
 //! The store is a trait so a shared backend can replace the ledger-backed one without touching callers,
 //! as `KeyStore` does for keys.
 
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use parking_lot::RwLock;
 
+use crate::clock::Clock;
 use crate::config::OverridesConfig;
 use crate::ledger::{LedgerError, NewOverride, OverrideDb, OverrideRecord};
 
@@ -83,7 +86,7 @@ impl Override {
 
 /// Whether the overrides in `active` take `target` out of `route`'s candidates: it is disabled, or the route
 /// is pinned and no pin names it. Several pins on one route keep every target they name. A drained
-/// provider acts on endpoints, not on a whole target, so it is not decided here.
+/// provider acts on endpoints, not on a whole target, so it is not decided here (see [`drains`] and the pool).
 #[must_use]
 pub fn removes(active: &[Override], route: &str, target: &str) -> bool {
     let (mut pinned, mut kept) = (false, false);
@@ -98,6 +101,48 @@ pub fn removes(active: &[Override], route: &str, target: &str) -> bool {
         }
     }
     pinned && !kept
+}
+
+/// Whether the overrides in `active` drain `provider`.
+#[must_use]
+pub fn drains(active: &[Override], provider: &str) -> bool {
+    active
+        .iter()
+        .any(|o| o.kind == Kind::DrainProvider && o.subject == provider)
+}
+
+/// Which providers are drained right now. The pool asks this for every endpoint it is about to try, so it
+/// must be cheap; an override ending needs no other action because the answer follows the clock.
+pub trait Drains: Send + Sync {
+    fn drained(&self, provider: &str) -> bool;
+}
+
+/// Nothing is drained: a gateway without a ledger, which cannot hold overrides.
+pub struct NoDrains;
+
+impl Drains for NoDrains {
+    fn drained(&self, _provider: &str) -> bool {
+        false
+    }
+}
+
+/// The drains an [`OverrideStore`] holds, read against a clock.
+pub struct StoreDrains {
+    store: Arc<dyn OverrideStore>,
+    clock: Arc<dyn Clock>,
+}
+
+impl StoreDrains {
+    #[must_use]
+    pub fn new(store: Arc<dyn OverrideStore>, clock: Arc<dyn Clock>) -> Self {
+        Self { store, clock }
+    }
+}
+
+impl Drains for StoreDrains {
+    fn drained(&self, provider: &str) -> bool {
+        self.store.provider_drained(provider, self.clock.now_ms())
+    }
 }
 
 /// A request to create an override.
@@ -167,6 +212,10 @@ pub trait OverrideStore: Send + Sync {
 
     /// The overrides in force at `now_ms`. Cheap and synchronous: it runs on the request path.
     fn active(&self, now_ms: i64) -> Vec<Override>;
+
+    /// Whether a drain of `provider` is in force at `now_ms`. Runs once per endpoint tried, so it must not
+    /// allocate.
+    fn provider_drained(&self, provider: &str, now_ms: i64) -> bool;
 }
 
 /// Overrides kept in the ledger and held in memory while in force. State is per instance, like health and
@@ -265,5 +314,12 @@ impl OverrideStore for LedgerOverrides {
             .filter(|o| o.in_force(now_ms))
             .cloned()
             .collect()
+    }
+
+    fn provider_drained(&self, provider: &str, now_ms: i64) -> bool {
+        self.active
+            .read()
+            .iter()
+            .any(|o| o.kind == Kind::DrainProvider && o.subject == provider && o.in_force(now_ms))
     }
 }

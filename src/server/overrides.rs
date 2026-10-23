@@ -99,7 +99,12 @@ fn check_subject(
             .contains_key(subject)
             .then_some(())
             .ok_or_else(|| format!("target `{subject}` is not in the loaded configuration")),
-        Kind::DrainProvider => Err("`drain_provider` is not available in this version yet".into()),
+        Kind::DrainProvider => snap
+            .config
+            .providers
+            .contains_key(subject)
+            .then_some(())
+            .ok_or_else(|| format!("provider `{subject}` is not in the loaded configuration")),
         Kind::PinRoute => {
             let route = route.ok_or("`pin_route` names a route and a target")?;
             let spec = snap

@@ -15,6 +15,7 @@ use crate::clock::Clock;
 use crate::config::{Config, Endpoint, HealthConfig, Price, Provider};
 use crate::error::{TIMEOUT_MARKER, fallback_class, is_forbidden, is_too_large, is_unavailable};
 use crate::health::{Admission, Breaker, Snapshot, Transition};
+use crate::overrides::Drains;
 
 /// Response header naming the provider endpoint that served a request.
 pub const PROVIDER_HEADER: &str = "x-humpyard-provider";
@@ -83,6 +84,8 @@ pub struct Served {
 /// Serves one target by trying its endpoints in order.
 pub struct TargetClient {
     endpoints: Vec<EndpointClient>,
+    /// Providers a runtime override has drained; their endpoints are never tried (`add-runtime-overrides`).
+    drains: Arc<dyn Drains>,
 }
 
 /// Failures that another endpoint of the same target may not share. Other client errors (bad
@@ -168,9 +171,16 @@ impl RoutedLlmClient for TargetClient {
 impl TargetClient {
     /// The endpoints to try, in order: those not cooling down. When every endpoint is cooling
     /// down the target is still tried, soonest-to-reopen first, so health never denies service.
+    ///
+    /// An endpoint on a drained provider is left out first, so the rule above never brings it back: a drain is
+    /// an operator's instruction, health is only a guess.
     fn walk(&self) -> Vec<(usize, ProbeSlot<'_>)> {
+        let usable: Vec<usize> = (0..self.endpoints.len())
+            .filter(|&i| !self.drains.drained(&self.endpoints[i].provider))
+            .collect();
         let mut admitted = Vec::new();
-        for (index, endpoint) in self.endpoints.iter().enumerate() {
+        for &index in &usable {
+            let endpoint = &self.endpoints[index];
             match endpoint.breaker.admit() {
                 Admission::Allowed => admitted.push((index, ProbeSlot { breaker: None })),
                 Admission::Probe => admitted.push((
@@ -183,7 +193,7 @@ impl TargetClient {
             }
         }
         if admitted.is_empty() {
-            let mut all: Vec<usize> = (0..self.endpoints.len()).collect();
+            let mut all = usable;
             all.sort_by_key(|&i| self.endpoints[i].breaker.cooldown_remaining_ms());
             admitted = all
                 .into_iter()
@@ -205,6 +215,13 @@ impl TargetClient {
         let mut last_error = None;
         let mut walk = self.walk();
         let count = walk.len();
+        if count == 0 {
+            // Planning leaves out a target whose endpoints are all drained, so this is a drain that began
+            // while the request was in flight.
+            return Err(LlmClientError::General(
+                "every endpoint of this target is drained by a runtime override".into(),
+            ));
+        }
         for (position, (index, slot)) in walk.iter_mut().enumerate() {
             let endpoint = &self.endpoints[*index];
             let mut attempt = request.clone();
@@ -382,6 +399,7 @@ impl TargetClient {
 pub fn build(
     config: &Config,
     clock: &Arc<dyn Clock>,
+    drains: &Arc<dyn Drains>,
     previous: Option<&HashMap<ModelId, Arc<TargetClient>>>,
 ) -> Result<HashMap<ModelId, Arc<TargetClient>>, String> {
     let mut targets = HashMap::new();
@@ -406,7 +424,13 @@ pub fn build(
             })
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| format!("target `{id}`: {e}"))?;
-        targets.insert(key, Arc::new(TargetClient { endpoints: clients }));
+        targets.insert(
+            key,
+            Arc::new(TargetClient {
+                endpoints: clients,
+                drains: drains.clone(),
+            }),
+        );
     }
     Ok(targets)
 }

@@ -42,7 +42,7 @@ use crate::ledger::Incapable;
 use crate::ledger::{Decision, Ledger};
 use crate::metering::{Accounting, CALL_ID_HEADER, CallContext, StreamTemplate};
 use crate::num::f64_from_u64;
-use crate::overrides::{LedgerOverrides, Override, OverrideStore};
+use crate::overrides::{Drains, LedgerOverrides, NoDrains, Override, OverrideStore, StoreDrains};
 use crate::policy::{
     All, AllowAll, BudgetState, KeyContext, PolicyContext, RequestMeta, RoutingPolicy,
 };
@@ -93,6 +93,8 @@ pub struct AppState {
     quota: Arc<crate::quota::QuotaStore>,
     /// Runtime overrides, kept across reloads; none without a ledger, because nothing would survive a restart.
     overrides: Option<Arc<dyn OverrideStore>>,
+    /// The providers those overrides drain, read by every target's client; kept across reloads.
+    drains: Arc<dyn Drains>,
     /// Operational metrics, served at `/metrics` when enabled (ADR 0016).
     metrics: Arc<crate::metrics::Metrics>,
     /// The embedder's policy; it is composed with the budget policy of every snapshot.
@@ -362,6 +364,7 @@ fn try_reload(state: &AppState, path: &std::path::Path) -> Result<String, String
         config,
         &state.clock,
         &state.extra_policy,
+        &state.drains,
         Some(&current),
         fingerprint.clone(),
     )?;
@@ -434,10 +437,11 @@ impl Snapshot {
         config: Config,
         clock: &Arc<dyn Clock>,
         extra_policy: &Arc<dyn RoutingPolicy>,
+        drains: &Arc<dyn Drains>,
         previous: Option<&Snapshot>,
         fingerprint: String,
     ) -> Result<Self, String> {
-        let targets = pool::build(&config, clock, previous.map(|p| &p.targets))?;
+        let targets = pool::build(&config, clock, drains, previous.map(|p| &p.targets))?;
         let routes = Routes::build(&config, previous.map(|p| (&p.config, &p.routes)))?;
         let policy: Arc<dyn RoutingPolicy> = Arc::new(All(vec![
             extra_policy.clone(),
@@ -504,18 +508,33 @@ fn fingerprint(text: &str) -> String {
     hex::encode(Sha256::digest(text.as_bytes()))[..12].to_string()
 }
 
-/// The runtime-override store, which lives in the ledger; none without one.
+/// Whether every endpoint of `target` is on a provider the overrides drain, which takes the whole target out of
+/// a plan. With some endpoints left the target stays, and the pool skips the drained ones itself.
+fn fully_drained(snap: &Snapshot, target: &str, overrides: &[Override]) -> bool {
+    snap.config.targets.get(target).is_some_and(|endpoints| {
+        !endpoints.is_empty()
+            && endpoints
+                .iter()
+                .all(|e| crate::overrides::drains(overrides, &e.provider))
+    })
+}
+
+/// The runtime-override store, which lives in the ledger, and the view of its drains that the pool reads; the
+/// store is none, and nothing is drained, without a ledger.
 async fn open_overrides(
     ledger: Option<&Ledger>,
-    now_ms: i64,
-) -> Result<Option<Arc<dyn OverrideStore>>, String> {
+    clock: &Arc<dyn Clock>,
+) -> Result<(Option<Arc<dyn OverrideStore>>, Arc<dyn Drains>), String> {
     let Some(ledger) = ledger else {
-        return Ok(None);
+        return Ok((None, Arc::new(NoDrains)));
     };
-    let store = LedgerOverrides::open(ledger.override_db(), now_ms)
-        .await
-        .map_err(|e| e.to_string())?;
-    Ok(Some(Arc::new(store)))
+    let store: Arc<dyn OverrideStore> = Arc::new(
+        LedgerOverrides::open(ledger.override_db(), clock.now_ms())
+            .await
+            .map_err(|e| e.to_string())?,
+    );
+    let drains = Arc::new(StoreDrains::new(store.clone(), clock.clone()));
+    Ok((Some(store), drains))
 }
 
 async fn build(config: Config, options: Options, fingerprint: String) -> Result<Built, String> {
@@ -533,7 +552,7 @@ async fn build(config: Config, options: Options, fingerprint: String) -> Result<
         ),
         None => None,
     };
-    let overrides = open_overrides(ledger.as_ref(), clock.now_ms()).await?;
+    let (overrides, drains) = open_overrides(ledger.as_ref(), &clock).await?;
     let tracker = (!config.keys.is_empty())
         .then(|| Arc::new(BudgetTracker::new(clock.clone(), &config.budget)));
     if let (Some(tracker), Some(ledger)) = (&tracker, &ledger) {
@@ -548,7 +567,7 @@ async fn build(config: Config, options: Options, fingerprint: String) -> Result<
     let accounting = Arc::new(
         Accounting::new(ledger, clock.clone(), tracker.clone()).with_metrics(metrics.clone()),
     );
-    let snapshot = Snapshot::build(config, &clock, &extra_policy, None, fingerprint)?;
+    let snapshot = Snapshot::build(config, &clock, &extra_policy, &drains, None, fingerprint)?;
     let (hard_stop_tx, hard_stop) = watch::channel(false);
     let state = Arc::new(AppState {
         snapshot: RwLock::new(Arc::new(snapshot)),
@@ -558,6 +577,7 @@ async fn build(config: Config, options: Options, fingerprint: String) -> Result<
         clock: clock.clone(),
         quota: Arc::new(crate::quota::QuotaStore::default()),
         overrides,
+        drains,
         metrics,
         extra_policy,
         reload: Mutex::new(ReloadStatus::default()),
@@ -1557,8 +1577,11 @@ fn plan_route(
     // Runtime overrides come next, after strictness and capabilities and before health, so health and a
     // guarded tail see the reduced set. They only remove candidates.
     let capable = |target: &str| base(target) && !incapable.iter().any(|i| i.target == target);
-    let eligible =
-        |target: &str| capable(target) && !crate::overrides::removes(overrides, model, target);
+    let eligible = |target: &str| {
+        capable(target)
+            && !crate::overrides::removes(overrides, model, target)
+            && !fully_drained(snap, target, overrides)
+    };
     // The cold targets among those capable, in the route's order.
     let mut cold: Vec<String> = Vec::new();
     if snap.config.health.skip_cold_targets
