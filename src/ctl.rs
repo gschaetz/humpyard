@@ -2,7 +2,7 @@
 //!
 //! Every subcommand is one request to an endpoint the gateway already serves, made with the caller's own key, so
 //! a key sees exactly what `curl` would show it. All of them only read, except `overrides`, which can also add
-//! and remove runtime overrides when the key may (see [`overrides`]). The key is read only from an environment variable, is never
+//! and remove runtime overrides when the key may (see the `overrides` module). The key is read only from an environment variable, is never
 //! printed, and is never sent where it could be read in transit (plain `http://` only to this machine) or
 //! carried elsewhere (redirects are not followed). Only the `ctl` command (`main`) may use this module.
 
