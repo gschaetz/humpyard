@@ -807,3 +807,56 @@ async fn overrides_are_counted_by_kind_with_the_age_of_the_oldest() {
         "the oldest was created 125 s ago: {text}"
     );
 }
+
+#[tokio::test]
+async fn the_history_lists_what_ended_and_how_and_the_list_shows_time_left() {
+    let rig = rig(true, true).await;
+    let mut short = disable("a");
+    short["expires_in_secs"] = json!(600);
+    rig.create(Some(&rig.ops), short).await;
+    let revoked = rig.create(Some(&rig.ops), disable("b")).await.1["id"]
+        .as_i64()
+        .unwrap();
+    rig.create(Some(&rig.ops), pin("duo", "a")).await;
+    rig.remove(Some(&rig.ops), revoked).await;
+    rig.advance(601);
+
+    // In force: only the pin; it shows how long it has left (the 3600 s default, less the 601 s that passed).
+    let (_, now) = rig.list(Some(&rig.ops)).await;
+    assert_eq!(now["overrides"].as_array().unwrap().len(), 1);
+    assert_eq!(now["overrides"][0]["kind"], "pin_route");
+    assert_eq!(now["overrides"][0]["expires_in_secs"], 3600 - 601);
+
+    // History: newest first, with how each one stands.
+    let url = format!("{}/v1/overrides?history=true", rig.url);
+    let history: Value = reqwest::Client::new()
+        .get(&url)
+        .bearer_auth(&rig.ops)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let rows = history["overrides"].as_array().unwrap();
+    let states: Vec<(&str, i64)> = rows
+        .iter()
+        .map(|r| (r["status"].as_str().unwrap(), r["id"].as_i64().unwrap()))
+        .collect();
+    assert_eq!(
+        states,
+        [("active", 3), ("revoked", 2), ("expired", 1)],
+        "{history}"
+    );
+    assert_eq!(
+        rows[2]["ended_ms"],
+        1_000_000 + 600_000,
+        "it ended when it ran out"
+    );
+    assert_eq!(rows[2]["expires_in_secs"], 0);
+    assert!(
+        rows[1]["ended_ms"].as_i64().is_some(),
+        "a revoked one says when"
+    );
+    assert!(rows[0]["ended_ms"].is_null());
+}

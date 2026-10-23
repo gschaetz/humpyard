@@ -91,6 +91,18 @@ impl OverrideDb {
         Ok(active(&self.pool, now_ms).await?)
     }
 
+    /// Overrides created at or after `since_ms`, in force or ended, newest first, at most `limit`.
+    ///
+    /// # Errors
+    /// The database refuses the read.
+    pub async fn recent(
+        &self,
+        since_ms: i64,
+        limit: i64,
+    ) -> Result<Vec<OverrideRecord>, super::LedgerError> {
+        Ok(recent(&self.pool, since_ms, limit).await?)
+    }
+
     /// The history of one override, oldest first.
     ///
     /// # Errors
@@ -239,21 +251,7 @@ pub(super) async fn active(
     .bind(now_ms)
     .fetch_all(pool)
     .await?;
-    rows.iter()
-        .map(|r| {
-            Ok(OverrideRecord {
-                id: r.try_get("id")?,
-                kind: r.try_get("kind")?,
-                subject: r.try_get("subject")?,
-                route: r.try_get("route")?,
-                reason: r.try_get("reason")?,
-                created_ms: r.try_get("created_ms")?,
-                expires_ms: r.try_get("expires_ms")?,
-                created_by: r.try_get("created_by")?,
-                revoked_ms: r.try_get("revoked_ms")?,
-            })
-        })
-        .collect()
+    rows.iter().map(row_to_record).collect()
 }
 
 /// The history of one override, oldest first.
@@ -277,6 +275,37 @@ pub(super) async fn audit(
             })
         })
         .collect()
+}
+
+/// Overrides created at or after `since_ms`, in force or ended, newest first, at most `limit`.
+pub(super) async fn recent(
+    pool: &SqlitePool,
+    since_ms: i64,
+    limit: i64,
+) -> Result<Vec<OverrideRecord>, sqlx::Error> {
+    let rows = sqlx::query(
+        "SELECT id, kind, subject, route, reason, created_ms, expires_ms, created_by, revoked_ms \
+         FROM overrides WHERE created_ms >= ?1 ORDER BY id DESC LIMIT ?2",
+    )
+    .bind(since_ms)
+    .bind(limit)
+    .fetch_all(pool)
+    .await?;
+    rows.iter().map(row_to_record).collect()
+}
+
+fn row_to_record(r: &sqlx::sqlite::SqliteRow) -> Result<OverrideRecord, sqlx::Error> {
+    Ok(OverrideRecord {
+        id: r.try_get("id")?,
+        kind: r.try_get("kind")?,
+        subject: r.try_get("subject")?,
+        route: r.try_get("route")?,
+        reason: r.try_get("reason")?,
+        created_ms: r.try_get("created_ms")?,
+        expires_ms: r.try_get("expires_ms")?,
+        created_by: r.try_get("created_by")?,
+        revoked_ms: r.try_get("revoked_ms")?,
+    })
 }
 
 /// Deletes audit rows older than `before_ms`, and the overrides that ended before it. An override still in

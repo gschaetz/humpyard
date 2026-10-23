@@ -5,10 +5,11 @@
 //! Subjects are checked against the configuration being served, so an override can never name something that
 //! does not exist, and a pin can never add reach.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use axum::Json;
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
@@ -17,7 +18,7 @@ use switchyard_protocol::WireFormat;
 
 use super::{AppState, Snapshot, authenticate, class_allows};
 use crate::auth::KeyRecord;
-use crate::overrides::{Create, Kind, Override, OverrideError, OverrideStore};
+use crate::overrides::{Create, Kind, Override, OverrideError, OverrideStore, Past, Status};
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -55,7 +56,7 @@ fn may_list(caller: Option<&KeyRecord>) -> bool {
     caller.is_none_or(|key| key.manage_overrides || key.read_config)
 }
 
-fn override_json(o: &Override, stale: bool) -> Value {
+fn override_json(o: &Override, stale: bool, now_ms: i64) -> Value {
     json!({
         "id": o.id,
         "kind": o.kind.as_str(),
@@ -64,6 +65,7 @@ fn override_json(o: &Override, stale: bool) -> Value {
         "reason": o.reason,
         "created_ms": o.created_ms,
         "expires_ms": o.expires_ms,
+        "expires_in_secs": (o.expires_ms.saturating_sub(now_ms) / 1000).max(0),
         "created_by": o.created_by,
         "stale": stale,
     })
@@ -192,7 +194,12 @@ pub(super) async fn create_override(
                 expires_ms = created.expires_ms,
                 "override created"
             );
-            (StatusCode::CREATED, Json(override_json(&created, false))).into_response()
+            let now_ms = state.clock.now_ms();
+            (
+                StatusCode::CREATED,
+                Json(override_json(&created, false, now_ms)),
+            )
+                .into_response()
         }
         Err(OverrideError::Ledger(error)) => {
             tracing::error!(%error, "could not store an override");
@@ -207,9 +214,25 @@ pub(super) async fn create_override(
     }
 }
 
+/// How far back `?history=true` looks, and the most rows it returns.
+const HISTORY_WINDOW_MS: i64 = 30 * 24 * 3_600 * 1_000;
+const HISTORY_LIMIT: i64 = 200;
+
+fn past_json(p: &Past, snap: &Snapshot, now_ms: i64) -> Value {
+    let mut v = override_json(
+        &p.entry,
+        p.status == Status::Active && is_stale(snap, &p.entry),
+        now_ms,
+    );
+    v["status"] = json!(p.status.as_str());
+    v["ended_ms"] = json!(p.ended_ms);
+    v
+}
+
 pub(super) async fn list_overrides(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
+    Query(params): Query<HashMap<String, String>>,
 ) -> Response {
     let snap = state.snapshot();
     let caller = match authenticate(&snap, &headers).await {
@@ -219,11 +242,32 @@ pub(super) async fn list_overrides(
     if !may_list(caller.as_ref()) {
         return not_manageable();
     }
+    let now_ms = state.clock.now_ms();
+    if params
+        .get("history")
+        .is_some_and(|v| v == "true" || v == "1")
+    {
+        // `?history=true`: every override of the last 30 days, in force or ended, newest first.
+        // Notice any that have run out first, so their expiry is audited before they are listed.
+        state.active_overrides().await;
+        let past = match &state.overrides {
+            Some(store) => store
+                .history(now_ms, now_ms - HISTORY_WINDOW_MS, HISTORY_LIMIT)
+                .await
+                .unwrap_or_else(|error| {
+                    tracing::error!(%error, "could not read the override history");
+                    Vec::new()
+                }),
+            None => Vec::new(),
+        };
+        let rows: Vec<Value> = past.iter().map(|p| past_json(p, &snap, now_ms)).collect();
+        return Json(json!({"overrides": rows})).into_response();
+    }
     let overrides: Vec<Value> = state
         .active_overrides()
         .await
         .iter()
-        .map(|o| override_json(o, is_stale(&snap, o)))
+        .map(|o| override_json(o, is_stale(&snap, o), now_ms))
         .collect();
     Json(json!({"overrides": overrides})).into_response()
 }

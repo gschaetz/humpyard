@@ -134,6 +134,50 @@ enum CtlCommand {
     },
     /// Your key's limits, spend and budget state.
     Whoami,
+    /// Runtime overrides: temporarily stop using a target or a provider, or cut a route to one target. Changing
+    /// them needs a key with `manage_overrides = true`; listing needs that or `read_config`.
+    Overrides {
+        #[command(subcommand)]
+        command: OverridesCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum OverridesCommand {
+    /// The overrides in force.
+    List {
+        /// Also show the ones that have ended, from the last 30 days.
+        #[arg(long)]
+        history: bool,
+    },
+    /// Add an override. It always expires.
+    Add(OverrideAddArgs),
+    /// Remove an override that is still in force.
+    Remove {
+        /// The id `add` or `list` printed.
+        id: i64,
+    },
+}
+
+#[derive(clap::Args)]
+#[command(group(clap::ArgGroup::new("what").required(true).multiple(false)
+    .args(["disable_target", "drain_provider", "pin"])))]
+struct OverrideAddArgs {
+    /// Stop using this target for every route.
+    #[arg(long)]
+    disable_target: Option<String>,
+    /// Stop using every endpoint of this provider.
+    #[arg(long)]
+    drain_provider: Option<String>,
+    /// Cut a route to one of its targets, as ROUTE=TARGET.
+    #[arg(long, value_name = "ROUTE=TARGET")]
+    pin: Option<String>,
+    /// Why, for the audit trail.
+    #[arg(long)]
+    reason: String,
+    /// How long it lasts, like 90s, 30m, 2h or 1d. The gateway's default (4h unless configured) if omitted.
+    #[arg(long = "for", value_name = "DURATION")]
+    duration: Option<String>,
 }
 
 #[derive(clap::Args)]
@@ -669,7 +713,7 @@ async fn main() -> ExitCode {
 }
 
 async fn ctl_command(args: CtlArgs) -> ExitCode {
-    use humpyard::ctl::{Command as C, Settings};
+    use humpyard::ctl::{Command as C, OverridesCommand as O, Settings};
     let settings = Settings {
         url: args.url,
         key_env: args.key_env,
@@ -722,6 +766,17 @@ async fn ctl_command(args: CtlArgs) -> ExitCode {
             subagent,
             body_file: body,
         },
+        CtlCommand::Overrides { command } => C::Overrides(match command {
+            OverridesCommand::List { history } => O::List { history },
+            OverridesCommand::Add(a) => O::Add {
+                disable_target: a.disable_target,
+                drain_provider: a.drain_provider,
+                pin: a.pin,
+                reason: a.reason,
+                duration: a.duration,
+            },
+            OverridesCommand::Remove { id } => O::Remove { id },
+        }),
     };
     let env = |name: &str| std::env::var(name).ok();
     let result = match humpyard::ctl::connect(&settings, &env) {

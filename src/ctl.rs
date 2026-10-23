@@ -1,7 +1,8 @@
-//! `humpyard ctl`: a read-only client for a running gateway, local or remote (spec: `cli`).
+//! `humpyard ctl`: a client for a running gateway, local or remote (spec: `cli`).
 //!
 //! Every subcommand is one request to an endpoint the gateway already serves, made with the caller's own key, so
-//! a key sees exactly what `curl` would show it. The key is read only from an environment variable, is never
+//! a key sees exactly what `curl` would show it. All of them only read, except `overrides`, which can also add
+//! and remove runtime overrides when the key may (see [`overrides`]). The key is read only from an environment variable, is never
 //! printed, and is never sent where it could be read in transit (plain `http://` only to this machine) or
 //! carried elsewhere (redirects are not followed). Only the `ctl` command (`main`) may use this module.
 
@@ -12,6 +13,10 @@ use std::time::Duration;
 
 use reqwest::{StatusCode, Url};
 use serde_json::{Value, json};
+
+mod overrides;
+
+pub use overrides::OverridesCommand;
 
 const TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -79,6 +84,8 @@ pub enum Command {
         body_file: Option<String>,
     },
     Whoami,
+    /// Runtime overrides: list, add and remove.
+    Overrides(OverridesCommand),
 }
 
 /// A checked address and key.
@@ -205,6 +212,11 @@ impl Gateway {
     async fn post(&self, path: &str, body: &Value) -> Result<String, Failure> {
         let url = self.url(path)?;
         self.send(self.client.post(url).json(body)).await
+    }
+
+    async fn delete(&self, path: &str) -> Result<String, Failure> {
+        let url = self.url(path)?;
+        self.send(self.client.delete(url)).await
     }
 }
 
@@ -541,6 +553,9 @@ pub async fn run(
     };
     let (path, params, post_body): (&str, Vec<(&str, String)>, Option<Value>) = match &command {
         Command::Status => return status(gateway, json_output, out).await,
+        Command::Overrides(overrides) => {
+            return overrides::run(gateway, overrides, json_output, out).await;
+        }
         Command::Models => ("/v1/models", vec![], None),
         Command::Health => ("/v1/health", vec![], None),
         Command::Quota => ("/v1/quota", vec![], None),

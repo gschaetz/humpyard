@@ -166,6 +166,34 @@ impl Drains for StoreDrains {
     }
 }
 
+/// How an override stands: in force, removed by someone, or run out.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Status {
+    Active,
+    Revoked,
+    Expired,
+}
+
+impl Status {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Active => "active",
+            Self::Revoked => "revoked",
+            Self::Expired => "expired",
+        }
+    }
+}
+
+/// An override as the history lists it: still in force or ended, and when it ended.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Past {
+    pub entry: Override,
+    pub status: Status,
+    /// When it was revoked or ran out; none while it is in force.
+    pub ended_ms: Option<i64>,
+}
+
 /// A request to create an override.
 #[derive(Clone, Debug)]
 pub struct Create {
@@ -233,6 +261,14 @@ pub trait OverrideStore: Send + Sync {
 
     /// The overrides in force at `now_ms`. Cheap and synchronous: it runs on the request path.
     fn active(&self, now_ms: i64) -> Vec<Override>;
+
+    /// Overrides created at or after `since_ms`, in force or ended, newest first, at most `limit`.
+    async fn history(
+        &self,
+        now_ms: i64,
+        since_ms: i64,
+        limit: i64,
+    ) -> Result<Vec<Past>, OverrideError>;
 
     /// Whether a drain of `provider` is in force at `now_ms`. Runs once per endpoint tried, so it must not
     /// allocate.
@@ -335,6 +371,32 @@ impl OverrideStore for LedgerOverrides {
             .filter(|o| o.in_force(now_ms))
             .cloned()
             .collect()
+    }
+
+    async fn history(
+        &self,
+        now_ms: i64,
+        since_ms: i64,
+        limit: i64,
+    ) -> Result<Vec<Past>, OverrideError> {
+        let records = self.db.recent(since_ms, limit).await?;
+        Ok(records
+            .into_iter()
+            .filter_map(|record| {
+                let (status, ended_ms) = match record.revoked_ms {
+                    Some(at) => (Status::Revoked, Some(at)),
+                    None if record.expires_ms <= now_ms => {
+                        (Status::Expired, Some(record.expires_ms))
+                    }
+                    None => (Status::Active, None),
+                };
+                Some(Past {
+                    entry: Override::from_record(record)?,
+                    status,
+                    ended_ms,
+                })
+            })
+            .collect())
     }
 
     fn provider_drained(&self, provider: &str, now_ms: i64) -> bool {

@@ -3,7 +3,7 @@
 ## ADDED Requirements
 
 ### Requirement: Overrides are created, listed and removed through the API
-The gateway SHALL provide `POST /v1/overrides`, `GET /v1/overrides` and `DELETE /v1/overrides/{id}`. A create SHALL name a kind (`disable_target`, `drain_provider` or `pin_route`), its subject, a reason and optionally `expires_in_secs`; it SHALL return the override with its id and expiry. A removal SHALL take effect for the next request.
+The gateway SHALL provide `POST /v1/overrides`, `GET /v1/overrides` (with `?history=true`, which also lists the overrides of the last 30 days that have ended, each with its status and when it ended) and `DELETE /v1/overrides/{id}`. A create SHALL name a kind (`disable_target`, `drain_provider` or `pin_route`), its subject, a reason and optionally `expires_in_secs`; it SHALL return the override with its id and expiry. A removal SHALL take effect for the next request.
 
 #### Scenario: Create and list
 - **WHEN** a key with `manage_overrides` creates a `disable_target` for a target and then lists overrides
