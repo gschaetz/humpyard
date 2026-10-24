@@ -138,6 +138,37 @@ alone, 400; both removed, 200 with a tool call. Add only fields a provider rejec
 for example, would stop that provider reporting usage. Google also wraps its errors in an array, which the
 gateway reads, so the message names the field.
 
+## Gemini 3.x wants a thought signature on replayed tool calls
+
+(found 2026-10-23, Codex CLI 0.163.0, after `drop_fields` fixed the first request)
+
+Gemini 3.x's OpenAI-compatible endpoint returns a signature with each tool call,
+`tool_calls[].extra_content.google.thought_signature`, and answers HTTP 400 to the next turn when a replayed
+function call lacks it: `Function call is missing a thought_signature in functionCall parts`. The first request of
+a Codex session passed and the second, carrying the tool result, failed. Checked by replaying a captured request
+straight to Gemini 3.6 Flash:
+
+| second turn sends | result |
+|---|---|
+| no `extra_content` | 400 |
+| the signature Gemini returned | 200 |
+| `skip_thought_signature_validator` | 200 |
+
+The gateway cannot carry the real signature (the translation has no place for provider data on a tool call, and a
+Responses client has nowhere to hold it), so set Google's documented placeholder, which skips the validation; it may cost a
+little quality on later turns:
+
+```toml
+[providers.googleai]
+base_url = "https://generativelanguage.googleapis.com/v1beta/openai"
+api_key_env = "GOOGLE_AI_KEY"
+drop_fields = ["store", "prompt_cache_key"]
+tool_call_extra_content = { google = { thought_signature = "skip_thought_signature_validator" } }
+```
+
+The table is added as `extra_content` to every replayed assistant tool call sent to that provider, and nothing
+else changes; providers without the setting are untouched.
+
 ## Not yet verified
 
 A real provider's own 429 or 5xx, Responses `previous_response_id`, and long-running streams near the
