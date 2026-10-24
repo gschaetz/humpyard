@@ -387,7 +387,7 @@ pub fn render_stats(v: &Value) -> String {
         }
     );
     if rows.is_empty() {
-        out.push_str("no requests in this window\n");
+        out.push_str("no requests from this key in this window (stats show only the requests made with your key)\n");
         return out;
     }
     out.push_str(&table(
@@ -734,6 +734,13 @@ mod tests {
     fn exit_codes_follow_the_failure() {
         assert_eq!(Failure::Refused("x".into()).exit_code(), 1);
         assert_eq!(Failure::Unusable("x".into()).exit_code(), 2);
+    }
+
+    #[test]
+    fn empty_stats_say_they_are_scoped_to_the_key() {
+        let text =
+            render_stats(&json!({"group_by": "route", "window": {"seconds": 60}, "data": []}));
+        assert!(text.contains("no requests from this key"), "{text}");
     }
 
     #[test]
