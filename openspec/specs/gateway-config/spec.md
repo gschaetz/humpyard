@@ -185,3 +185,14 @@ The configuration MAY set `[overrides] default_secs` (default 14400) and `max_se
 #### Scenario: A default above the maximum
 - **WHEN** `default_secs` is greater than `max_secs`
 - **THEN** the configuration is refused
+
+### Requirement: A provider may name fields to drop
+A provider MAY set `drop_fields` to a list of non-empty strings. An empty name SHALL be refused when the configuration loads, and the absence of the setting SHALL mean no fields are removed.
+
+#### Scenario: A valid list
+- **WHEN** a provider sets `drop_fields = ["store", "prompt_cache_key"]`
+- **THEN** the configuration loads
+
+#### Scenario: An empty name
+- **WHEN** a provider's `drop_fields` contains an empty string
+- **THEN** the configuration is refused naming the provider

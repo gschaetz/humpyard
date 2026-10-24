@@ -529,3 +529,32 @@ fn manage_overrides_is_off_unless_a_key_sets_it() {
         "the two settings are independent"
     );
 }
+
+#[test]
+fn provider_drop_fields_load() {
+    let text = VALID.replacen(
+        "api_key_env = \"GROQ_KEY\"",
+        "api_key_env = \"GROQ_KEY\"\ndrop_fields = [\"store\", \"prompt_cache_key\"]",
+        1,
+    );
+    let config = Config::from_toml(&text, env).unwrap();
+    assert_eq!(
+        config.providers["groq"].drop_fields,
+        ["store", "prompt_cache_key"]
+    );
+    assert_eq!(config.providers["local"].drop_fields, Vec::<String>::new());
+}
+
+#[test]
+fn an_empty_drop_field_name_is_rejected() {
+    let text = VALID.replacen(
+        "api_key_env = \"GROQ_KEY\"",
+        "api_key_env = \"GROQ_KEY\"\ndrop_fields = [\"store\", \"\"]",
+        1,
+    );
+    let message = err(&text);
+    assert!(
+        message.contains("groq") && message.contains("drop_fields"),
+        "{message}"
+    );
+}
