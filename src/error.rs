@@ -158,6 +158,15 @@ fn model_gone(body: &str) -> bool {
     })
 }
 
+/// Whether `error` is a 400 or 422 that is not a missing-model answer: this provider rejects the request, which
+/// another provider may accept and which says nothing about this endpoint's health (ADR 0026).
+#[must_use]
+pub fn is_rejected(error: &LlmClientError) -> bool {
+    matches!(error, LlmClientError::UpstreamHttp { status, body }
+        if (*status == StatusCode::BAD_REQUEST || *status == StatusCode::UNPROCESSABLE_ENTITY)
+            && !is_unavailable_answer(*status, body))
+}
+
 /// Whether `error` says the endpoint cannot serve (404, 401, or a missing-model code), for the pool's
 /// failover within a target and its health count.
 #[must_use]
@@ -200,6 +209,8 @@ pub fn fallback_class(error: &LlmClientError) -> Option<FallbackClass> {
                 Some(FallbackClass::Unavailable)
             } else if *status == StatusCode::REQUEST_TIMEOUT || status.is_server_error() {
                 Some(FallbackClass::ServerError)
+            } else if is_rejected(error) {
+                Some(FallbackClass::Rejected)
             } else {
                 None
             }
@@ -441,7 +452,11 @@ mod tests {
             fallback_class(&http(504, TIMEOUT_MARKER)),
             Some(FallbackClass::Timeout)
         );
-        assert_eq!(fallback_class(&http(400, "")), None);
+        // A 400 is a rejected request (ADR 0026): another provider may accept it.
+        assert_eq!(
+            fallback_class(&http(400, "")),
+            Some(FallbackClass::Rejected)
+        );
         // A 404 now describes the endpoint (the model is gone there), ADR 0023; see the unavailable tests.
         assert_eq!(
             fallback_class(&http(404, "")),
@@ -533,7 +548,8 @@ mod tests {
                 "{status} {body}"
             );
         }
-        // Request errors are not, and an unrelated 400 code is not.
+        // A request the provider rejects is `rejected`, not `unavailable`, and an unrelated 400 code is
+        // not a missing model (ADR 0026).
         for (status, body) in [
             (400, ""),
             (400, r#"{"error":{"code":"invalid_request"}}"#),
@@ -542,10 +558,16 @@ mod tests {
         ] {
             assert_eq!(
                 fallback_class(&answer(status, body)),
-                None,
+                Some(FallbackClass::Rejected),
                 "{status} {body}"
             );
+            assert!(is_rejected(&answer(status, body)), "{status} {body}");
         }
+        assert!(
+            !is_rejected(&answer(400, gone)),
+            "a model-gone 400 is unavailable"
+        );
+        assert!(!is_rejected(&answer(404, "")));
         // 403 keeps its own class.
         assert_eq!(
             fallback_class(&answer(403, "")),
@@ -554,6 +576,28 @@ mod tests {
         assert!(is_unavailable(&answer(404, "")));
         assert!(!is_unavailable(&answer(403, "")));
         assert!(is_forbidden(&answer(403, "")));
+    }
+
+    /// Pins which client errors across 400 to 451 move a pool on and as what, so a status added later is a
+    /// visible decision (ADR 0023, ADR 0026).
+    #[test]
+    fn the_client_errors_that_move_a_pool_on_are_pinned() {
+        let expected = |status: u16| match status {
+            400 | 422 => Some(FallbackClass::Rejected),
+            401 | 402 | 404 | 410 => Some(FallbackClass::Unavailable),
+            403 => Some(FallbackClass::Forbidden),
+            408 => Some(FallbackClass::ServerError),
+            413 => Some(FallbackClass::Overflow),
+            429 => Some(FallbackClass::RateLimit),
+            _ => None,
+        };
+        for status in 400..=451 {
+            assert_eq!(
+                fallback_class(&answer(status, "")),
+                expected(status),
+                "status {status}"
+            );
+        }
     }
 
     #[test]

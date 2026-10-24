@@ -20,6 +20,10 @@ use crate::budget::BudgetTracker;
 use crate::clock::Clock;
 use crate::config::{FallbackClass, FallbackOn, Price};
 use crate::error::{fallback_class, is_too_large, relabel_unavailable, stop_fallback};
+
+/// How many different providers may reject one request before the gateway stops moving it on and returns the
+/// last rejection: a request wrong on this many providers is the request's fault (ADR 0026).
+const REJECTED_PROVIDER_LIMIT: usize = 3;
 use crate::estimate::tokens_for_bytes;
 use crate::latency::Latency;
 use crate::ledger::{Attempt, Entry, Kind, Ledger};
@@ -401,33 +405,56 @@ struct Metered {
     fallback: FallbackOn,
 }
 
+impl Metered {
+    /// Whether enough different providers have rejected this request (this attempt included) to stop.
+    fn rejected_bound_reached(&self) -> bool {
+        let attempts = self.ctx.attempts.lock();
+        let providers: std::collections::BTreeSet<&str> = attempts
+            .iter()
+            .filter(|a| a.outcome == FallbackClass::Rejected.as_str())
+            .map(|a| a.provider.as_str())
+            .collect();
+        providers.len() >= REJECTED_PROVIDER_LIMIT
+    }
+}
+
 #[async_trait]
 impl RoutedLlmClient for Metered {
     async fn call(&self, request: Request) -> Result<Response, LlmClientError> {
         let (mut response, served) = self
             .inner
-            .call_detailed(request, &mut |a| {
-                self.ctx
-                    .accounting
-                    .observe_attempt(&self.target, &a.outcome, a.ms);
-                self.ctx.attempts.lock().push(Attempt {
-                    target: self.target.clone(),
-                    provider: a.provider,
-                    model: a.model,
-                    outcome: a.outcome,
-                    ms: a.ms,
-                    class: None,
-                    retry_after_ms: a.retry_after_ms,
-                });
-            })
+            .call_detailed(
+                request,
+                self.fallback.allows(FallbackClass::Rejected),
+                &mut |a| {
+                    self.ctx
+                        .accounting
+                        .observe_attempt(&self.target, &a.outcome, a.ms);
+                    self.ctx.attempts.lock().push(Attempt {
+                        target: self.target.clone(),
+                        provider: a.provider,
+                        model: a.model,
+                        outcome: a.outcome,
+                        ms: a.ms,
+                        class: None,
+                        retry_after_ms: a.retry_after_ms,
+                    });
+                },
+            )
             .await
             .map_err(|error| match fallback_class(&error) {
                 Some(class) if !self.fallback.allows(class) => stop_fallback(class, &error),
-                // Switchyard moves to the next target on a 503 but not on a 404 or 401, so an unavailable
-                // endpoint's answer is re-labelled; the original is restored if no target answers.
-                Some(FallbackClass::Unavailable) => relabel_unavailable(&error),
-                // A 413 (too large for this endpoint) is `overflow`; Switchyard only moves on for a 503,
-                // so it is carried the same way and restored if no target takes the request.
+                // A rejection that enough different providers have given is the request's fault, so it
+                // stops here instead of walking on (ADR 0026).
+                Some(FallbackClass::Rejected) if self.rejected_bound_reached() => {
+                    stop_fallback(FallbackClass::Rejected, &error)
+                }
+                // Switchyard moves to the next target on a 503 but not on a 404, 401 or 400, so an unavailable
+                // endpoint's answer, a rejected request (400, 422) and a 413 (too large for this endpoint, class
+                // `overflow`) are re-labelled; the original is restored if no target answers.
+                Some(FallbackClass::Unavailable | FallbackClass::Rejected) => {
+                    relabel_unavailable(&error)
+                }
                 Some(FallbackClass::Overflow) if is_too_large(&error) => {
                     relabel_unavailable(&error)
                 }

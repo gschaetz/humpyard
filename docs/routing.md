@@ -183,16 +183,20 @@ often each rule fires and what each pool costs and how long it takes: tune the t
 - **Across targets**, if every endpoint of the selected target fails, the next target the
   algorithm returned is tried. By default falling through happens for a context-window overflow
   (including a provider's 413 "request too large"), 429, 403, 408, any 5xx, connection errors and timeouts, and on `fastest` and pool routes also for a 404, 410, 401 or
-  402 (`unavailable`). Other client errors stop at once and reach the client: a 400 or 422 because another
-  target would reject the same request, and on other routes a 404 or 401 unless the route opts in with
-  `fallback_on = ["unavailable"]`. If no
+  402 (`unavailable`), and for a 400 or 422 (`rejected`: this provider rejects the request, which another may
+  accept). A rejection does not count against the endpoint's health, and once three different providers have
+  rejected the same request it stops and the client gets the last rejection, because a request wrong on three
+  providers is the request. Other client errors stop at once and reach the client, and on other routes a 400, 422,
+  404 or 401 does too unless the route opts in with `fallback_on = ["unavailable"]` or `["rejected"]`. If no
   target answers, the client gets the last error (a timeout is still reported as 504).
 - **Choosing what falls through.** A route can limit this with `fallback_on`, a list of failure
   classes (`overflow`, `rate_limit`, `timeout`, `server_error`, `connection`, `forbidden`,
-  `unavailable`). A failure outside the list ends the request and the client sees the original status and
+  `unavailable`, `rejected`). A failure outside the list ends the request and the client sees the original status and
   message. `fallback_on = []` turns target fallback off. Without a list every class falls through except
-  `unavailable` (a 404, 410, 401 or 402, or a 400 naming a missing model), which is included by default only on
-  `fastest` routes and pool routes and is opt-in everywhere else. A list is taken exactly as written. This keeps a paid last resort from being spent on
+  `unavailable` (a 404, 410, 401 or 402, or a 400 naming a missing model) and `rejected` (any other 400 or 422),
+  which are included by default only on `fastest` routes and pool routes and are opt-in everywhere else, so a
+  private tier's rejection is never silently retried on a public provider. The guarded tail is reached only by the
+  classes its `on` list names (`overflow` by default), so a request every pool member rejects never reaches a paid tail. A list is taken exactly as written. This keeps a paid last resort from being spent on
   a public blip:
 
   ```toml

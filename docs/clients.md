@@ -152,7 +152,9 @@ What was verified, with a real model behind the route:
   `store` and `prompt_cache_key`; Google AI rejects both with a 400, which does not fail over, so a route whose
   first usable target was Google AI failed every time while the same Codex run on another route passed. The
   provider's `drop_fields` setting removes them; see
-  [Providers](providers.md#providers-that-reject-unknown-request-fields). Codex 0.163.0 also sends 12 tools
+  [Providers](providers.md#providers-that-reject-unknown-request-fields). A 400 or 422 now moves a pool on to its
+  next member (class `rejected`, at most three different providers, never counted against the endpoint's health),
+  so one strict member costs a round trip instead of the whole route; `drop_fields` still removes that round trip. Codex 0.163.0 also sends 12 tools
   including `multi_agent_v1__*` and the goal tools; Gemini accepted them all once those two fields were gone.
 - **Gemini's second turn needs a thought signature (found 2026-10-23).** With the first request fixed, the next
   turn failed: Gemini 3.x wants `extra_content.google.thought_signature` on the replayed function call. The

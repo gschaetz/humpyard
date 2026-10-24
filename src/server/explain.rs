@@ -142,6 +142,12 @@ fn plan_report(
             .fallback
             .allows(crate::config::FallbackClass::Unavailable)
     );
+    report["fallback_includes_rejected"] = json!(
+        planned
+            .plan
+            .fallback
+            .allows(crate::config::FallbackClass::Rejected)
+    );
     // A `fastest` route tries its targets by speed: show the order a request would use now (without
     // exploration, which is a per-request draw) and how often it explores.
     let tail: Vec<String> = snap

@@ -1,9 +1,9 @@
 # 0026. A request a pool member rejects moves on, within a bound
 
-- Status: proposed
+- Status: accepted
 - Date: 2026-10-24
 - Supersedes: none (refines ADR 0023)
-- Change: `openspec/changes/fail-over-on-rejected-requests`
+- Change: `openspec/changes/archive/2026-10-24-fail-over-on-rejected-requests`
 
 ## Context
 

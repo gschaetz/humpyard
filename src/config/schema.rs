@@ -607,6 +607,9 @@ pub enum FallbackClass {
     /// The endpoint is gone or rejects the key: HTTP 404 or 401, or a 400/404 naming a missing model.
     /// On by default only for `fastest` and pool routes (ADR 0023).
     Unavailable,
+    /// HTTP 400 or 422 that is not a missing-model answer: this provider rejects the request's shape, which says
+    /// nothing about its health. On by default only for `fastest` and pool routes (ADR 0026).
+    Rejected,
 }
 
 impl FallbackClass {
@@ -621,16 +624,18 @@ impl FallbackClass {
             Self::Connection => "connection",
             Self::Forbidden => "forbidden",
             Self::Unavailable => "unavailable",
+            Self::Rejected => "rejected",
         }
     }
 }
 
 /// Which failures make a route hand the request to its next target. Without a list, every failure falls
-/// through, except `unavailable`, which is included only on `fastest` and pool routes (ADR 0023).
+/// through, except `unavailable` and `rejected`, which are included only on `fastest` and pool routes
+/// (ADR 0023, ADR 0026).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct FallbackOn {
     classes: Option<std::collections::BTreeSet<FallbackClass>>,
-    unavailable_by_default: bool,
+    many_targets_by_default: bool,
 }
 
 impl FallbackOn {
@@ -638,14 +643,14 @@ impl FallbackOn {
     pub fn only(classes: &[FallbackClass]) -> Self {
         Self {
             classes: Some(classes.iter().copied().collect()),
-            unavailable_by_default: false,
+            many_targets_by_default: false,
         }
     }
 
-    /// With no list, also fall through on `unavailable` (routes built to try many targets).
+    /// With no list, also fall through on `unavailable` and `rejected` (routes built to try many targets).
     #[must_use]
-    pub fn with_unavailable_by_default(mut self) -> Self {
-        self.unavailable_by_default = true;
+    pub fn with_many_targets_by_default(mut self) -> Self {
+        self.many_targets_by_default = true;
         self
     }
 
@@ -659,7 +664,10 @@ impl FallbackOn {
     pub fn allows(&self, class: FallbackClass) -> bool {
         match &self.classes {
             Some(set) => set.contains(&class),
-            None => class != FallbackClass::Unavailable || self.unavailable_by_default,
+            None => {
+                !matches!(class, FallbackClass::Unavailable | FallbackClass::Rejected)
+                    || self.many_targets_by_default
+            }
         }
     }
 }
@@ -831,10 +839,10 @@ impl RouteSpec {
         match listed {
             // A list is taken exactly as written.
             Some(classes) => FallbackOn::only(classes),
-            // No list: every class falls through; `unavailable` too on routes built to try many targets
-            // that may be gone (`fastest` and pool routes), and not on any other (ADR 0023).
+            // No list: every class falls through; `unavailable` and `rejected` too on routes built to try many
+            // targets that may be gone or strict (`fastest` and pool routes), and not on any other (ADR 0023, 0026).
             None if self.tries_many_unreliable_targets() => {
-                FallbackOn::default().with_unavailable_by_default()
+                FallbackOn::default().with_many_targets_by_default()
             }
             None => FallbackOn::default(),
         }
