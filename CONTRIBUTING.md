@@ -2,6 +2,10 @@
 
 Thanks for helping out. This project is spec-driven with OpenSpec: see [AGENTS.md](AGENTS.md).
 
+## Where to start
+The roadmap lists [where help is wanted](docs/roadmap.md#help-wanted); reports from real use (a client that
+breaks, a provider that rejects a field) are as useful as code.
+
 ## Before you open a PR
 - `cargo test` and `cargo clippy --all-targets -- -D warnings` must pass.
 - Propose non-trivial changes as an OpenSpec change (`openspec/changes/`) first.

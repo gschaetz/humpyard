@@ -4,7 +4,30 @@ What has shipped, what is being built, and what comes next, at a glance. The det
 lives in the [component status table](architecture.md#component-status), the OpenSpec change named
 in it, and the [decision records](adr/README.md). Update this page in the same PR as the change.
 
-Last updated: 2026-10-23. Latest release: 0.15.0. Community: [Discord](https://discord.gg/qfTGr7KTfq) for questions and feedback; GitHub issues for bugs and requests.
+Last updated: 2026-10-24. Latest release: 0.15.0. Community: [Discord](https://discord.gg/qfTGr7KTfq) for questions and feedback; GitHub issues for bugs and requests.
+
+## Where routing is going
+
+Routing gets smarter in steps, and each step waits for the data the one before it produces. Nothing here
+reads a prompt to decide where it goes unless the numbers say that is worth doing.
+
+1. **Observe** (shipped). Every request leaves a routing decision, and `/v1/stats` turns them into failure mix,
+   latency percentiles, tokens, cache hit ratio and cost. Provider quota is polled and recorded, but no rule
+   acts on it yet.
+2. **Act on what is observed** (shipped). `fastest` routes order targets by recent latency and keep exploring;
+   unhealthy endpoints are skipped when another remains; a request a provider rejects moves on to the next
+   member ([ADR 0026](adr/0026-a-request-a-pool-member-rejects-moves-on-within-a-bound.md)); a target can declare a `quality`, which a
+   pool can require (`min_quality`) or blend with speed (`quality_weight`). Quality is declared by the operator, not measured.
+3. **Measure quality** (not built). Speed and cost are measured; how good an answer was is not. First cheap,
+   objective signals (empty or truncated output, refusals, malformed tool calls, a retry in the same session),
+   later an opt-in sampled judge off the request path. Grouped by task class, never by prompt text.
+4. **Order by cost and quality** (not built). Advisory first, with exploration, after weeks of statistics that include step 3.
+5. **Read the request where it earns it** (not built). Local detectors that keep a secret off a public provider
+   come first (item 3d below). A classifier route action comes only if the decision log shows the catch-all
+   route is too coarse.
+
+The rule for every step: it is built when the measurements ask for it, and it always falls back to the plain
+route when it cannot decide. Steps 3 to 5 are the most useful place to help; see [Help wanted](#help-wanted).
 
 ## Shipped
 
@@ -148,6 +171,28 @@ In this order, API first. See [Direction: operating humpyard](architecture.md#di
   on a metered provider, so it has nothing to do on a flat-rate plan such as OpenCode Go (whose limit is its quota).
   Trigger: the first pay-as-you-go provider is added, or keys are shared with other people.
 - **A fuller admin GUI**, as an optional separate client of the admin API. It produces patches to the config file (a direct write only for a writable file, by opt-in) and never keeps configuration of its own. **One-click apply** (opening a change in the operator's repository through a hook) is deferred until a real need appears.
+
+## Help wanted
+
+Humpyard is young, and the next steps above need real traffic more than they need code. All of these are
+welcome as a [GitHub issue](https://github.com/gschaetz/humpyard/issues) or on [Discord](https://discord.gg/qfTGr7KTfq);
+please never paste API keys, prompts or full configs.
+
+- **Point a client at it and say what breaks.** Codex, Claude Code, an SDK, an agent framework. A short
+  report with the client, its version and the error is enough. [Using humpyard with coding agents](clients.md)
+  has the setup notes.
+- **Report providers that reject a request field.** Some OpenAI-compatible providers answer 400 to fields
+  they do not know. See [Providers](providers.md#providers-that-reject-unknown-request-fields) for the ones
+  known so far and how `drop_fields` handles them.
+- **Suggest objective quality signals.** What cheap, content-free signal tells you a model answered badly
+  in your workload? Step 3 above starts from the best ideas.
+- **Share the shape of your stats.** What `/v1/stats` and `humpyard ctl decisions` show on your traffic
+  (counts, latencies and outcomes only) tells us which of the later items would matter.
+- **Run the offline router benchmark.** The static track of TwinRouterBench can be run for free against mock
+  upstreams (see Later, below); a run, or a script for it, would unblock that item.
+
+Code contributions follow [CONTRIBUTING.md](https://github.com/gschaetz/humpyard/blob/main/CONTRIBUTING.md):
+propose a non-trivial change as an OpenSpec change first.
 
 ## Considered, not planned
 

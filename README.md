@@ -106,7 +106,8 @@ starting config, with failover across two providers, is in [examples/config.toml
 
 Questions, feedback and show-and-tell are welcome on [Discord](https://discord.gg/qfTGr7KTfq). Bugs and feature
 requests belong in [GitHub issues](https://github.com/gschaetz/humpyard/issues), so they stay
-searchable. Please never paste API keys or full configs in chat.
+searchable. Please never paste API keys or full configs in chat. The [roadmap](https://humpyard.dev/roadmap/) says where
+routing is going and lists [where help is wanted](https://humpyard.dev/roadmap/#help-wanted).
 
 ## Contributing
 
