@@ -1,7 +1,8 @@
+use std::io::Write;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
 
 use humpyard::config::Config;
 use humpyard::discover;
@@ -50,6 +51,11 @@ enum Command {
     Models {
         #[command(subcommand)]
         command: ModelsCommand,
+    },
+    /// Print a shell completion script for bash, elvish, fish, powershell or zsh.
+    Completions {
+        /// The shell to generate completions for.
+        shell: clap_complete::Shell,
     },
 }
 
@@ -682,6 +688,9 @@ async fn main() -> ExitCode {
         )
         .init();
     let command = Cli::parse().command;
+    if let Command::Completions { shell } = command {
+        return write_completions(shell, &mut std::io::stdout().lock());
+    }
     if let Command::Prices { command } = command {
         return prices_command(command).await;
     }
@@ -881,7 +890,8 @@ async fn run(command: Command) -> Result<(), String> {
         | Command::MigrateModelrelay(_)
         | Command::Models { .. }
         | Command::Init(_)
-        | Command::Ctl(_) => Ok(()), // handled in `main`
+        | Command::Ctl(_)
+        | Command::Completions { .. } => Ok(()), // handled in `main`
         Command::Serve { config: path } => {
             let config = Config::load(&path).map_err(|e| e.to_string())?;
             let listener = tokio::net::TcpListener::bind(config.listen)
@@ -891,5 +901,56 @@ async fn run(command: Command) -> Result<(), String> {
             let reload = reload_signals().map(|triggers| server::Reload { path, triggers });
             server::run(config, listener, termination_signals(), reload).await
         }
+    }
+}
+
+fn write_completions(shell: clap_complete::Shell, out: &mut dyn Write) -> ExitCode {
+    let mut cmd = Cli::command();
+    let mut buf = Vec::new();
+    clap_complete::generate(shell, &mut cmd, "humpyard", &mut buf);
+    match out.write_all(&buf).and_then(|()| out.flush()) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("failed to write completions: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+#[cfg(test)]
+mod completion_writer_tests {
+    use super::*;
+
+    struct BrokenPipeWriter;
+    impl Write for BrokenPipeWriter {
+        fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+            Err(std::io::Error::from(std::io::ErrorKind::BrokenPipe))
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn broken_pipe_is_reported_as_success() {
+        let code = write_completions(clap_complete::Shell::Fish, &mut BrokenPipeWriter);
+        assert_eq!(code, ExitCode::SUCCESS);
+    }
+
+    #[test]
+    fn other_io_errors_are_reported_as_failure() {
+        struct FailingWriter;
+        impl Write for FailingWriter {
+            fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+                Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied))
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let code = write_completions(clap_complete::Shell::Fish, &mut FailingWriter);
+        assert_eq!(code, ExitCode::FAILURE);
     }
 }
