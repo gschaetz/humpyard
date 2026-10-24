@@ -176,6 +176,8 @@ pub struct Provider {
     pub headers: BTreeMap<String, String>,
     /// Request fields removed from every request sent to this provider.
     pub drop_fields: Vec<String>,
+    /// Added as `extra_content` to every replayed assistant tool call sent to this provider that has none.
+    pub tool_call_extra_content: Option<serde_json::Value>,
     /// A price source for `humpyard prices` (for example `models-dev:opencode-go`), if any.
     pub price_source: Option<String>,
     /// Where to read this provider's usage windows while serving (for example `opencode-go`).
@@ -205,6 +207,7 @@ impl std::fmt::Debug for Provider {
             .field("max_retries", &self.max_retries)
             .field("header_names", &self.headers.keys().collect::<Vec<_>>())
             .field("drop_fields", &self.drop_fields)
+            .field("tool_call_extra_content", &self.tool_call_extra_content)
             .field("price_source", &self.price_source)
             .field("quota_source", &self.quota_source)
             .field("discover", &self.discover)
@@ -237,6 +240,7 @@ fn build_providers(
                 max_retries: p.max_retries,
                 headers: p.headers,
                 drop_fields: p.drop_fields,
+                tool_call_extra_content: p.tool_call_extra_content,
                 price_source: p.price_source,
                 quota_source: p.quota_source,
                 discover: p.discover,

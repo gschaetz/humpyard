@@ -306,6 +306,10 @@ pub(super) struct RawProvider {
     /// rejects fields it does not know (Google AI rejects `store` and `prompt_cache_key`).
     #[serde(default)]
     pub(super) drop_fields: Vec<String>,
+    /// A table added as `extra_content` to every replayed assistant tool call that has none, for a provider
+    /// that wants provider data echoed back (Gemini 3.x wants a thought signature).
+    #[serde(default)]
+    pub(super) tool_call_extra_content: Option<serde_json::Value>,
     /// Where `humpyard prices` reads this provider's prices, for example `models-dev:opencode-go`.
     /// Only that command uses it; serving never fetches prices.
     pub(super) price_source: Option<String>,

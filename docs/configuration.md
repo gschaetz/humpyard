@@ -7,7 +7,9 @@ See the [example configs](examples.md); `humpyard check-config <file>` validates
   static HTTP headers to every call (authentication headers are rejected). Optional
   `drop_fields = ["store", "prompt_cache_key"]` removes those top-level request fields from every
   request sent to that provider, for a provider that rejects fields it does not know (see
-  [Providers](providers.md#providers-that-reject-unknown-request-fields)).
+  [Providers](providers.md#providers-that-reject-unknown-request-fields)). Optional
+  `tool_call_extra_content = { ... }` is added as `extra_content` to every replayed assistant tool call sent to
+  that provider (see [Providers](providers.md#gemini-3x-wants-a-thought-signature-on-replayed-tool-calls)).
 - `[targets.<name>]`: a model served by an ordered list of `{ provider, model }` endpoints.
   Clients may request a target by name; endpoints are tried in order, failing over on
   connection errors, timeouts, HTTP 429 and 5xx (not on other 4xx, and not once a stream has begun).

@@ -558,3 +558,26 @@ fn an_empty_drop_field_name_is_rejected() {
         "{message}"
     );
 }
+
+#[test]
+fn provider_tool_call_extra_content_loads_and_must_be_a_table() {
+    let with = |value: &str| {
+        VALID.replacen(
+            "api_key_env = \"GROQ_KEY\"",
+            &format!("api_key_env = \"GROQ_KEY\"\ntool_call_extra_content = {value}"),
+            1,
+        )
+    };
+    let config =
+        Config::from_toml(&with("{ google = { thought_signature = \"x\" } }"), env).unwrap();
+    assert_eq!(
+        config.providers["groq"].tool_call_extra_content,
+        Some(serde_json::json!({"google": {"thought_signature": "x"}}))
+    );
+    assert_eq!(config.providers["local"].tool_call_extra_content, None);
+    let message = err(&with("\"x\""));
+    assert!(
+        message.contains("groq") && message.contains("tool_call_extra_content"),
+        "{message}"
+    );
+}

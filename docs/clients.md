@@ -154,6 +154,10 @@ What was verified, with a real model behind the route:
   provider's `drop_fields` setting removes them; see
   [Providers](providers.md#providers-that-reject-unknown-request-fields). Codex 0.163.0 also sends 12 tools
   including `multi_agent_v1__*` and the goal tools; Gemini accepted them all once those two fields were gone.
+- **Gemini's second turn needs a thought signature (found 2026-10-23).** With the first request fixed, the next
+  turn failed: Gemini 3.x wants `extra_content.google.thought_signature` on the replayed function call. The
+  provider setting `tool_call_extra_content` supplies Google's documented placeholder; see
+  [Providers](providers.md#gemini-3x-wants-a-thought-signature-on-replayed-tool-calls).
 - **Longer sessions need request adaptation (found 2026-10-08).** Short runs passed, but the first
   real multi-step coding task failed with upstream 400s once the conversation had history: Codex
   replays its earlier reasoning items and injects `developer`-role messages, neither of which chat

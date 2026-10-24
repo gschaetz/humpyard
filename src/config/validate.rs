@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 use std::net::SocketAddr;
 
-use super::schema::{RawConfig, RawKey, RawMetrics, RouteSpec, TailSpec};
+use super::schema::{RawConfig, RawKey, RawMetrics, RawProvider, RouteSpec, TailSpec};
 use super::{ConfigError, MetricsConfig};
 
 /// Parses `sha256:<64 hex>` (the prefix is optional).
@@ -136,11 +136,7 @@ pub(super) fn validate(raw: &RawConfig) -> Result<(), ConfigError> {
     }
     for (name, provider) in &raw.providers {
         validate_headers(name, &provider.headers)?;
-        if provider.drop_fields.iter().any(String::is_empty) {
-            return Err(invalid(format!(
-                "providers.{name}.drop_fields: a field name must not be empty"
-            )));
-        }
+        validate_request_adaptation(name, provider)?;
         if let Some(source) = &provider.quota_source {
             validate_quota_source(name, source, &provider.base_url)?;
         }
@@ -546,6 +542,25 @@ pub fn parse_price_source(spec: &str) -> Option<(&str, &str)> {
 }
 
 /// Headers must be valid HTTP and must not carry credentials: keys come from `api_key_env`.
+/// The provider settings that change the request sent to it: `drop_fields` and `tool_call_extra_content`.
+fn validate_request_adaptation(name: &str, provider: &RawProvider) -> Result<(), ConfigError> {
+    if provider
+        .tool_call_extra_content
+        .as_ref()
+        .is_some_and(|content| !content.is_object())
+    {
+        return Err(invalid(format!(
+            "providers.{name}.tool_call_extra_content: must be a table"
+        )));
+    }
+    if provider.drop_fields.iter().any(String::is_empty) {
+        return Err(invalid(format!(
+            "providers.{name}.drop_fields: a field name must not be empty"
+        )));
+    }
+    Ok(())
+}
+
 pub(super) fn validate_headers(
     provider: &str,
     headers: &BTreeMap<String, String>,

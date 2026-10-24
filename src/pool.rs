@@ -8,8 +8,9 @@ use async_trait::async_trait;
 use http::{HeaderName, HeaderValue, StatusCode};
 use switchyard_llm_client::{Backend, HttpBackendConfig, ModelConfig, TranslatingLlmClient};
 use switchyard_protocol::{
-    ContentBlock, LlmClientError, ModelId, Request, Response, Role, RoutedLlmClient,
+    ContentBlock, LlmClientError, ModelId, Request, Response, Role, RoutedLlmClient, WireFormat,
 };
+use switchyard_translation::encode_request;
 
 use crate::clock::Clock;
 use crate::config::{Config, Endpoint, HealthConfig, Price, Provider};
@@ -31,6 +32,8 @@ struct EndpointClient {
     base_url: String,
     /// Request fields this endpoint's provider rejects; removed from each attempt.
     drop_fields: Vec<String>,
+    /// Added as `extra_content` to replayed assistant tool calls sent to this endpoint.
+    tool_call_extra_content: Option<serde_json::Value>,
 }
 
 /// One endpoint's health, for reporting.
@@ -180,6 +183,47 @@ fn drop_request_fields(request: &mut Request, fields: &[String]) {
     }
 }
 
+/// Adds `content` as `extra_content` to every assistant tool call that has none. The translation has no place
+/// for provider data on a tool call, so the chat body is encoded the way the client encodes it, changed, and
+/// handed back as the preserved chat body, which the client then sends as it is. A request with no assistant
+/// tool call is left alone. The preserved bodies are cleared first so the body is rebuilt from the request,
+/// including after `drop_request_fields`.
+fn add_tool_call_extra_content(request: &mut Request, content: &serde_json::Value) {
+    let has_tool_call = request.llm_request.messages.iter().any(|m| {
+        m.content
+            .iter()
+            .any(|b| matches!(b, ContentBlock::ToolCall(_)))
+    });
+    if !has_tool_call {
+        return;
+    }
+    let mut rebuilt = request.llm_request.clone();
+    rebuilt.preservation.requests.clear();
+    let Ok(mut body) = encode_request(&rebuilt, WireFormat::OpenAiChat) else {
+        return;
+    };
+    let Some(messages) = body.get_mut("messages").and_then(|m| m.as_array_mut()) else {
+        return;
+    };
+    for call in messages
+        .iter_mut()
+        .filter(|m| m.get("role").and_then(|r| r.as_str()) == Some("assistant"))
+        .filter_map(|m| m.get_mut("tool_calls").and_then(|c| c.as_array_mut()))
+        .flatten()
+    {
+        if let Some(call) = call.as_object_mut() {
+            call.entry("extra_content")
+                .or_insert_with(|| content.clone());
+        }
+    }
+    request.llm_request.preservation.requests.clear();
+    request
+        .llm_request
+        .preservation
+        .requests
+        .insert(WireFormat::OpenAiChat.into(), body);
+}
+
 #[async_trait]
 impl RoutedLlmClient for TargetClient {
     async fn call(&self, request: Request) -> Result<Response, LlmClientError> {
@@ -248,6 +292,9 @@ impl TargetClient {
             let mut attempt = request.clone();
             attempt.llm_request.model = Some(endpoint.model.clone());
             drop_request_fields(&mut attempt, &endpoint.drop_fields);
+            if let Some(content) = &endpoint.tool_call_extra_content {
+                add_tool_call_extra_content(&mut attempt, content);
+            }
             let started = std::time::Instant::now();
             let result = endpoint.client.call(attempt).await;
             // A rate-limited or unavailable endpoint that says when it will serve again is cooled for
@@ -392,6 +439,7 @@ fn endpoint_client(
         breaker,
         base_url: provider.base_url.clone(),
         drop_fields: provider.drop_fields.clone(),
+        tool_call_extra_content: provider.tool_call_extra_content.clone(),
     })
 }
 
