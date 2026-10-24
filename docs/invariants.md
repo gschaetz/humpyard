@@ -125,10 +125,15 @@ in an ADR (`docs/adr/`) in the same change.
 
 22. **A dead endpoint cannot fail every request of a pool.** A 404, 401 or 403 (or a missing-model 400)
     counts against its endpoint, so it cools and is skipped; on `fastest` and pool routes it also moves the
-    request to the next target. A 400 or 422 is the request's error and ends it. *Enforced by*
-    `tests/unavailable_endpoints.rs` (`a_dead_first_target_no_longer_fails_a_fastest_route_or_a_pool`,
-    `request_errors_still_end_the_request`, `other_routes_keep_their_behavior_unless_they_opt_in`); see
-    [ADR-0023](adr/0023-answers-that-describe-the-endpoint-make-it-unavailable.md).
+    request to the next target. A 400 or 422 (`rejected`) moves a pool on without counting against its endpoint, and
+    stops at the third different provider that rejects the request; other routes end the request unless they opt in.
+    *Enforced by* `tests/unavailable_endpoints.rs` (`a_dead_first_target_no_longer_fails_a_fastest_route_or_a_pool`,
+    `a_rejected_request_moves_a_pool_on_without_cooling_the_endpoint`,
+    `three_different_providers_rejecting_a_request_stop_it`,
+    `a_rejected_request_ends_the_request_on_routes_that_do_not_opt_in`,
+    `other_routes_keep_their_behavior_unless_they_opt_in`); see
+    [ADR-0023](adr/0023-answers-that-describe-the-endpoint-make-it-unavailable.md) and
+    [ADR-0026](adr/0026-a-request-a-pool-member-rejects-moves-on-within-a-bound.md).
 
 ## Data and secrets
 

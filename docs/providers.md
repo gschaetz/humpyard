@@ -122,7 +122,9 @@ Unknown name "prompt_cache_key": Cannot find field.
 Unknown name "store": Cannot find field.
 ```
 
-A 400 is a client error, so the route does not move on to the next target. List the fields on the provider
+A 400 is a client error, which used to end the request. On a `fastest` or pool route it now moves on to the next
+member (class `rejected`, [Routing](routing.md#choosing-what-falls-through)), but it still costs a round trip each
+time a strict member is tried first. List the fields on the provider
 and the gateway removes them from every request sent there; other providers still receive them (some use
 `prompt_cache_key` to route to a warm cache, and cached tokens are priced):
 

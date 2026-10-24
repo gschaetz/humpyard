@@ -23,7 +23,7 @@ See the [example configs](examples.md); `humpyard check-config <file>` validates
   latches to capable after repeated judge verdicts; both need a `judge` target). Send
   `x-switchyard-session-id` so per-session state (latches, holds) persists across requests.
   If the selected target fails entirely, the next target the algorithm returned is tried; a
-  route's `fallback_on = ["overflow", ...]` limits which failures may do that (default: all except `unavailable`, which is on by default only for
+  route's `fallback_on = ["overflow", ...]` limits which failures may do that (default: all except `unavailable` and `rejected`, which are on by default only for
   `fastest` and pool routes; see [Routing](routing.md#choosing-what-falls-through)).
 - `price_source = "models-dev:<provider id>"` on a provider (optional): where `humpyard prices`
   reads its prices; serving never uses it. See [Keeping prices current](budgets.md#keeping-prices-current).

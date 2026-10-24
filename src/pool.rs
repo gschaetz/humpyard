@@ -14,7 +14,9 @@ use switchyard_translation::encode_request;
 
 use crate::clock::Clock;
 use crate::config::{Config, Endpoint, HealthConfig, Price, Provider};
-use crate::error::{TIMEOUT_MARKER, fallback_class, is_forbidden, is_too_large, is_unavailable};
+use crate::error::{
+    TIMEOUT_MARKER, fallback_class, is_forbidden, is_rejected, is_too_large, is_unavailable,
+};
 use crate::health::{Admission, Breaker, Snapshot, Transition};
 use crate::overrides::Drains;
 
@@ -227,7 +229,7 @@ fn add_tool_call_extra_content(request: &mut Request, content: &serde_json::Valu
 #[async_trait]
 impl RoutedLlmClient for TargetClient {
     async fn call(&self, request: Request) -> Result<Response, LlmClientError> {
-        self.call_detailed(request, &mut |_| {})
+        self.call_detailed(request, false, &mut |_| {})
             .await
             .map(|(response, _)| response)
     }
@@ -270,9 +272,13 @@ impl TargetClient {
 
     /// Like `call`, also reporting which endpoint served the response and, through `on_attempt`,
     /// every endpoint attempt as it ends.
+    ///
+    /// With `rejected_moves_on` (the route allows the `rejected` class, ADR 0026), a 400 or 422 moves on to the
+    /// next endpoint of the target without counting against the endpoint's health; otherwise it ends the request.
     pub async fn call_detailed(
         &self,
         request: Request,
+        rejected_moves_on: bool,
         on_attempt: &mut (dyn FnMut(EndpointAttempt) + Send),
     ) -> Result<(Response, Served), LlmClientError> {
         let mut request = request;
@@ -350,17 +356,20 @@ impl TargetClient {
                     );
                     last_error = Some(error);
                 }
-                Err(error) if is_too_large(&error) => {
-                    // A 413 says this request is too large for this endpoint, not that the endpoint is
-                    // unwell: its health is left alone (the probe slot is released on drop) and another
-                    // endpoint of the target may take the request (ADR 0023).
+                Err(error)
+                    if is_too_large(&error) || (rejected_moves_on && is_rejected(&error)) =>
+                {
+                    // A 413 says this request is too large for this endpoint, and a 400 or 422 that this
+                    // provider rejects it; neither says the endpoint is unwell, so its health is left alone
+                    // (the probe slot is released on drop) and another endpoint of the target may take the
+                    // request (ADR 0023, ADR 0026).
                     if position + 1 >= count {
                         return Err(error);
                     }
                     tracing::warn!(
                         provider = %endpoint.provider,
                         model = %endpoint.model,
-                        "request too large for this endpoint; trying next"
+                        "request not taken by this endpoint; trying next"
                     );
                     last_error = Some(error);
                 }
