@@ -140,6 +140,8 @@ pub struct KeyConfig {
     pub allowed_routes: Option<Vec<String>>,
     pub over_budget: OverBudget,
     pub limits: Limits,
+    /// The most one request may cost in US dollars; targets certain to exceed it are removed.
+    pub max_request_usd: Option<f64>,
     /// May read the effective configuration (`GET /v1/config`).
     pub read_config: bool,
     /// May create and remove runtime overrides (`/v1/overrides`).
@@ -372,6 +374,7 @@ impl Config {
                             sha256,
                             allowed_routes: key.allowed_routes,
                             over_budget: key.over_budget,
+                            max_request_usd: key.max_request_usd,
                             read_config: key.read_config,
                             manage_overrides: key.manage_overrides,
                             limits: Limits {

@@ -38,7 +38,7 @@ use crate::config::OverBudget;
 use crate::error::GatewayError;
 use crate::estimate::estimate_tokens;
 use crate::latency::Latency;
-use crate::ledger::{AppliedOverride, Decision, Incapable, Ledger};
+use crate::ledger::{AppliedOverride, CeilingRemoved, CostCeiling, Decision, Incapable, Ledger};
 use crate::metering::{Accounting, CALL_ID_HEADER, CallContext, StreamTemplate};
 use crate::num::f64_from_u64;
 use crate::overrides::{Drains, LedgerOverrides, NoDrains, Override, OverrideStore, StoreDrains};
@@ -803,7 +803,12 @@ async fn count_tokens(
             caller.as_ref(),
             &decoded.model,
             stream,
-            request_features(&decoded.llm_request, &snap.selectors, &snap.config),
+            request_features(
+                &decoded.llm_request,
+                &snap.selectors,
+                &snap.config,
+                caller.as_ref(),
+            ),
             &selector_headers(&headers),
             &info,
         )?;
@@ -1183,7 +1188,7 @@ async fn handle(
     } = decode(format, raw)?;
     let info = request_info(headers);
     let stream = body["stream"].as_bool().unwrap_or(false);
-    let features = request_features(&llm_request, &snap.selectors, &snap.config);
+    let features = request_features(&llm_request, &snap.selectors, &snap.config, caller);
     guard.decision.requested_model.clone_from(&model);
     guard.decision.stream = stream;
     guard.decision.prompt_tokens = features.prompt_tokens;
@@ -1217,6 +1222,7 @@ async fn handle(
         plan,
         cold_skipped,
         incapable,
+        over_ceiling,
         overridden,
         ..
     } = plan_route(
@@ -1234,11 +1240,13 @@ async fn handle(
     )
     .map_err(|failure| {
         guard.decision.incapable_targets = failure.incapable;
+        guard.decision.cost_ceiling = cost_ceiling_record(caller, failure.over_ceiling);
         guard.decision.overrides = applied_overrides(&failure.overridden);
         failure.error
     })?;
     guard.decision.cold_targets = cold_skipped;
     guard.decision.incapable_targets = incapable;
+    guard.decision.cost_ceiling = cost_ceiling_record(caller, over_ceiling);
     guard.decision.overrides = applied_overrides(&overridden);
     guard.decision.ranking = plan.ranking.as_ref().map(|ranked| crate::ledger::Ranking {
         order: ranked.order.clone(),
@@ -1326,11 +1334,14 @@ fn request_features(
     llm_request: &switchyard_protocol::LlmRequest,
     selectors: &Selectors,
     config: &Config,
+    caller: Option<&KeyRecord>,
 ) -> Features {
     // The prompt is measured only when a rule needs the ordinary estimate or an endpoint declares a
     // context window (which needs the low one, ADR 0019); otherwise no request pays for it.
     let want_estimate = selectors.needs_prompt_estimate();
-    let want_low = config.declares_context_windows();
+    // A key with a cost ceiling also needs the low estimate, to bound what the prompt alone costs.
+    let want_low =
+        config.declares_context_windows() || caller.is_some_and(|k| k.max_request_usd.is_some());
     let body = if want_estimate || want_low {
         encode_request(llm_request, WireFormat::OpenAiChat).ok()
     } else {
@@ -1341,6 +1352,7 @@ fn request_features(
         // decision then carries the ordinary estimate for tuning the low one (docs/routing.md).
         prompt_tokens: body.as_ref().map(estimate_tokens),
         prompt_tokens_low: body.as_ref().map(crate::estimate::estimate_tokens_low),
+        max_output_tokens: llm_request.output.max_output_tokens,
         tools: !llm_request.tools.is_empty(),
         images: llm_request.messages.iter().any(|message| {
             message
@@ -1557,11 +1569,41 @@ fn incapable_sentence(incapable: &Incapable, features: &Features) -> String {
     format!("`{}`: {why}", incapable.target)
 }
 
+/// The key's ceiling and what it removed, as the decision and `explain` record them; `None` for a key
+/// with no ceiling.
+fn cost_ceiling_record(
+    caller: Option<&KeyRecord>,
+    removed: Vec<CeilingRemoved>,
+) -> Option<CostCeiling> {
+    let ceiling = caller?.max_request_usd?;
+    Some(CostCeiling {
+        max_request_micro_usd: crate::num::u64_from_f64_rounded(ceiling * 1_000_000.0),
+        removed,
+    })
+}
+
+/// The refusal message when the ceiling removed every candidate: the ceiling and the lower bound for the
+/// cheapest candidate.
+fn ceiling_sentence(model: &str, caller: Option<&KeyRecord>, over: &[CeilingRemoved]) -> String {
+    let ceiling = caller.and_then(|key| key.max_request_usd).unwrap_or(0.0);
+    let cheapest = over
+        .iter()
+        .map(|o| o.lower_bound_micro_usd)
+        .min()
+        .unwrap_or(0);
+    format!(
+        "this request would cost at least ${:.6} on the cheapest target of route `{model}`, more than this key's max_request_usd of ${ceiling}",
+        crate::num::f64_from_u64(cheapest) / 1_000_000.0
+    )
+}
+
 /// Planning failed: the error to answer with, and the targets capability removed (recorded on the
 /// decision even when the request is refused).
 struct PlanFailure {
     error: GatewayError,
     incapable: Vec<Incapable>,
+    /// Targets the key's cost ceiling removed.
+    over_ceiling: Vec<CeilingRemoved>,
     /// Targets the runtime overrides removed (recorded on the decision even when the request is refused).
     overridden: Vec<Overridden>,
 }
@@ -1571,6 +1613,8 @@ struct Planned {
     plan: Plan,
     /// Targets removed because none of their endpoints could serve the request (ADR 0019).
     incapable: Vec<Incapable>,
+    /// Targets the key's cost ceiling removed: the request is certain to cost more on them.
+    over_ceiling: Vec<CeilingRemoved>,
     /// Targets the runtime overrides removed from the plan.
     overridden: Vec<Overridden>,
     /// Targets left out because every endpoint was cooling down and another target remained.
@@ -1620,6 +1664,51 @@ fn find_incapable(
     incapable
 }
 
+/// A lower bound on what the request costs on `target`: its cheapest endpoint's bound, since a failover
+/// endpoint may be the one that serves. An endpoint with no price counts as free, so it is never removed.
+fn cheapest_lower_bound(snap: &Snapshot, target: &str, features: &Features) -> Option<f64> {
+    let prompt = features.prompt_tokens_low?;
+    let output = features.max_output_tokens.unwrap_or(0);
+    snap.config
+        .targets
+        .get(target)?
+        .iter()
+        .map(|endpoint| {
+            endpoint.price.as_ref().map_or(0.0, |price| {
+                crate::pricing::cost_lower_bound_micro_usd(price, prompt, output)
+            })
+        })
+        .min_by(f64::total_cmp)
+}
+
+/// The targets of route `model` the request is certain to cost more than `ceiling_usd` on, among those
+/// `base` leaves eligible, in the route's order. Free targets bound at zero and are never removed.
+fn find_over_ceiling(
+    snap: &Snapshot,
+    model: &str,
+    features: &Features,
+    ceiling_usd: f64,
+    base: &dyn Fn(&str) -> bool,
+) -> Vec<CeilingRemoved> {
+    let ceiling_micro = ceiling_usd * 1_000_000.0;
+    let mut over: Vec<CeilingRemoved> = Vec::new();
+    if let Some(spec) = snap.config.routes.get(model) {
+        for target in spec.target_refs() {
+            if base(target)
+                && !over.iter().any(|o| o.target == target)
+                && let Some(bound) = cheapest_lower_bound(snap, target, features)
+                && bound > ceiling_micro
+            {
+                over.push(CeilingRemoved {
+                    target: target.to_string(),
+                    lower_bound_micro_usd: crate::num::u64_from_f64_rounded(bound),
+                });
+            }
+        }
+    }
+    over
+}
+
 /// What planning needs to know about one request besides the route.
 #[derive(Clone, Copy)]
 struct PlanInput<'a> {
@@ -1665,9 +1754,16 @@ fn plan_route(
     // Targets none of whose endpoints can serve this request, among those classes and policy leave
     // eligible, in the route's order (ADR 0019). They are removed before health is consulted.
     let incapable = find_incapable(snap, model, features, &base);
+    // Targets the key's cost ceiling removes: the request is certain to cost more on them. Like capability
+    // this only subtracts, and it comes before health (add-request-cost-ceiling).
+    let serves = |target: &str| base(target) && !incapable.iter().any(|i| i.target == target);
+    let over_ceiling = caller
+        .and_then(|key| key.max_request_usd)
+        .map(|ceiling| find_over_ceiling(snap, model, features, ceiling, &serves))
+        .unwrap_or_default();
     // Runtime overrides come next, after strictness and capabilities and before health, so health and a
     // guarded tail see the reduced set. They only remove candidates.
-    let capable = |target: &str| base(target) && !incapable.iter().any(|i| i.target == target);
+    let capable = |target: &str| serves(target) && !over_ceiling.iter().any(|o| o.target == target);
     let overridden = overridden_targets(snap, overrides, model, &capable);
     let eligible = |target: &str| capable(target) && !overridden.iter().any(|o| o.target == target);
     // The cold targets among those capable, in the route's order.
@@ -1705,6 +1801,7 @@ fn plan_route(
         return Ok(Planned {
             plan,
             incapable,
+            over_ceiling,
             overridden,
             cold_skipped,
             fail_open,
@@ -1712,7 +1809,9 @@ fn plan_route(
     }
     // Nothing is left. If capability alone emptied the route, say why (known before any upstream
     // call); otherwise it is the budget or the routing policy.
-    let error = if !incapable.is_empty() && route.plan(model, base).is_some() {
+    let error = if !over_ceiling.is_empty() && route.plan(model, serves).is_some() {
+        GatewayError::CostCeiling(ceiling_sentence(model, caller, &over_ceiling))
+    } else if !incapable.is_empty() && route.plan(model, base).is_some() {
         let reasons: Vec<String> = incapable
             .iter()
             .map(|i| incapable_sentence(i, features))
@@ -1737,6 +1836,7 @@ fn plan_route(
     Err(PlanFailure {
         error,
         incapable,
+        over_ceiling,
         overridden,
     })
 }

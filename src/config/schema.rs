@@ -242,6 +242,9 @@ pub(super) struct RawKey {
     pub(super) monthly_usd: Option<f64>,
     pub(super) daily_tokens: Option<u64>,
     pub(super) monthly_tokens: Option<u64>,
+    /// The most one request may cost, in US dollars. Targets the request is certain to cost more on
+    /// are removed from it.
+    pub(super) max_request_usd: Option<f64>,
     /// May read the effective configuration (`GET /v1/config`); off by default.
     #[serde(default)]
     pub(super) read_config: bool,
@@ -491,6 +494,21 @@ impl Price {
     /// a model that is expensive on long prompts is never mistaken for a cheap one.
     pub fn max_output(&self) -> f64 {
         self.all_rates().map(|r| r.output).fold(0.0, f64::max)
+    }
+
+    /// The lowest input rate this price can charge, counting cache reads, across the base and every
+    /// tier: no part of a prompt can cost less per token.
+    pub fn min_input(&self) -> f64 {
+        self.all_rates()
+            .map(|r| r.input.min(r.cached_input.unwrap_or(r.input)))
+            .fold(f64::INFINITY, f64::min)
+    }
+
+    /// The lowest output rate across the base and every tier.
+    pub fn min_output(&self) -> f64 {
+        self.all_rates()
+            .map(|r| r.output)
+            .fold(f64::INFINITY, f64::min)
     }
 
     /// Free at every size: a free base with a paid tier is not free.

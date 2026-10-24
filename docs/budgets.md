@@ -129,7 +129,7 @@ id (also returned as `x-humpyard-request-id`, and stored on the request's usage 
 join), the key, session and protocol, the model the client asked for, the route and selector rule
 that applied and whether it came from a `selector` or the `requested_model`, rules that matched but
 were skipped because the key may not use their route, the budget state, the targets that were
-eligible, the `excluded_targets` a strict route removed, the `cold_targets` skipped for health, the `incapable_targets` removed for capability, the `overrides` (id, kind and subject) that took a target out of its plan, request features (streaming, estimated prompt size when a rule needs it, tools, images),
+eligible, the `excluded_targets` a strict route removed, the `cold_targets` skipped for health, the `incapable_targets` removed for capability, the `cost_ceiling` of a key with a [per-request ceiling](#a-ceiling-on-one-request) and the targets it removed, the `overrides` (id, kind and subject) that took a target out of its plan, request features (streaming, estimated prompt size when a rule needs it, tools, images),
 the **attempts** in order (target, provider, model, class, outcome such as `ok`, `rate_limit`,
 `timeout`, `server_error`, and milliseconds), `fallback_crossed_classes` (whether those attempts spanned
 more than one [target class](routing.md#target-classes)), the final status and `outcome`, the serving target and
@@ -242,6 +242,43 @@ as soon as the limit is observed.
 
 A target's price for these rules is the **highest** price among its endpoints (so a target with an
 expensive failover endpoint counts as expensive); a target is free only if every endpoint is free.
+
+### A ceiling on one request
+
+A key may also set `max_request_usd`, the most a single request may cost. It does not depend on totals, so
+it works with or without a daily or monthly budget, and it needs no ledger. Like a USD budget it requires
+every endpoint to carry a `price` (use 0 for free), and a value of zero or less is refused at load.
+
+```toml
+[keys.agent]
+sha256 = "sha256:..."
+max_request_usd = 0.50
+```
+
+The ceiling is a guard against clearly oversized or runaway requests, not a precise cap. A target is
+removed from a request only when the request is *certain* to cost more than the ceiling on it, using a
+lower bound built from parts that can only under-count (the same rule as
+[capabilities](routing.md#capabilities)):
+
+- **Prompt:** the low prompt estimate (about one token per six bytes), below any real tokenizer's count.
+- **Output:** the length the client asked for (`max_tokens`), or zero when it set none. A request with no
+  stated limit is not charged an assumed output, so it can still cost more than the ceiling once it runs;
+  the budgets above and their bounded overshoot cover that.
+- **Rates:** the lowest input rate (cache reads included) and lowest output rate across the target's
+  endpoints and tiers, so a target with a cheap failover endpoint is kept.
+
+Free targets bound at zero and always pass, so a request too dear for the paid targets of a route can
+still be served by a free one. The ceiling only subtracts: it never reorders targets and never rewrites the
+request. A key without it is unaffected.
+
+When no target is left, the request is refused before any upstream call with HTTP 402 and the error
+`code` `request_cost_ceiling` (OpenAI-shaped bodies; the message states the ceiling and the lower bound for the
+cheapest candidate). It is a different code from `budget_exhausted`, so a client can tell "this request is too
+big" from "your allowance is used up".
+
+The decision records a `cost_ceiling` (the ceiling and the targets removed, each with its lower bound, in
+micro-USD), `POST /v1/route/explain` reports the same (and accepts `max_output_tokens` for the hypothetical
+request), and `humpyard_cost_ceiling_total{outcome}` counts requests where it removed targets or refused.
 
 ## Notes
 

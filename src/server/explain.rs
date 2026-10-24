@@ -46,6 +46,8 @@ struct Hypothetical {
     /// Whether the request carries images.
     #[serde(default)]
     images: bool,
+    /// The output length the request would ask for (`max_tokens`); a key's cost ceiling counts it.
+    max_output_tokens: Option<u64>,
 }
 
 pub(super) async fn explain_route(
@@ -315,6 +317,7 @@ fn explain(
     let features = Features {
         prompt_tokens: request.prompt_tokens,
         prompt_tokens_low: request.prompt_tokens,
+        max_output_tokens: request.max_output_tokens,
         tools: request.tools,
         images: request.images,
     };
@@ -392,25 +395,44 @@ fn explain(
             },
         )
     }) {
-        Some(Ok(planned)) => plan_report(
-            &mut report,
-            snap,
-            &route_name,
-            &planned,
-            recent,
-            state.accounting.latency(),
-        ),
-        Some(Err(failure)) => {
-            report["outcome"] = json!(failure.error.outcome());
-            report["message"] = json!(failure.error.to_string());
-            report["incapable_targets"] = json!(failure.incapable);
-            report["overridden_targets"] = super::overridden_report(&failure.overridden);
+        Some(Ok(planned)) => {
+            plan_report(
+                &mut report,
+                snap,
+                &route_name,
+                &planned,
+                recent,
+                state.accounting.latency(),
+            );
+            report["cost_ceiling"] = ceiling_report(caller, &planned.over_ceiling);
         }
+        Some(Err(failure)) => failure_report(&mut report, caller, &failure),
         None => {
             report["outcome"] = json!("unknown_model");
         }
     }
     report
+}
+
+/// What `explain` says when planning found nothing to run: the refusal and what removed the candidates.
+fn failure_report(
+    report: &mut Value,
+    caller: Option<&crate::auth::KeyRecord>,
+    failure: &super::PlanFailure,
+) {
+    report["outcome"] = json!(failure.error.outcome());
+    report["message"] = json!(failure.error.to_string());
+    report["incapable_targets"] = json!(failure.incapable);
+    report["cost_ceiling"] = ceiling_report(caller, &failure.over_ceiling);
+    report["overridden_targets"] = super::overridden_report(&failure.overridden);
+}
+
+/// The key's cost ceiling and the targets it removed, or `null` for a key without one.
+fn ceiling_report(
+    caller: Option<&crate::auth::KeyRecord>,
+    removed: &[crate::ledger::CeilingRemoved],
+) -> Value {
+    json!(super::cost_ceiling_record(caller, removed.to_vec()))
 }
 
 fn target_report(

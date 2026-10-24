@@ -105,6 +105,7 @@ fn to_json(d: &Decision) -> Value {
         "cold_targets": d.cold_targets,
         "incapable_targets": d.incapable_targets,
         "overrides": d.overrides,
+        "cost_ceiling": d.cost_ceiling,
         "ranking": d.ranking,
         "request": {
             "stream": d.stream,

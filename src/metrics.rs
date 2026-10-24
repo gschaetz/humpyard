@@ -31,8 +31,9 @@ const CAPABILITY_REASONS: [&str; 3] = ["tools", "vision", "context"];
 const PROTOCOLS: [&str; 3] = ["openai_chat", "openai_responses", "anthropic_messages"];
 
 /// Outcomes that mean the gateway refused the request before any upstream call.
-const REFUSALS: [&str; 8] = [
+const REFUSALS: [&str; 9] = [
     "no_capable_target",
+    "request_cost_ceiling",
     "override_no_target",
     "unauthorized",
     "forbidden",
@@ -337,6 +338,7 @@ pub struct Metrics {
     skips: Owned,
     retry_after: Owned,
     capability: Owned,
+    cost_ceiling: Owned,
     refusals: Owned,
     reloads: Owned,
 }
@@ -416,6 +418,13 @@ impl Metrics {
                 &["route", "target", "reason"],
                 false,
             ),
+            cost_ceiling: Owned::new(
+                "cost_ceiling_total",
+                "Requests in which a key's max_request_usd removed a target (removed) or refused the request because it left none (refused).",
+                Kind::Counter,
+                &["outcome"],
+                true,
+            ),
             refusals: Owned::new(
                 "refusals_total",
                 "Requests the gateway refused before any upstream call, by reason.",
@@ -483,6 +492,20 @@ impl Metrics {
             && d.outcome != "cancelled"
         {
             self.blocked.add(std::slice::from_ref(&route), 1);
+        }
+        if let Some(ceiling) = &d.cost_ceiling {
+            let outcome = if d.outcome == "request_cost_ceiling" {
+                Some("refused")
+            } else if ceiling.removed.is_empty() {
+                None
+            } else {
+                Some("removed")
+            };
+            if let Some(outcome) = outcome {
+                let mut labels = vec![outcome.to_string()];
+                labels.extend(key.clone());
+                self.cost_ceiling.add(&labels, 1);
+            }
         }
         if REFUSALS.contains(&d.outcome.as_str()) {
             let mut labels = vec![d.outcome.clone()];
@@ -614,6 +637,7 @@ impl Metrics {
             &self.skips,
             &self.retry_after,
             &self.capability,
+            &self.cost_ceiling,
             &self.refusals,
             &self.reloads,
         ]

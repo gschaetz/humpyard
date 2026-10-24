@@ -471,6 +471,14 @@ pub(super) fn validate_budgets(raw: &RawConfig) -> Result<(), ConfigError> {
                 has_usd = true;
             }
         }
+        if let Some(v) = key.max_request_usd {
+            if !(v.is_finite() && v > 0.0) {
+                return Err(invalid(format!(
+                    "keys.{id}.max_request_usd must be a positive number of dollars"
+                )));
+            }
+            has_usd = true;
+        }
         has_limits |= key.daily_usd.is_some()
             || key.monthly_usd.is_some()
             || key.daily_tokens.is_some()
@@ -498,7 +506,7 @@ pub(super) fn validate_budgets(raw: &RawConfig) -> Result<(), ConfigError> {
             for endpoint in &target.endpoints {
                 if endpoint.price.is_none() {
                     return Err(invalid(format!(
-                        "target `{id}`: endpoint {}/{} needs a `price` because a key has a USD budget (use 0 for free)",
+                        "target `{id}`: endpoint {}/{} needs a `price` because a key has a USD budget or a per-request ceiling (use 0 for free)",
                         endpoint.provider, endpoint.model
                     )));
                 }
