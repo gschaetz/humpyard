@@ -53,6 +53,7 @@ cannot call inference or any other endpoint.
 | `humpyard_health_skips_total` | counter | `route`, `target` |
 | `humpyard_retry_after_honored_total` | counter | `provider`, `source` (`body` today) |
 | `humpyard_capability_skips_total` | counter | `route`, `target`, `reason` |
+| `humpyard_cost_ceiling_total` | counter | `outcome` (`removed`, `refused`), `key`\* |
 | `humpyard_target_latency_seconds` | gauge | `target` |
 | `humpyard_discovery_targets` | gauge | (none; only when `[discovery] file` is set) |
 | `humpyard_discovery_file_state` | gauge | `state` (`missing`, `empty`, `loaded`, `ignored`; 1 for the current state) |
@@ -86,9 +87,12 @@ Notes:
   of its endpoints could serve them, with `reason` `tools`, `vision` or `context`. Refusals with reason
   `no_capable_target` are in `refusals_total`, as are those with reason `override_no_target` (a
   [runtime override](routing.md#runtime-overrides) removed every target of the route).
+- **Cost ceiling** counts requests in which a key's [`max_request_usd`](budgets.md#a-ceiling-on-one-request)
+  removed a target (`outcome="removed"`) or left none and refused the request (`outcome="refused"`; those
+  are also in `refusals_total` as `request_cost_ceiling`). It stays at 0 for keys without a ceiling.
 - **A request that matched no route** is counted under `route="none"`.
 - **Refusal reasons** are `unauthorized`, `forbidden`, `budget_exhausted`, `no_eligible_target`,
-  `unknown_model`, `bad_request` and `no_capable_target`. Upstream failures show up in `status_class` and in failovers.
+  `unknown_model`, `bad_request`, `no_capable_target` and `request_cost_ceiling`. Upstream failures show up in `status_class` and in failovers.
 
 ## What labels can contain
 

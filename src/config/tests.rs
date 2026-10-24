@@ -311,6 +311,35 @@ fn token_budget_does_not_require_prices() {
 }
 
 #[test]
+fn a_request_cost_ceiling_loads_when_every_endpoint_is_priced() {
+    let text = budgeted(&format!(
+        "[keys.alice]\nsha256 = \"{HASH_A}\"\nmax_request_usd = 0.50\n"
+    ));
+    let config = Config::from_toml(&text, env).unwrap();
+    assert_eq!(config.keys["alice"].max_request_usd, Some(0.5));
+}
+
+#[test]
+fn a_request_cost_ceiling_requires_every_endpoint_priced() {
+    let text = format!("{VALID}\n[keys.alice]\nsha256 = \"{HASH_A}\"\nmax_request_usd = 0.50\n");
+    let message = err(&text);
+    assert!(
+        message.contains("needs a `price`") && message.contains("groq/llama-3.3-70b"),
+        "{message}"
+    );
+}
+
+#[test]
+fn a_non_positive_request_cost_ceiling_is_rejected() {
+    for value in ["0", "-1.0"] {
+        let text = budgeted(&format!(
+            "[keys.alice]\nsha256 = \"{HASH_A}\"\nmax_request_usd = {value}\n"
+        ));
+        assert!(err(&text).contains("keys.alice.max_request_usd"), "{value}");
+    }
+}
+
+#[test]
 fn invalid_limits_and_fractions_are_rejected() {
     let negative = budgeted(&format!(
         "[keys.alice]\nsha256 = \"{HASH_A}\"\ndaily_usd = -1.0\n"

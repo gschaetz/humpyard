@@ -17,6 +17,8 @@ pub struct KeyRecord {
     pub allowed_routes: Option<Vec<String>>,
     pub limits: Limits,
     pub over_budget: OverBudget,
+    /// The most one request may cost in US dollars, when the key sets a ceiling.
+    pub max_request_usd: Option<f64>,
     /// May read the effective configuration.
     pub read_config: bool,
     /// May create and remove runtime overrides.
@@ -56,6 +58,7 @@ impl ConfigKeyStore {
                         allowed_routes: key.allowed_routes.clone(),
                         limits: key.limits,
                         over_budget: key.over_budget,
+                        max_request_usd: key.max_request_usd,
                         read_config: key.read_config,
                         manage_overrides: key.manage_overrides,
                     },
@@ -158,6 +161,7 @@ mod tests {
             allowed_routes: None,
             limits: Limits::default(),
             over_budget: OverBudget::Block,
+            max_request_usd: None,
             read_config: false,
             manage_overrides: false,
         };
@@ -179,6 +183,7 @@ mod tests {
                 sha256: parsed,
                 allowed_routes: None,
                 over_budget: OverBudget::Block,
+                max_request_usd: None,
                 limits: Limits::default(),
                 read_config: false,
                 manage_overrides: false,

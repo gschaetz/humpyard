@@ -19,6 +19,8 @@ pub struct Features {
     /// A deliberately low estimate (a lower bound), for capability eligibility (ADR 0019); `None` when
     /// no endpoint declares a context window.
     pub prompt_tokens_low: Option<u64>,
+    /// The output length the client asked for (`max_tokens` and equivalents); `None` when it set none.
+    pub max_output_tokens: Option<u64>,
     pub tools: bool,
     pub images: bool,
 }

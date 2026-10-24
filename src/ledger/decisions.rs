@@ -51,6 +51,23 @@ pub struct Incapable {
     pub reason: String,
 }
 
+/// A target a key's cost ceiling removed from a request, and the lower bound that proved it too dear.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CeilingRemoved {
+    pub target: String,
+    /// The lower bound of the request's cost on the target's cheapest endpoint, in micro-USD.
+    pub lower_bound_micro_usd: u64,
+}
+
+/// A key's per-request cost ceiling as it applied to one request (`add-request-cost-ceiling`).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CostCeiling {
+    /// The key's `max_request_usd`, in micro-USD.
+    pub max_request_micro_usd: u64,
+    /// The targets it removed; empty when the request fit everywhere.
+    pub removed: Vec<CeilingRemoved>,
+}
+
 /// What the router decided for one request, and how it went.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Decision {
@@ -77,6 +94,8 @@ pub struct Decision {
     pub cold_targets: Vec<String>,
     /// Targets removed because none of their endpoints could serve the request (ADR 0019).
     pub incapable_targets: Vec<Incapable>,
+    /// The key's per-request cost ceiling and what it removed; `None` when the key sets none.
+    pub cost_ceiling: Option<CostCeiling>,
     /// The runtime overrides that removed a candidate from this request's plan (`add-runtime-overrides`).
     pub overrides: Vec<AppliedOverride>,
     /// For a `fastest` route, the order tried and why (ADR 0020).
@@ -161,6 +180,21 @@ pub(super) async fn migrate_v6(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     .await?;
     if has == 0 {
         sqlx::query("ALTER TABLE decisions ADD COLUMN incapable_targets TEXT")
+            .execute(pool)
+            .await?;
+    }
+    Ok(())
+}
+
+/// v11: the key's per-request cost ceiling and the targets it removed. Old rows read as none.
+pub(super) async fn migrate_v11(pool: &SqlitePool) -> Result<(), sqlx::Error> {
+    let has: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM pragma_table_info('decisions') WHERE name = 'cost_ceiling'",
+    )
+    .fetch_one(pool)
+    .await?;
+    if has == 0 {
+        sqlx::query("ALTER TABLE decisions ADD COLUMN cost_ceiling TEXT")
             .execute(pool)
             .await?;
     }
@@ -261,7 +295,7 @@ pub(super) async fn insert_batch(pool: &SqlitePool, batch: &[Decision]) -> Resul
             "INSERT INTO decisions (request_id, ts_ms, key_id, session_id, format, requested_model, \
              route, rule, source, skipped_rules, budget, eligible_targets, stream, prompt_tokens, \
              tools, images, attempts, status, outcome, message, served_target, served_provider, \
-             latency_ms, excluded_targets, cold_targets, incapable_targets, ranking, overrides) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23,?24,?25,?26,?27,?28)",
+             latency_ms, excluded_targets, cold_targets, incapable_targets, ranking, overrides, cost_ceiling) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23,?24,?25,?26,?27,?28,?29)",
         )
         .bind(&d.request_id)
         .bind(d.ts_ms)
@@ -291,6 +325,7 @@ pub(super) async fn insert_batch(pool: &SqlitePool, batch: &[Decision]) -> Resul
         .bind(json_list(&d.incapable_targets))
         .bind(d.ranking.as_ref().and_then(|r| serde_json::to_string(r).ok()))
         .bind(json_list(&d.overrides))
+        .bind(d.cost_ceiling.as_ref().and_then(|c| serde_json::to_string(c).ok()))
         .execute(&mut *tx)
         .await?;
     }
@@ -373,6 +408,9 @@ pub(super) async fn query(
                 .get::<Option<String>, _>("overrides")
                 .and_then(|json| serde_json::from_str(&json).ok())
                 .unwrap_or_default(),
+            cost_ceiling: row
+                .get::<Option<String>, _>("cost_ceiling")
+                .and_then(|json| serde_json::from_str(&json).ok()),
         })
         .collect())
 }

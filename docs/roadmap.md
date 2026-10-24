@@ -166,10 +166,6 @@ In this order, API first. See [Direction: operating humpyard](architecture.md#di
     lookup being used on a large ledger, for example from a UI.
   - *Do not block writes while a large prune runs.* Trigger: a prune after a long gap, or a much shorter
     `decision_retention_days`, stalling the writer for noticeable time.
-- **A per-request cost ceiling on keys** (`max_request_usd`), designed in
-  `openspec/changes/add-request-cost-ceiling` and not built. It guards against one oversized or runaway request
-  on a metered provider, so it has nothing to do on a flat-rate plan such as OpenCode Go (whose limit is its quota).
-  Trigger: the first pay-as-you-go provider is added, or keys are shared with other people.
 - **A fuller admin GUI**, as an optional separate client of the admin API. It produces patches to the config file (a direct write only for a writable file, by opt-in) and never keeps configuration of its own. **One-click apply** (opening a change in the operator's repository through a hook) is deferred until a real need appears.
 
 ## Help wanted

@@ -28,6 +28,11 @@ pub enum GatewayError {
     Forbidden(String),
     #[error("{0}")]
     BudgetExceeded(String),
+    /// Every target the request could use would certainly cost more than the key's `max_request_usd`,
+    /// known before any upstream call (`add-request-cost-ceiling`). Distinct from `BudgetExceeded`: this
+    /// request is too big, not the allowance used up.
+    #[error("{0}")]
+    CostCeiling(String),
     #[error("{0}")]
     Unavailable(String),
     /// No target of the route can serve the request (tools, images or context size), known before
@@ -52,7 +57,7 @@ impl GatewayError {
             Self::UpstreamTimeout => StatusCode::GATEWAY_TIMEOUT,
             Self::Unauthorized(_) => StatusCode::UNAUTHORIZED,
             Self::Forbidden(_) => StatusCode::FORBIDDEN,
-            Self::BudgetExceeded(_) => StatusCode::PAYMENT_REQUIRED,
+            Self::BudgetExceeded(_) | Self::CostCeiling(_) => StatusCode::PAYMENT_REQUIRED,
             Self::Unavailable(_) | Self::OverrideNoTarget(_) => StatusCode::SERVICE_UNAVAILABLE,
             Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
@@ -70,10 +75,20 @@ impl GatewayError {
             Self::Unauthorized(_) => "unauthorized",
             Self::Forbidden(_) => "forbidden",
             Self::BudgetExceeded(_) => "budget_exhausted",
+            Self::CostCeiling(_) => "request_cost_ceiling",
             Self::Unavailable(_) => "no_eligible_target",
             Self::NoCapableTarget(_) => "no_capable_target",
             Self::OverrideNoTarget(_) => "override_no_target",
             Self::Internal(_) => "internal_error",
+        }
+    }
+
+    /// The machine-readable `code` of the OpenAI-shaped error body, for the errors a client is expected to
+    /// tell apart from others of the same status.
+    fn code(&self) -> Option<&'static str> {
+        match self {
+            Self::CostCeiling(_) => Some("request_cost_ceiling"),
+            _ => None,
         }
     }
 
@@ -98,7 +113,7 @@ impl GatewayError {
                 json!({"type": "error", "error": {"type": self.kind(), "message": message}})
             }
             WireFormat::OpenAiChat | WireFormat::OpenAiResponses => {
-                json!({"error": {"message": message, "type": self.kind(), "code": null}})
+                json!({"error": {"message": message, "type": self.kind(), "code": self.code()}})
             }
         }
     }

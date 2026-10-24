@@ -37,6 +37,13 @@ pub fn cost_micro_usd(usage: &Usage, price: &Price) -> u64 {
     u64_from_f64_rounded(micro)
 }
 
+/// A lower bound on what a request costs at `price`, in micro-USD (fractional): `prompt_low` tokens at the
+/// lowest input rate and `output` tokens at the lowest output rate, over the base price and every tier.
+/// It can only under-count, so a request whose bound exceeds a ceiling is certain to exceed it.
+pub fn cost_lower_bound_micro_usd(price: &Price, prompt_low: u64, output: u64) -> f64 {
+    f64_from_u64(prompt_low) * price.min_input() + f64_from_u64(output) * price.min_output()
+}
+
 /// Total tokens counted against token limits: everything sent and generated. Reasoning tokens are
 /// already inside the output count.
 pub fn total_tokens(usage: &Usage) -> u64 {
