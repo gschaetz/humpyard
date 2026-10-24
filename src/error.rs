@@ -317,10 +317,13 @@ impl From<LlmClientError> for GatewayError {
 /// The provider's own error message when it sent a recognizable JSON shape (`error.message`,
 /// `error` as a string, or `message`). Anything else, notably an HTML error page from a proxy, is
 /// reduced to the status; short plain text is kept, collapsed to one clipped line.
+///
+/// Some providers (Google AI) wrap their error object in a one-element array; its first element is read.
 fn upstream_message(body: &str, status: StatusCode) -> String {
     let from_json = serde_json::from_str::<serde_json::Value>(body)
         .ok()
         .and_then(|v| {
+            let v = if v.is_array() { v[0].clone() } else { v };
             v["error"]["message"]
                 .as_str()
                 .or_else(|| v["error"].as_str())
@@ -392,6 +395,11 @@ mod tests {
         );
         assert_eq!(msg(r#"{"error":"flat string"}"#), "flat string");
         assert_eq!(msg(r#"{"message":"top level"}"#), "top level");
+        assert_eq!(
+            msg(r#"[{"error":{"code":400,"message":"Unknown name \"store\""}}]"#),
+            "Unknown name \"store\""
+        );
+        assert_eq!(msg("[]"), "upstream returned 404 Not Found");
         let html = "<!DOCTYPE HTML>\n<title>404 Not Found</title>\n<h1>Not Found</h1>";
         assert_eq!(msg(html), "upstream returned 404 Not Found");
         assert_eq!(msg(""), "upstream returned 404 Not Found");

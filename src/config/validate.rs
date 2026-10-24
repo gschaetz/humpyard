@@ -136,6 +136,11 @@ pub(super) fn validate(raw: &RawConfig) -> Result<(), ConfigError> {
     }
     for (name, provider) in &raw.providers {
         validate_headers(name, &provider.headers)?;
+        if provider.drop_fields.iter().any(String::is_empty) {
+            return Err(invalid(format!(
+                "providers.{name}.drop_fields: a field name must not be empty"
+            )));
+        }
         if let Some(source) = &provider.quota_source {
             validate_quota_source(name, source, &provider.base_url)?;
         }

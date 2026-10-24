@@ -148,6 +148,12 @@ What was verified, with a real model behind the route:
   tokens (14,592 cached) and 314 output tokens; the ledger rows sum to the same figures. All
   upstream requests were HTTP 200.
 - **Cosmetic:** Codex prints "Model metadata for `agent` not found" for non-OpenAI model names.
+- **A strict provider in the pool broke every request (found 2026-10-23, codex-cli 0.163.0).** Codex sends
+  `store` and `prompt_cache_key`; Google AI rejects both with a 400, which does not fail over, so a route whose
+  first usable target was Google AI failed every time while the same Codex run on another route passed. The
+  provider's `drop_fields` setting removes them; see
+  [Providers](providers.md#providers-that-reject-unknown-request-fields). Codex 0.163.0 also sends 12 tools
+  including `multi_agent_v1__*` and the goal tools; Gemini accepted them all once those two fields were gone.
 - **Longer sessions need request adaptation (found 2026-10-08).** Short runs passed, but the first
   real multi-step coding task failed with upstream 400s once the conversation had history: Codex
   replays its earlier reasoning items and injects `developer`-role messages, neither of which chat

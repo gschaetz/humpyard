@@ -109,6 +109,35 @@ A long streamed answer from OpenCode Go (glm-5.3-flash), `shutdown_grace_secs = 
   text. Fixed by `estimate-unreported-stream-usage`: such rows now carry an output-only estimate
   (marked `usage_missing`); the input side of a cut stream is still not counted.
 
+## Providers that reject unknown request fields
+
+(found 2026-10-23, Codex CLI 0.163.0 through a pool whose first usable target was Google AI)
+
+Some OpenAI-compatible endpoints answer HTTP 400 to a field they do not know instead of ignoring it. Google AI
+(`https://generativelanguage.googleapis.com/v1beta/openai`) rejects `store` and `prompt_cache_key`, which a
+Responses client such as Codex sends and the translation copies into the chat request:
+
+```text
+Unknown name "prompt_cache_key": Cannot find field.
+Unknown name "store": Cannot find field.
+```
+
+A 400 is a client error, so the route does not move on to the next target. List the fields on the provider
+and the gateway removes them from every request sent there; other providers still receive them (some use
+`prompt_cache_key` to route to a warm cache, and cached tokens are priced):
+
+```toml
+[providers.googleai]
+base_url = "https://generativelanguage.googleapis.com/v1beta/openai"
+api_key_env = "GOOGLE_AI_KEY"
+drop_fields = ["store", "prompt_cache_key"]
+```
+
+Checked by replaying the captured request straight to Gemini 3.6 Flash: both fields present, 400; either one
+alone, 400; both removed, 200 with a tool call. Add only fields a provider rejects: removing `stream_options`,
+for example, would stop that provider reporting usage. Google also wraps its errors in an array, which the
+gateway reads, so the message names the field.
+
 ## Not yet verified
 
 A real provider's own 429 or 5xx, Responses `previous_response_id`, and long-running streams near the

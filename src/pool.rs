@@ -29,6 +29,8 @@ struct EndpointClient {
     breaker: Arc<Breaker>,
     /// Part of the endpoint's identity: a different URL is a different endpoint.
     base_url: String,
+    /// Request fields this endpoint's provider rejects; removed from each attempt.
+    drop_fields: Vec<String>,
 }
 
 /// One endpoint's health, for reporting.
@@ -159,6 +161,25 @@ fn adapt_for_chat_providers(request: &mut Request) {
     }
 }
 
+/// Removes the named top-level fields a provider rejects. Only pass-through fields (the translation's
+/// extensions) and the preserved same-format bodies carry them; the preserved bodies are what a chat client's
+/// request would otherwise be replayed from, so the same names are removed there and the rest stays as sent.
+fn drop_request_fields(request: &mut Request, fields: &[String]) {
+    if fields.is_empty() {
+        return;
+    }
+    for field in fields {
+        request.llm_request.extensions.fields.remove(field);
+    }
+    for body in request.llm_request.preservation.requests.values_mut() {
+        if let Some(object) = body.as_object_mut() {
+            for field in fields {
+                object.remove(field);
+            }
+        }
+    }
+}
+
 #[async_trait]
 impl RoutedLlmClient for TargetClient {
     async fn call(&self, request: Request) -> Result<Response, LlmClientError> {
@@ -226,6 +247,7 @@ impl TargetClient {
             let endpoint = &self.endpoints[*index];
             let mut attempt = request.clone();
             attempt.llm_request.model = Some(endpoint.model.clone());
+            drop_request_fields(&mut attempt, &endpoint.drop_fields);
             let started = std::time::Instant::now();
             let result = endpoint.client.call(attempt).await;
             // A rate-limited or unavailable endpoint that says when it will serve again is cooled for
@@ -369,6 +391,7 @@ fn endpoint_client(
         client,
         breaker,
         base_url: provider.base_url.clone(),
+        drop_fields: provider.drop_fields.clone(),
     })
 }
 

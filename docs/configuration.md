@@ -4,7 +4,10 @@ See the [example configs](examples.md); `humpyard check-config <file>` validates
 
 - `[providers.<name>]`: an OpenAI-compatible endpoint. The API key is read from the environment
   variable named by `api_key_env`; an inline key is rejected. Optional `headers = { ... }` adds
-  static HTTP headers to every call (authentication headers are rejected).
+  static HTTP headers to every call (authentication headers are rejected). Optional
+  `drop_fields = ["store", "prompt_cache_key"]` removes those top-level request fields from every
+  request sent to that provider, for a provider that rejects fields it does not know (see
+  [Providers](providers.md#providers-that-reject-unknown-request-fields)).
 - `[targets.<name>]`: a model served by an ordered list of `{ provider, model }` endpoints.
   Clients may request a target by name; endpoints are tried in order, failing over on
   connection errors, timeouts, HTTP 429 and 5xx (not on other 4xx, and not once a stream has begun).
