@@ -4,7 +4,7 @@ What has shipped, what is being built, and what comes next, at a glance. The det
 lives in the [component status table](architecture.md#component-status), the OpenSpec change named
 in it, and the [decision records](adr/README.md). Update this page in the same PR as the change.
 
-Last updated: 2026-10-23. Latest release: 0.12.0. Community: [Discord](https://discord.gg/qfTGr7KTfq) for questions and feedback; GitHub issues for bugs and requests.
+Last updated: 2026-10-23. Latest release: 0.13.0. Community: [Discord](https://discord.gg/qfTGr7KTfq) for questions and feedback; GitHub issues for bugs and requests.
 
 ## Shipped
 
@@ -33,13 +33,7 @@ Last updated: 2026-10-23. Latest release: 0.12.0. Community: [Discord](https://d
 | 0.10.0 | 2026-10-19 | `humpyard init`: a guided first config. It checks each provider's models live (listed and answering one small request) so a retired model never reaches the file, writes a loopback-only config with `fast` and `deep` targets, proves it with one in-process request, and creates a budgeted key when asked to listen beyond this machine. The README quick start now leads with it; the example configs no longer name a Groq model that was retired |
 | 0.11.0 | 2026-10-20 | `humpyard ctl`: a read-only client for a running gateway, local or remote (`status`, `models`, `health`, `stats`, `decisions`, `quota`, `explain`, `whoami`). The key comes only from an environment variable, redirects are never followed, plain HTTP is for loopback only, and exit codes tell a refusal (1) from an unreachable gateway (2). Also: a provider's `413 Request too large` is now `overflow` (ADR 0023, amended): the request moves to the next endpoint, pool member or guarded paid tail without counting against the endpoint's health, and the client gets the real 413 if nothing takes it |
 | 0.12.0 | 2026-10-21 | The effective configuration: `GET /v1/config` returns what the gateway is serving, secrets omitted, with each target's and route's source (`file` or `generated`), the pool routes' resolved members and the config fingerprint; a key reads it only with `read_config = true`. The fingerprint is also the metric `humpyard_config_info`, `check-config` prints it, and `humpyard ctl config [--fingerprint]` shows it, so a repository can be compared with a running gateway. Also: `rustls-webpki` and `webpki-root-certs` updated for RUSTSEC-2026-0382 (certificate paths through distrusted emSign intermediates) |
-
-Merged since 0.12.0, not yet released: `humpyard init --out -` prints the configuration to standard output (progress, the one-time key and the test reply go to standard error), so it can be piped, for example into `kubectl create configmap`. Also **expiring runtime overrides**: a quick, temporary
-switch to stop using a target (`disable_target`) or every endpoint of a provider (`drain_provider`), or to cut a route to one
-target (`pin_route`), with no config edit and no reload. Each always expires (4 hours by default, 24 at most), is audited with
-the creating key's id, and only ever removes options. They are managed with `humpyard ctl overrides` or `/v1/overrides`, shown
-in decisions, `explain`, `GET /v1/config` and two metrics, and need a ledger and a key with `manage_overrides = true`. See
-[Runtime overrides](routing.md#runtime-overrides).
+| 0.13.0 | 2026-10-23 | **Expiring runtime overrides**: a quick, temporary switch to stop using a target (`disable_target`) or every endpoint of a provider (`drain_provider`), or to cut a route to one target (`pin_route`), with no config edit and no reload. Each always expires (4 hours by default, 24 at most), is audited with the creating key's id, and only ever removes options. They are managed with `humpyard ctl overrides` or `/v1/overrides`, shown in decisions, `explain`, `GET /v1/config` and two metrics (with the alert `HumpyardOverrideLong`), and need a ledger and a key with `manage_overrides = true`; see [Runtime overrides](routing.md#runtime-overrides). Also: `humpyard init --out -` prints the configuration to standard output so it can be piped, for example into `kubectl create configmap`; `humpyard completions <shell>` prints a completion script for bash, elvish, fish, PowerShell or zsh (thanks to LuckTerence); `tokio` updated for RUSTSEC-2026-0386. **Schema change:** the ledger moves to v10 on first start, and a v10 ledger cannot be opened by an older binary, so keep a copy of the ledger before upgrading if you may want to go back |
 
 ## Building now
 
@@ -99,7 +93,7 @@ In this order, API first. See [Direction: operating humpyard](architecture.md#di
 1. ~~A `/metrics` endpoint (Prometheus)~~ Shipped in 0.8.0; it is built on one registry, so the read-only status page (item 5) is a thin view over it.
 2. ~~Health-driven target eligibility~~ Shipped in 0.8.2 (ADR 0018): a cold target is skipped only when an alternative remains.
 3. A native Anthropic upstream, for providers that speak Anthropic Messages directly.
-4. A versioned admin API with its own credential, exposing the effective configuration with provenance and its fingerprint, with expiring runtime overrides ([ADR 0025](adr/0025-the-ui-has-no-state-of-its-own.md)) shipped as `/v1/overrides` (merged after 0.12.0). The separate admin credential and database-managed keys follow, bounded by profiles defined in the file (they can narrow a profile, never exceed it).
+4. A versioned admin API with its own credential, exposing the effective configuration with provenance and its fingerprint, with expiring runtime overrides ([ADR 0025](adr/0025-the-ui-has-no-state-of-its-own.md)) shipped as `/v1/overrides` (0.13.0). The separate admin credential and database-managed keys follow, bounded by profiles defined in the file (they can narrow a profile, never exceed it).
 5. A read-only status page served by the binary, built on the same API.
 6. `migrate-modelrelay`: a command and bundled catalog to bring a ModelRelay setup across. This is the last step of [Replacing ModelRelay](#replacing-modelrelay), which lists what must exist first.
 
