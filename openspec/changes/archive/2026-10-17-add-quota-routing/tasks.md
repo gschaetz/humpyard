@@ -12,6 +12,13 @@
 
 - [x] 2.0 Record quota samples in the ledger (schema v3) and expose `GET /v1/quota/history`: a sample is stored when a window's percent, status or reset changes, and at least every 15 minutes; each sample carries the provider's notional cost since the previous one, from the usage rows; kept for `decision_retention_days`; tests (schema upgrade, sampling rule, history query, auth, no ledger)
 - [ ] 2.1 Run it against the real account for several days; compare percent deltas with ledger cost; record what the percent is a percent of, the `status` values seen, and the behavior at a cap (decision input for step 3)
+  - Findings so far (7 days, 2026-10-17 to 10-24, 17,802 samples from the live gateway); the task stays open until a cap is observed:
+    - The percent is an integer and account-level, and it moves for usage outside the gateway too: the monthly window reached 16% while the cost the gateway recorded was cents ($0.12 and $0.06 on 10-18, $0.015 on 10-22).
+    - One percentage point stepped for about $0.015 to $0.12 of gateway cost, so percent deltas cannot be matched against ledger cost except across bursts. The cost on each sample counts every key's calls to the provider.
+    - Only status `ok` was seen. The highest values were rolling 5, weekly 9 and monthly 16, so behavior at a cap is not yet observed.
+    - Resets: the rolling window's `resets_at` slides with the clock (about 5 hours ahead) while idle; the weekly window resets Monday 00:00 UTC; the monthly window reset on 10-23 at 23:37 UTC.
+    - For step 3: thresholds in a `when.quota` rule can only be coarse (whole percents), and a rule must treat a missing or stale snapshot as unknown, as designed.
+    - Reading the data needs a key that sees the traffic: `decisions` and `stats` are scoped to the calling key, but `/v1/quota/history` is not.
 
 ## 3. Use it in rules (after step 2)
 
