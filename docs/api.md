@@ -56,6 +56,9 @@ or any other client endpoint. Send it as `Authorization: Bearer <secret>`.
   needs a restart.
 - **Counted.** `humpyard_admin_requests_total{result}` ([Metrics](metrics.md)).
 
+Mint a credential with `humpyard keygen gary --admin --scopes read,overrides`: it prints the secret once and the
+`[admin.credentials.gary]` block to paste into the configuration (add `--expires 2027-01-01T00:00:00Z` for an expiry).
+
 ### Overrides and revoking a credential
 
 | Endpoint | Scope | What it does |

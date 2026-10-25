@@ -117,11 +117,11 @@ reference deployment, so the order follows what removing ModelRelay there needs.
 
 In this order, API first. See [Direction: operating humpyard](architecture.md#direction-operating-humpyard).
 
-1. ~~A `/metrics` endpoint (Prometheus)~~ Shipped in 0.8.0; it is built on one registry, so the read-only status page (item 5) is a thin view over it.
+1. ~~A `/metrics` endpoint (Prometheus)~~ Shipped in 0.8.0; it is built on one registry, so the admin GUI (item 5) can show the same numbers.
 2. ~~Health-driven target eligibility~~ Shipped in 0.8.2 (ADR 0018): a cold target is skipped only when an alternative remains.
 3. A native Anthropic upstream, for providers that speak Anthropic Messages directly.
-4. A versioned admin API with its own credential, exposing the effective configuration with provenance and its fingerprint, with expiring runtime overrides ([ADR 0025](adr/0025-the-ui-has-no-state-of-its-own.md)) shipped as `/v1/overrides` (0.13.0). The separate admin credential and database-managed keys follow, bounded by profiles defined in the file (they can narrow a profile, never exceed it).
-5. A read-only status page served by the binary, built on the same API.
+4. ~~A versioned admin API~~ Merged for the next release ([ADR 0027](adr/0027-admin-authority-is-granted-by-configuration-to-named-scoped-principals.md)): named, scoped credentials in `[admin]`, `/admin/v1` reads across every key, overrides recorded as `admin:<id>`, revocation without a deploy and an OpenAPI contract tested against the routes. Expiring runtime overrides ([ADR 0025](adr/0025-the-ui-has-no-state-of-its-own.md)) shipped as `/v1/overrides` (0.13.0). Database-managed keys follow, bounded by profiles defined in the file (they can narrow a profile, never exceed it).
+5. An admin GUI, as a separate client of the admin API (read-only views first). This replaces the earlier read-only status page; its hosting is undecided, which settles CORS, and OIDC sign-in is a later kind of principal.
 6. `migrate-modelrelay`: a command and bundled catalog to bring a ModelRelay setup across. This is the last step of [Replacing ModelRelay](#replacing-modelrelay), which lists what must exist first.
 
 ## Later, and only on a measured trigger

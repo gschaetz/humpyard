@@ -33,8 +33,20 @@ enum Command {
     /// Look at a running gateway, local or remote: status, models, health, stats, decisions, quota, explain,
     /// whoami. Read-only; uses your key from an environment variable and never prints it.
     Ctl(CtlArgs),
-    /// Create a virtual key: prints the key once and the config block holding its hash.
-    Keygen { id: String },
+    /// Create a virtual key: prints the key once and the config block holding its hash. With `--admin`, the
+    /// secret is an admin credential instead and the block is an `[admin.credentials.<id>]` one.
+    Keygen {
+        id: String,
+        /// Mint an admin credential (ADR 0027) rather than a virtual key.
+        #[arg(long, requires = "scopes")]
+        admin: bool,
+        /// With `--admin`: what the credential may do, from `read`, `overrides`, `credentials`.
+        #[arg(long, value_delimiter = ',', requires = "admin")]
+        scopes: Vec<String>,
+        /// With `--admin`: when it stops working, a UTC datetime such as 2027-01-01T00:00:00Z.
+        #[arg(long, requires = "admin")]
+        expires: Option<String>,
+    },
     /// Propose prices from a public source, or check a config's prices for drift. Reads a source
     /// over the network and never changes the config or a running gateway.
     Prices {
@@ -889,11 +901,23 @@ async fn run(command: Command) -> Result<(), String> {
             }
             Ok(())
         }
-        Command::Keygen { id } => {
+        Command::Keygen {
+            id,
+            admin,
+            scopes,
+            expires,
+        } => {
             let (key, hash) = humpyard::auth::generate_key()
                 .map_err(|e| format!("cannot gather randomness: {e}"))?;
-            println!("Key (shown once; store it securely): {key}\n");
-            println!("Add to your config:\n\n[keys.{id}]\nsha256 = \"{hash}\"");
+            if admin {
+                let block =
+                    humpyard::admin::credential_block(&id, &scopes, expires.as_deref(), &hash)?;
+                println!("Admin credential (shown once; store it securely): {key}\n");
+                println!("Add to your config:\n\n{block}");
+            } else {
+                println!("Key (shown once; store it securely): {key}\n");
+                println!("Add to your config:\n\n[keys.{id}]\nsha256 = \"{hash}\"");
+            }
             Ok(())
         }
         Command::Prices { .. }

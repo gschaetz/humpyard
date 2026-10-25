@@ -57,16 +57,15 @@ See the [example configs](examples.md); `humpyard check-config <file>` validates
 - `[metrics]` (optional, off by default): the Prometheus `/metrics` endpoint. `enabled`, `listen` (a
   separate address; recommended), `bearer_sha256` (the credential for serving it on the main
   listener), `key_labels` and `key_label_limit`. See [Metrics and alerts](metrics.md).
-- `[admin]` (optional): who may administer the gateway, as named credentials (ADR 0027, OpenSpec change
-  `add-admin-api`). The section is read and validated today; the `/admin/v1` API that uses it is still being
-  built, so adding it changes nothing a client sees yet.
+- `[admin]` (optional): who may administer the gateway, as named credentials that open the
+  [`/admin/v1` API](api.md#the-admin-api) (ADR 0027).
 
   ```toml
   [admin]
   listen = "127.0.0.1:9090"            # optional: serve the admin API only here, never on the main listener
 
   [admin.credentials.gary]
-  sha256 = "sha256:<64 hex digits>"    # from `humpyard keygen gary`; use the `sha256` line it prints
+  sha256 = "sha256:<64 hex digits>"    # from `humpyard keygen gary --admin --scopes read,overrides,credentials`
   scopes = ["read", "overrides", "credentials"]
   expires = 2027-01-01T00:00:00Z       # optional; an unquoted TOML datetime with a date, time and offset
   ```
@@ -75,7 +74,9 @@ See the [example configs](examples.md); `humpyard check-config <file>` validates
   hash, at least one **scope** (`read`, `overrides` or `credentials`, with no repeats) and an optional expiry. A
   credential's hash must differ from every `[keys.*]` hash, the metrics credential and every other admin
   credential, so a leaked client key can never open the admin API. `listen` needs at least one credential and
-  must differ from `listen` and `[metrics] listen`. `GET /v1/config` shows only how many credentials exist;
+  must differ from `listen` and `[metrics] listen`. `humpyard keygen <id> --admin --scopes read,overrides
+  [--expires 2027-01-01T00:00:00Z]` prints the secret once and this whole block, checked by the same loader the
+  gateway uses, so it never prints one the gateway would refuse. `GET /v1/config` shows only how many credentials exist;
   `humpyard check-config` prints each one's id, scopes and expiry, never a hash. Without the section the admin
   API is off.
 - `decision_retention_days` (top level, default 90): how long routing decisions and provider quota

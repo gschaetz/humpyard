@@ -5,7 +5,7 @@ component status (see [AGENTS.md](../AGENTS.md)). Diagrams are Mermaid and rende
 
 At-a-glance view of what shipped and what is next: [roadmap.md](roadmap.md).
 
-Last updated: 2026-10-24 (per-request cost ceiling on keys implemented, with its row in the status table; runtime overrides implemented and their change archived; `/v1/overrides` and the override step in planning; `init --out -` in the `init.rs` row; expiring runtime overrides added to the status table as a merged proposal). Earlier, 2026-10-17 (the request-flow diagram redrawn top to bottom and split from the accounting diagram; capability eligibility, ADR 0019; health-driven eligibility, ADR 0018; strict routes, ADR 0017; `/metrics` on one metrics registry, ADR 0016; quota history; roadmap page added). Earlier, 2026-10-10 (roadmap refresh: auto-routing, pool classes with opt-in strict fallback, stickiness, advisory cost-aware ordering and a native Anthropic upstream added; packaging row corrected). Operator-surface order: `/metrics`, health-driven eligibility, native Anthropic upstream, then the admin API and database-managed keys.
+Last updated: 2026-10-25 (the admin API implemented: named, scoped admin credentials in `[admin]`, `/admin/v1` reads across every key, overrides and credential revocation, and a published OpenAPI contract, ADR 0027; `admin.rs` and `server/admin.rs` in the module table; the operator-surface diagram; the Direction section rewritten around it; the status page folded into the admin GUI row). Earlier, 2026-10-24 (per-request cost ceiling on keys implemented, with its row in the status table; runtime overrides implemented and their change archived; `/v1/overrides` and the override step in planning; `init --out -` in the `init.rs` row; expiring runtime overrides added to the status table as a merged proposal). Earlier, 2026-10-17 (the request-flow diagram redrawn top to bottom and split from the accounting diagram; capability eligibility, ADR 0019; health-driven eligibility, ADR 0018; strict routes, ADR 0017; `/metrics` on one metrics registry, ADR 0016; quota history; roadmap page added). Earlier, 2026-10-10 (roadmap refresh: auto-routing, pool classes with opt-in strict fallback, stickiness, advisory cost-aware ordering and a native Anthropic upstream added; packaging row corrected). Operator-surface order: `/metrics`, health-driven eligibility, native Anthropic upstream, then the admin API and database-managed keys.
 
 ## Component status
 
@@ -45,13 +45,13 @@ Last updated: 2026-10-24 (per-request cost ceiling on keys implemented, with its
 | Graceful shutdown: drain, grace period, cancel, ledger flush before exit | Implemented | `add-graceful-shutdown` |
 | `count_tokens` / `responses/input_tokens`: local, conservative prompt-size estimates (no upstream call). `responses/compact` intentionally not implemented | Implemented | `add-count-tokens`, `add-responses-input-tokens` |
 | Packaging: tag-only release workflow (native runners), GHCR image, launchd service; releases published since 0.1.0 | Implemented | `add-packaging` (ADR 0010) |
-| Database-managed keys + a versioned, documented admin API (separate admin credential) | Planned (designed for in `add-cost-tracking`) | not yet proposed |
+| Admin API: named, scoped admin credentials in `[admin]` (never a client key or a database row), `/admin/v1` reads across every key, overrides recorded as `admin:<id>`, revocation of a credential without a deploy, and a hand-written OpenAPI document tested against the routes (ADR 0027) | Implemented (unreleased) | `add-admin-api` |
+| Database-managed keys, bounded by profiles defined in the file (ADR 0025) | Planned | not yet proposed |
 | Expiring runtime overrides: `disable_target`, `drain_provider` and `pin_route` on `/v1/overrides` and `humpyard ctl overrides`, mandatory expiry, audited, subtract-only, per instance (ADR 0025) | Implemented (0.13.0) | `add-runtime-overrides` (archived) |
 | Price import and drift check: `humpyard prices import/check` from public sources (models.dev first), tiered prices, never applied or fetched at runtime (ADR 0014) | Core implemented: `prices import`/`check` against models.dev; tiered prices implemented (cost by prompt size, highest tier for policy); `price_source` in config implemented; the scheduled check still to do | `add-price-import` |
 | Quota-aware routing: poll a provider's published usage windows (OpenCode Go first), expose them, and let selector rules match on them; advisory, fails open, measured before use (ADR 0015) | Snapshot, poller, `GET /v1/quota` and stored history (`GET /v1/quota/history`) implemented; measuring now; selector condition after that | `add-quota-routing` |
 | `/metrics` endpoint (Prometheus format) on one metrics registry | Implemented | `add-metrics` |
-| Read-only status page served by the binary (endpoint health, spend, recent requests) | Planned | not yet proposed |
-| Full admin GUI (key and budget management, spend charts) | Later; not ruled out | not yet proposed |
+| Admin GUI: a separate client of `/admin/v1`, read-only views first, then overrides and config patches; hosting and stack undecided (it needs CORS or a same-origin host, and later OIDC sign-in) | Next; not yet proposed | not yet proposed |
 | `migrate-modelrelay` command + bundled catalog | Planned | not yet proposed |
 
 ## Direction: operating humpyard
@@ -59,17 +59,19 @@ Last updated: 2026-10-24 (per-request cost ceiling on keys implemented, with its
 The gateway is configured as code today and observed through `GET /v1/health`, `GET /v1/key/info`
 and the SQLite ledger. The planned order for the operator-facing surface is API first:
 
-1. A versioned, documented admin API (OpenAPI generated from the code) with its own admin
-   credential and scopes, so a client key can never mint keys. Config-defined keys stay read-only
-   in the API. Database-managed keys are credentials bounded by profiles defined in the file: they can
-   narrow a profile, never exceed it, always expire, and are revoked immediately
-   ([ADR 0025](adr/0025-the-ui-has-no-state-of-its-own.md)); the API exposes the effective configuration with the source of each value and its fingerprint, and
-   runtime actions are expiring overrides, never configuration.
-2. A `/metrics` endpoint, so existing Prometheus and Grafana setups need no custom UI.
-3. A read-only status page served by the binary, built only on the same API.
-4. A fuller admin GUI is deliberately left open for later, for people who want one. It should be an
-   optional, separate component that is just another client of the admin API, so the core stays a
-   single small binary. Nothing above should be built in a way that rules it out.
+1. **Done:** a versioned admin API with its own credentials and scopes, so a client key can never open it
+   (`/admin/v1`, [ADR 0027](adr/0027-admin-authority-is-granted-by-configuration-to-named-scoped-principals.md)).
+   Authority is granted by the file to named principals with scopes (`read`, `overrides`, `credentials`), an
+   optional expiry and revocation without a deploy. Its contract is `docs/openapi/admin-v1.json`, served at
+   `GET /admin/v1/openapi.json` and tested against the routes. Runtime actions are expiring overrides, never
+   configuration ([ADR 0025](adr/0025-the-ui-has-no-state-of-its-own.md)).
+2. **Done:** a `/metrics` endpoint, so existing Prometheus and Grafana setups need no custom UI.
+3. **Next:** an admin GUI, built only on the admin API as a separate client, read-only views first. Its
+   hosting is undecided, which settles CORS; sign-in through an identity provider (OIDC) is a later kind of
+   principal that changes how a caller is recognised, not how it is audited or revoked.
+4. **Later:** database-managed keys, bounded by profiles defined in the file: they can narrow a profile,
+   never exceed it, always expire and are revoked immediately. Nothing in the database may grant admin
+   authority.
 
 The rule for any interface is that it keeps no configuration state of its own: structural changes
 are patches to the configuration file, operational actions are expiring overrides, and generated
@@ -107,6 +109,24 @@ flowchart TD
     ACC --> TRK[Budget tracker<br/>live counters]
     LED -. rebuilt on start .-> TRK
     TRK -. spend and limits .-> BUD[Budget check<br/>and routing policy]
+```
+
+## Current: operator surface (implemented)
+
+How an administrator reaches the gateway. The admin credentials come only from the configuration, so neither
+authenticator ever falls through to the other, and a revocation lives in the override rows, where nothing that
+plans a request can see it.
+
+```mermaid
+flowchart TD
+    OP[Operator or GUI<br/>admin credential] --> ADM[/admin/v1<br/>own listener when configured]
+    ADM --> AUTHN[Admin authentication<br/>configured credentials, expiry,<br/>revocation, scope]
+    AUTHN --> READ[Reads across every key<br/>config, health, quota, decisions, stats]
+    AUTHN --> OVR[Overrides and revocation<br/>recorded as admin:id]
+    OVR --> STORE[(Override rows<br/>in the ledger, audited)]
+    STORE -. overrides in force .-> PLAN[Planning<br/>subtracts targets]
+    STORE -. revocations .-> AUTHN
+    READ --> LED[(Ledger)]
 ```
 
 ## Target: full pipeline (planned order is fixed)
@@ -151,12 +171,14 @@ Switchyard decides the macro question (which target); the provider pool answers 
 | `ledger/stats.rs` | Read-only aggregation over decisions and usage: group stats, outcome mix, nearest-rank percentiles |
 | `ledger/overrides.rs` | Runtime override rows and their audit trail (schema v9); written at once, not queued, pruned with the decisions, never an override still in force |
 | `ledger/decisions.rs` | Routing decision rows (one per request), attempts, the runtime overrides that applied, per-key queries, retention pruning |
-| `overrides.rs` | The runtime-override store: kinds, mandatory expiry within `[overrides]` limits, create and revoke with an audit row, the in-memory set of overrides in force, behind the `OverrideStore` trait so a shared backend can replace the ledger-backed one; `removes` decides what an active override takes out of a route, and `Drains` is what the pool asks, endpoint by endpoint, before trying one |
+| `overrides.rs` | The runtime-override store: kinds, mandatory expiry within `[overrides]` limits, create and revoke with an audit row, credential revocations kept in their own list that planning and clients cannot see, the in-memory set of overrides in force, behind the `OverrideStore` trait so a shared backend can replace the ledger-backed one; `removes` decides what an active override takes out of a route, and `Drains` is what the pool asks, endpoint by endpoint, before trying one |
 | `ledger.rs` | SQLite usage ledger with async batching writer and period queries |
 | `metering.rs` | Per-request metered clients, stream tap, answer/judge classification, `Accounting` |
 | `pricing.rs` / `clock.rs` | micro-USD cost from usage; clock and UTC periods |
 | `server/explain.rs` | The `explain` dry run: reuses selection, budget and policy planning, adds a per-rule trace |
 | `server/overrides.rs` | `/v1/overrides`: create, list and remove runtime overrides; checks the caller's `manage_overrides`, that the ledger exists, and that the subject exists in the configuration being served and a pin adds no reach |
+| `admin.rs` | Admin authentication (ADR 0027): resolves a presented secret to a principal (id, scopes, expiry) from the configured admin credentials only, never a client key, and builds the `[admin.credentials.<id>]` block `keygen --admin` prints |
+| `server/admin.rs` | `/admin/v1`: the route table (`ROUTES`) the router is built from, per-route scope checks, 401 `admin_credential_invalid` and 403 `admin_scope_required`, the read endpoints across every key, overrides recorded as `admin:<id>`, credential revocation, and `/admin/v1/openapi.json` |
 | `server/config_view.rs` | `GET /v1/config`: the effective configuration as JSON with each target's and route's source and the fingerprint, secrets omitted; readable by keys with `read_config` (or any caller on a keyless gateway) |
 | `select.rs` | Route selection rules: first-match evaluation of conditions on the key, requested model, headers, tags and agent metadata (pure, no HTTP types) |
 | `routing.rs` | Builds one long-lived Switchyard algorithm (and target groups) per route and per bare target; applies policy eligibility, tier substitution and random-weight realignment |

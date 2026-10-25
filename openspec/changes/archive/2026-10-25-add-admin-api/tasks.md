@@ -38,10 +38,10 @@
 
 ## 6. Operator experience and wrap-up
 
-- [ ] 6.1 `keygen --admin <id> --scopes ...` printing a secret once and the `[admin.credentials.<id>]` block with its hash; verify a test that the printed block loads and authenticates
-- [ ] 6.2 Update `docs/architecture.md` (component table, the Direction section and its diagrams) and `docs/roadmap.md`, and verify the Mermaid diagrams still match the code
-- [ ] 6.3 Accept ADR 0027 when the design is confirmed, and make the `define-ui-config-model` task 4.1 note that the GUI now follows this change; verify `docs/adr/README.md` lists it as accepted
-- [ ] 6.4 Run fmt, clippy `-D warnings` and the full test suite, then archive this change with `openspec archive add-admin-api --yes`; verify all gates pass and the spec deltas merge
+- [x] 6.1 `keygen --admin <id> --scopes ...` printing a secret once and the `[admin.credentials.<id>]` block with its hash; verify a test that the printed block loads and authenticates
+- [x] 6.2 Update `docs/architecture.md` (component table, the Direction section and its diagrams) and `docs/roadmap.md`, and verify the Mermaid diagrams still match the code
+- [x] 6.3 Accept ADR 0027 when the design is confirmed, and make the `define-ui-config-model` task 4.1 note that the GUI now follows this change; verify `docs/adr/README.md` lists it as accepted
+- [x] 6.4 Run fmt, clippy `-D warnings` and the full test suite, then archive this change with `openspec archive add-admin-api --yes`; verify all gates pass and the spec deltas merge
 
 ## Workflow follow-up
 

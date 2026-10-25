@@ -1,6 +1,6 @@
 # 0027. Admin authority is granted by configuration to named, scoped principals, never to a client key or a database row
 
-- Status: proposed
+- Status: accepted
 - Date: 2026-10-25
 - Supersedes: none
 - Change: `openspec/changes/add-admin-api`
