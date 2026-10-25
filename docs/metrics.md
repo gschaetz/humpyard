@@ -55,6 +55,7 @@ cannot call inference or any other endpoint.
 | `humpyard_capability_skips_total` | counter | `route`, `target`, `reason` |
 | `humpyard_cost_ceiling_total` | counter | `outcome` (`removed`, `refused`), `key`\* |
 | `humpyard_admin_requests_total` | counter | `result` (`ok`, `unauthorized`, `forbidden`); exported only while an [admin credential](configuration.md) is configured |
+| `humpyard_admin_revocations_active` | gauge | none; admin credential revocations in force, exported only while an admin credential is configured |
 | `humpyard_target_latency_seconds` | gauge | `target` |
 | `humpyard_discovery_targets` | gauge | (none; only when `[discovery] file` is set) |
 | `humpyard_discovery_file_state` | gauge | `state` (`missing`, `empty`, `loaded`, `ignored`; 1 for the current state) |
@@ -95,6 +96,9 @@ Notes:
   credential, an unknown or expired one, or a client key) and `forbidden` (a valid credential without the scope).
   It never carries a credential id or secret, and it is not exported at all while no admin credential is
   configured.
+- **Admin revocations** is the number of [admin credential revocations](api.md#overrides-and-revoking-a-credential)
+  in force. They are not counted in `humpyard_overrides_active`. The shipped alert rules include
+  `HumpyardAdminRevoked`, which fires when one has lasted over 30 minutes.
 - **A request that matched no route** is counted under `route="none"`.
 - **Refusal reasons** are `unauthorized`, `forbidden`, `budget_exhausted`, `no_eligible_target`,
   `unknown_model`, `bad_request`, `no_capable_target` and `request_cost_ceiling`. Upstream failures show up in `status_class` and in failovers.

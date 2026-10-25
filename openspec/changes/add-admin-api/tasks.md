@@ -24,11 +24,11 @@
 
 ## 4. Overrides and revocation
 
-- [ ] 4.1 `/admin/v1/overrides` (list with `read`; create and remove with `overrides`) on the same store and rules, recording the creator as `admin:<id>`; verify tests that the rules match `/v1/overrides` and the audit row names `admin:gary`
-- [ ] 4.2 The `revoke_admin_credential` override kind, `POST /admin/v1/credentials/{id}/revoke` (`credentials` scope, expiry within the maximum, unknown id refused) and a `revoked` field on `GET /admin/v1/credentials`; verify the next request by the revoked credential is refused without a reload and works again after expiry or removal
-- [ ] 4.3 Keep revocations out of planning, `explain`, decisions, `GET /v1/overrides` and `humpyard_overrides_active`, and add `humpyard_admin_revocations_active`; verify tests for each exclusion and the gauge
-- [ ] 4.4 Extend the architecture test so only the pool and the server read overrides still holds with the admin module, and add admin routes to it; verify `cargo test --test architecture` passes
-- [ ] 4.5 Document revocation and the audit identity in `docs/api.md` and `docs/routing.md#runtime-overrides`, and add an alert example for an old revocation to the alerts file; verify the alert file lints as the others do
+- [x] 4.1 `/admin/v1/overrides` (list with `read`; create and remove with `overrides`) on the same store and rules, recording the creator as `admin:<id>`; verify tests that the rules match `/v1/overrides` and the audit row names `admin:gary`
+- [x] 4.2 The `revoke_admin_credential` override kind, `POST /admin/v1/credentials/{id}/revoke` (`credentials` scope, expiry within the maximum, unknown id refused) and a `revoked` field on `GET /admin/v1/credentials`; verify the next request by the revoked credential is refused without a reload and works again after expiry or removal
+- [x] 4.3 Keep revocations out of planning, `explain`, decisions, `GET /v1/overrides` and `humpyard_overrides_active`, and add `humpyard_admin_revocations_active`; verify tests for each exclusion and the gauge
+- [x] 4.4 Extend the architecture test so only the pool and the server read overrides still holds with the admin module, and add admin routes to it; verify `cargo test --test architecture` passes
+- [x] 4.5 Document revocation and the audit identity in `docs/api.md` and `docs/routing.md#runtime-overrides`, and add an alert example for an old revocation to the alerts file; verify the alert file lints as the others do
 
 ## 5. The contract
 

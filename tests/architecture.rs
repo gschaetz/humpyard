@@ -381,6 +381,43 @@ fn only_the_pool_and_the_server_read_overrides() {
     );
 }
 
+/// Admin credential revocations live in the overrides table but are not overrides: only the override store, the
+/// admin API and the metrics scrape may touch them, so nothing that plans a request, lists overrides for a client
+/// or serves any other endpoint can come to see, create or end one (`add-admin-api`, ADR 0027).
+#[test]
+fn only_the_override_store_the_admin_api_and_the_scrape_touch_revocations() {
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let allowed = ["overrides.rs", "server/admin.rs", "server/metrics.rs"];
+    let words = [
+        "revoke_admin_credential",
+        "revoke_principal",
+        "end_revocations",
+        "is_revoked",
+        ".revocations(",
+        "Revocation",
+    ];
+    let mut offenders = Vec::new();
+    for path in rust_files(&src) {
+        let relative = path
+            .strip_prefix(&src)
+            .unwrap()
+            .to_string_lossy()
+            .replace('\\', "/");
+        if allowed.contains(&relative.as_str()) {
+            continue;
+        }
+        let code = production_code(&fs::read_to_string(&path).unwrap());
+        if let Some(word) = words.iter().find(|word| code.contains(**word)) {
+            offenders.push(format!("{relative} uses `{word}`"));
+        }
+    }
+    assert!(
+        offenders.is_empty(),
+        "admin credential revocations may be touched only by the override store, `server/admin.rs` and \
+         `server/metrics.rs`: {offenders:?}"
+    );
+}
+
 /// Only the `ctl` command (`main`) may use the remote-client module, so `serve` can never reach it.
 #[test]
 fn only_the_ctl_command_uses_the_ctl_module() {

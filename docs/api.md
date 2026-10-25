@@ -33,7 +33,7 @@ curl localhost:8080/v1/responses -H 'content-type: application/json' \
 | `GET /v1/stats/switches` | what changing endpoint in the middle of a session abandoned: switches, cached tokens left behind, the extra cost at the destination's prices, session coverage ([Cache use and sessions](budgets.md#cache-use-and-sessions)) |
 | `GET /v1/quota` | the latest usage windows (percent used, status, reset time) of each provider that names a `quota_source`, with the age of the data, or why it is unknown ([Provider quota](routing.md#provider-quota)) |
 | `GET /v1/quota/history` | stored quota samples (`window` such as `7d`, optional `provider` and `name`), oldest first, each with the cost of the provider's calls since the previous sample of its window; needs a ledger ([Provider quota](routing.md#provider-quota)) |
-| `GET /admin/v1/whoami`, `/config`, `/health`, `/quota`, `/decisions`, `/stats`, `/credentials` | the [admin API](#the-admin-api): who you are, and what the gateway is doing across every key |
+| `GET /admin/v1/whoami`, `/config`, `/health`, `/quota`, `/decisions`, `/stats`, `/credentials`, `/overrides` and the revoke endpoints | the [admin API](#the-admin-api): who you are, and what the gateway is doing across every key |
 | `GET /metrics` | Prometheus metrics, off by default; on a separate listener or behind its own credential ([Metrics and alerts](metrics.md)) |
 | `POST /v1/messages/count_tokens`, `POST /v1/responses/input_tokens` | conservative local estimates: no provider call, no cost |
 
@@ -56,6 +56,34 @@ or any other client endpoint. Send it as `Authorization: Bearer <secret>`.
   needs a restart.
 - **Counted.** `humpyard_admin_requests_total{result}` ([Metrics](metrics.md)).
 
+### Overrides and revoking a credential
+
+| Endpoint | Scope | What it does |
+|---|---|---|
+| `GET /admin/v1/overrides` | `read` | the [runtime overrides](routing.md#runtime-overrides) in force; `?history=true` adds the last 30 days |
+| `POST /admin/v1/overrides` | `overrides` | creates one, under the same rules as `POST /v1/overrides` |
+| `DELETE /admin/v1/overrides/{id}` | `overrides` | removes one in force |
+| `POST /admin/v1/credentials/{id}/revoke` | `credentials` | revokes an admin credential: body `{"reason": "...", "expires_in_secs": 3600}` |
+| `DELETE /admin/v1/credentials/{id}/revoke` | `credentials` | ends that revocation early |
+
+An override made here is recorded as made by `admin:<id>` (a client key is recorded by its own id), so the audit
+rows say who did it.
+
+**Revoking a credential** is how a colleague's access is cut without a deploy. It takes effect on the credential's
+very next request, with no reload: the answer is the same 401 an unknown secret gets. It lasts `expires_in_secs`
+(the `[overrides]` default of four hours when omitted, never more than its maximum, a day by default), ends by
+itself, and can be ended early with `DELETE`. It only ever removes access. A `reason` is required, the id must be
+a credential in the loaded configuration (anything else is a 400 `invalid_revocation`), revoking one that is
+already revoked is a 409, and it needs a `[ledger]` like any override (409 `overrides_need_ledger` without one).
+An admin may revoke their own credential, which is how one is retired. To remove a credential for good, delete it
+from the file and reload. `GET /admin/v1/credentials` shows `revoked: true` while one is in force, and
+`humpyard_admin_revocations_active` ([Metrics](metrics.md)) counts them; the shipped alert rules include
+`HumpyardAdminRevoked` for one that lasts over 30 minutes.
+
+A revocation is stored with the overrides but is not one: it is not listed by `/v1/overrides` or
+`/admin/v1/overrides`, is not counted in `humpyard_overrides_active`, never affects routing, and cannot be ended
+through the override endpoints, so a client key that manages overrides cannot restore a revoked admin.
+
 ### Reading
 
 `GET /admin/v1/whoami` returns the caller's `id`, `kind` (`credential`), `scopes` and `expires` (a UTC time, or
@@ -68,7 +96,7 @@ or any other client endpoint. Send it as `Authorization: Bearer <secret>`.
 | `GET /admin/v1/quota` | what `GET /v1/quota` returns |
 | `GET /admin/v1/decisions` | the decision log of **every key**, newest first; `?key=alice` narrows it to one key, and the usual filters (`limit`, `route`, `outcome`, `since_ms`, ...) apply |
 | `GET /admin/v1/stats` | the [statistics](budgets.md#statistics) of **every key**; `?key=alice` narrows them, and `group_by` and `window` work as on `/v1/stats` |
-| `GET /admin/v1/credentials` | every admin credential: `id`, `kind`, `scopes`, `expires` |
+| `GET /admin/v1/credentials` | every admin credential: `id`, `kind`, `scopes`, `expires`, and `revoked` while a revocation is in force |
 
 The client endpoints keep their rule that a key sees only its own decisions and statistics, and do not accept
 `key`; only an admin reads across keys. Nothing here ever returns a secret or a hash of one.
