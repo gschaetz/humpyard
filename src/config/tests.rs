@@ -610,3 +610,162 @@ fn provider_tool_call_extra_content_loads_and_must_be_a_table() {
         "{message}"
     );
 }
+
+const HASH_C: &str = "sha256:0000000000000000000000000000000000000000000000000000000000000003";
+
+fn admin_config(extra: &str) -> String {
+    format!("{VALID}\n{extra}")
+}
+
+#[test]
+fn an_admin_section_with_credentials_loads() {
+    let text = admin_config(&format!(
+        "[admin]\nlisten = \"127.0.0.1:9090\"\n[admin.credentials.gary]\nsha256 = \"{HASH_A}\"\nscopes = [\"read\", \"overrides\", \"credentials\"]\n\
+         [admin.credentials.sam]\nsha256 = \"{HASH_B}\"\nscopes = [\"read\"]\nexpires = 2027-01-01T00:00:00Z\n"
+    ));
+    let config = Config::from_toml(&text, env).unwrap();
+    assert!(config.admin.enabled());
+    assert_eq!(config.admin.listen, Some("127.0.0.1:9090".parse().unwrap()));
+    let gary = &config.admin.credentials["gary"];
+    assert_eq!(gary.scopes.len(), 3);
+    assert_eq!(gary.expires_ms, None);
+    let sam = &config.admin.credentials["sam"];
+    assert_eq!(sam.scopes.iter().next(), Some(&AdminScope::Read));
+    assert_eq!(sam.expires_ms, Some(1_798_761_600_000));
+}
+
+#[test]
+fn no_admin_section_leaves_the_admin_api_off() {
+    let config = Config::from_toml(VALID, env).unwrap();
+    assert!(!config.admin.enabled());
+    assert_eq!(config.admin, AdminConfig::default());
+    // An empty section is the same.
+    let config = Config::from_toml(&admin_config("[admin]\n"), env).unwrap();
+    assert!(!config.admin.enabled());
+}
+
+#[test]
+fn an_admin_listener_needs_a_credential_and_its_own_address() {
+    let alone = err(&admin_config("[admin]\nlisten = \"127.0.0.1:9090\"\n"));
+    assert!(alone.contains("admin.listen needs at least one"), "{alone}");
+    let same = err(&admin_config(&format!(
+        "[admin]\nlisten = \"127.0.0.1:8080\"\n[admin.credentials.a]\nsha256 = \"{HASH_A}\"\nscopes = [\"read\"]\n"
+    )));
+    assert!(same.contains("must differ from listen"), "{same}");
+    let metrics = err(&admin_config(&format!(
+        "[metrics]\nenabled = true\nlisten = \"127.0.0.1:9090\"\n[admin]\nlisten = \"127.0.0.1:9090\"\n\
+         [admin.credentials.a]\nsha256 = \"{HASH_A}\"\nscopes = [\"read\"]\n"
+    )));
+    assert!(
+        metrics.contains("must differ from metrics.listen"),
+        "{metrics}"
+    );
+}
+
+#[test]
+fn scopes_are_a_closed_non_empty_set_without_repeats() {
+    let credential = |scopes: &str| {
+        admin_config(&format!(
+            "[admin.credentials.gary]\nsha256 = \"{HASH_A}\"\nscopes = {scopes}\n"
+        ))
+    };
+    let none = err(&credential("[]"));
+    assert!(
+        none.contains("admin.credentials.gary.scopes needs at least one"),
+        "{none}"
+    );
+    let unknown = err(&credential("[\"read\", \"root\"]"));
+    assert!(
+        unknown.contains("unknown scope `root`") && unknown.contains("admin.credentials.gary"),
+        "{unknown}"
+    );
+    let twice = err(&credential("[\"read\", \"read\"]"));
+    assert!(twice.contains("lists `read` twice"), "{twice}");
+}
+
+#[test]
+fn a_secret_may_not_be_reused_across_kinds_or_credentials() {
+    let as_client = err(&admin_config(&format!(
+        "[keys.alice]\nsha256 = \"{HASH_A}\"\n[admin.credentials.gary]\nsha256 = \"{HASH_A}\"\nscopes = [\"read\"]\n"
+    )));
+    assert!(
+        as_client.contains("admin.credentials.gary") && as_client.contains("`alice`"),
+        "{as_client}"
+    );
+    let as_metrics = err(&admin_config(&format!(
+        "[metrics]\nenabled = true\nbearer_sha256 = \"{HASH_B}\"\n[admin.credentials.gary]\nsha256 = \"{HASH_B}\"\nscopes = [\"read\"]\n"
+    )));
+    assert!(
+        as_metrics.contains("must not be the metrics credential"),
+        "{as_metrics}"
+    );
+    let twice = err(&admin_config(&format!(
+        "[admin.credentials.gary]\nsha256 = \"{HASH_C}\"\nscopes = [\"read\"]\n[admin.credentials.sam]\nsha256 = \"{HASH_C}\"\nscopes = [\"read\"]\n"
+    )));
+    assert!(
+        twice.contains("same hash as admin credential `gary`"),
+        "{twice}"
+    );
+}
+
+#[test]
+fn a_plaintext_admin_secret_or_a_bad_hash_is_refused() {
+    let plain = err(&admin_config(
+        "[admin.credentials.gary]\nsecret = \"hunter2\"\nscopes = [\"read\"]\n",
+    ));
+    assert!(
+        plain.contains("admin.credentials.gary") && plain.contains("plaintext"),
+        "{plain}"
+    );
+    let bad = err(&admin_config(
+        "[admin.credentials.gary]\nsha256 = \"abc\"\nscopes = [\"read\"]\n",
+    ));
+    assert!(bad.contains("admin.credentials.gary.sha256"), "{bad}");
+}
+
+#[test]
+fn an_admin_id_is_a_short_safe_name() {
+    for id in ["has space", "slash/ed", "ünï", &"x".repeat(65)] {
+        let text = admin_config(&format!(
+            "[admin.credentials.\"{id}\"]\nsha256 = \"{HASH_A}\"\nscopes = [\"read\"]\n"
+        ));
+        assert!(err(&text).contains("an id is 1 to 64"), "{id}");
+    }
+}
+
+#[test]
+fn an_expiry_must_name_its_moment_exactly() {
+    let with = |expires: &str| {
+        admin_config(&format!(
+            "[admin.credentials.gary]\nsha256 = \"{HASH_A}\"\nscopes = [\"read\"]\nexpires = {expires}\n"
+        ))
+    };
+    for bad in ["2027-01-01", "2027-01-01T00:00:00", "12:00:00"] {
+        let message = err(&with(bad));
+        assert!(
+            message.contains("admin.credentials.gary.expires must be a full"),
+            "{bad}: {message}"
+        );
+    }
+    // The same moment in two spellings is the same expiry.
+    let utc = Config::from_toml(&with("2027-01-01T00:00:00Z"), env).unwrap();
+    let offset = Config::from_toml(&with("2027-01-01T01:00:00+01:00"), env).unwrap();
+    assert_eq!(
+        utc.admin.credentials["gary"].expires_ms,
+        offset.admin.credentials["gary"].expires_ms
+    );
+}
+
+#[test]
+fn an_expiry_reads_back_as_a_utc_timestamp() {
+    let text = admin_config(&format!(
+        "[admin.credentials.gary]\nsha256 = \"{HASH_A}\"\nscopes = [\"read\"]\nexpires = 2027-03-04T05:06:07+01:00\n\
+         [admin.credentials.sam]\nsha256 = \"{HASH_B}\"\nscopes = [\"read\"]\n"
+    ));
+    let config = Config::from_toml(&text, env).unwrap();
+    assert_eq!(
+        config.admin.credentials["gary"].expires_utc().as_deref(),
+        Some("2027-03-04T04:06:07Z")
+    );
+    assert_eq!(config.admin.credentials["sam"].expires_utc(), None);
+}

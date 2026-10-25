@@ -857,6 +857,16 @@ async fn run(command: Command) -> Result<(), String> {
             if let Some(fingerprint) = humpyard::server::config_fingerprint(&path, &config) {
                 println!("fingerprint: {fingerprint}");
             }
+            for (id, credential) in &config.admin.credentials {
+                let scopes: Vec<&str> = credential.scopes.iter().map(|s| s.as_str()).collect();
+                let expires = credential
+                    .expires_utc()
+                    .unwrap_or_else(|| "never".to_string());
+                println!(
+                    "admin credential {id}: scopes {}; expires {expires}",
+                    scopes.join(", ")
+                );
+            }
             match &config.discovery_state {
                 humpyard::config::DiscoveryState::Loaded(n) => {
                     println!("generated targets: {n} loaded");

@@ -57,6 +57,27 @@ See the [example configs](examples.md); `humpyard check-config <file>` validates
 - `[metrics]` (optional, off by default): the Prometheus `/metrics` endpoint. `enabled`, `listen` (a
   separate address; recommended), `bearer_sha256` (the credential for serving it on the main
   listener), `key_labels` and `key_label_limit`. See [Metrics and alerts](metrics.md).
+- `[admin]` (optional): who may administer the gateway, as named credentials (ADR 0027, OpenSpec change
+  `add-admin-api`). The section is read and validated today; the `/admin/v1` API that uses it is still being
+  built, so adding it changes nothing a client sees yet.
+
+  ```toml
+  [admin]
+  listen = "127.0.0.1:9090"            # optional: serve the admin API only here, never on the main listener
+
+  [admin.credentials.gary]
+  sha256 = "sha256:<64 hex digits>"    # from `humpyard keygen gary`; use the `sha256` line it prints
+  scopes = ["read", "overrides", "credentials"]
+  expires = 2027-01-01T00:00:00Z       # optional; an unquoted TOML datetime with a date, time and offset
+  ```
+
+  Each credential has an id (1 to 64 letters, digits, `-`, `_` or `.`), which is how it appears in audit rows, a
+  hash, at least one **scope** (`read`, `overrides` or `credentials`, with no repeats) and an optional expiry. A
+  credential's hash must differ from every `[keys.*]` hash, the metrics credential and every other admin
+  credential, so a leaked client key can never open the admin API. `listen` needs at least one credential and
+  must differ from `listen` and `[metrics] listen`. `GET /v1/config` shows only how many credentials exist;
+  `humpyard check-config` prints each one's id, scopes and expiry, never a hash. Without the section the admin
+  API is off.
 - `decision_retention_days` (top level, default 90): how long routing decisions and provider quota
   samples are kept; see [Keys, budgets and the ledger](budgets.md#the-decision-log).
 - `context_window`, `tools` and `vision` on an endpoint (all optional): what the model can take. A target

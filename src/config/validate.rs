@@ -4,8 +4,8 @@ use std::collections::BTreeMap;
 
 use std::net::SocketAddr;
 
-use super::schema::{RawConfig, RawKey, RawMetrics, RawProvider, RouteSpec, TailSpec};
-use super::{ConfigError, MetricsConfig};
+use super::schema::{RawAdmin, RawConfig, RawKey, RawMetrics, RawProvider, RouteSpec, TailSpec};
+use super::{AdminConfig, AdminCredential, AdminScope, ConfigError, MetricsConfig};
 
 /// Parses `sha256:<64 hex>` (the prefix is optional).
 pub(super) fn parse_hash(id: &str, text: &str) -> Result<[u8; 32], ConfigError> {
@@ -70,6 +70,136 @@ pub(super) fn metrics(
     })
 }
 
+/// The longest admin credential id; ids appear in audit rows and in URLs.
+const MAX_ADMIN_ID: usize = 64;
+
+/// Checks the `[admin]` block and parses its credentials (ADR 0027). A secret may never be reused as another
+/// kind of credential, so a leaked client key or metrics credential cannot open the admin API.
+pub(super) fn admin(
+    raw: &RawAdmin,
+    main_listen: SocketAddr,
+    metrics: &MetricsConfig,
+    keys: &BTreeMap<String, RawKey>,
+) -> Result<AdminConfig, ConfigError> {
+    if raw.credentials.is_empty() {
+        if raw.listen.is_some() {
+            return Err(invalid(
+                "admin.listen needs at least one [admin.credentials.<id>]; without one the admin API is off",
+            ));
+        }
+        return Ok(AdminConfig::default());
+    }
+    if raw.listen == Some(main_listen) {
+        return Err(invalid(
+            "admin.listen must differ from listen; leave it out to serve /admin/v1 on the main listener",
+        ));
+    }
+    if raw.listen.is_some() && raw.listen == metrics.listen {
+        return Err(invalid("admin.listen must differ from metrics.listen"));
+    }
+    let mut client_hashes = Vec::new();
+    for (id, key) in keys {
+        client_hashes.push((id.as_str(), parse_hash(id, &key.sha256)?));
+    }
+    let mut credentials: BTreeMap<String, AdminCredential> = BTreeMap::new();
+    for (id, credential) in &raw.credentials {
+        let field = format!("admin.credentials.{id}");
+        if id.is_empty()
+            || id.len() > MAX_ADMIN_ID
+            || !id
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+        {
+            return Err(invalid(format!(
+                "{field}: an id is 1 to {MAX_ADMIN_ID} letters, digits, `-`, `_` or `.`"
+            )));
+        }
+        let sha256 = parse_hash_at(&format!("{field}.sha256"), &credential.sha256)?;
+        let mut scopes = std::collections::BTreeSet::new();
+        for name in &credential.scopes {
+            let scope = AdminScope::parse(name).ok_or_else(|| {
+                invalid(format!(
+                    "{field}.scopes: unknown scope `{name}`; the scopes are `read`, `overrides` and `credentials`"
+                ))
+            })?;
+            if !scopes.insert(scope) {
+                return Err(invalid(format!("{field}.scopes lists `{name}` twice")));
+            }
+        }
+        if scopes.is_empty() {
+            return Err(invalid(format!("{field}.scopes needs at least one scope")));
+        }
+        if let Some((other, _)) = client_hashes.iter().find(|(_, hash)| *hash == sha256) {
+            return Err(invalid(format!(
+                "{field} must not be the key `{other}`; an admin credential is separate from every virtual key"
+            )));
+        }
+        if metrics.credential_sha256 == Some(sha256) {
+            return Err(invalid(format!(
+                "{field} must not be the metrics credential; each credential has one purpose"
+            )));
+        }
+        if let Some((other, _)) = credentials.iter().find(|(_, c)| c.sha256 == sha256) {
+            return Err(invalid(format!(
+                "{field} has the same hash as admin credential `{other}`"
+            )));
+        }
+        let expires_ms = credential
+            .expires
+            .as_ref()
+            .map(|at| expiry_ms(&field, at))
+            .transpose()?;
+        credentials.insert(
+            id.clone(),
+            AdminCredential {
+                sha256,
+                scopes,
+                expires_ms,
+            },
+        );
+    }
+    Ok(AdminConfig {
+        listen: raw.listen,
+        credentials,
+    })
+}
+
+/// A TOML datetime as Unix milliseconds. It needs a date, a time and an offset, so a credential never
+/// expires at a moment that depends on the server's time zone.
+fn expiry_ms(field: &str, at: &toml::value::Datetime) -> Result<i64, ConfigError> {
+    let bad = || {
+        invalid(format!(
+            "{field}.expires must be a full UTC or offset datetime such as 2027-01-01T00:00:00Z"
+        ))
+    };
+    let (Some(date), Some(clock), Some(offset)) = (at.date, at.time, at.offset) else {
+        return Err(bad());
+    };
+    let date = time::Month::try_from(date.month)
+        .ok()
+        .and_then(|month| {
+            time::Date::from_calendar_date(i32::from(date.year), month, date.day).ok()
+        })
+        .ok_or_else(bad)?;
+    let clock = time::Time::from_hms_nano(
+        clock.hour,
+        clock.minute,
+        clock.second.unwrap_or(0),
+        clock.nanosecond.unwrap_or(0),
+    )
+    .map_err(|_| bad())?;
+    let offset = match offset {
+        toml::value::Offset::Z => time::UtcOffset::UTC,
+        toml::value::Offset::Custom { minutes } => {
+            time::UtcOffset::from_whole_seconds(i32::from(minutes) * 60).map_err(|_| bad())?
+        }
+    };
+    let nanos = time::PrimitiveDateTime::new(date, clock)
+        .assume_offset(offset)
+        .unix_timestamp_nanos();
+    i64::try_from(nanos.div_euclid(1_000_000)).map_err(|_| bad())
+}
+
 pub(super) fn invalid(message: impl Into<String>) -> ConfigError {
     ConfigError::Invalid(message.into())
 }
@@ -80,6 +210,25 @@ pub(super) fn reject_plaintext_keys(text: &str) -> Result<(), ConfigError> {
     let Ok(table) = text.parse::<toml::Table>() else {
         return Ok(()); // the typed parse reports the syntax error
     };
+    if let Some(credentials) = table
+        .get("admin")
+        .and_then(toml::Value::as_table)
+        .and_then(|admin| admin.get("credentials"))
+        .and_then(toml::Value::as_table)
+    {
+        for (id, credential) in credentials {
+            let Some(fields) = credential.as_table() else {
+                continue;
+            };
+            for field in ["key", "api_key", "secret", "token", "plaintext", "password"] {
+                if fields.contains_key(field) {
+                    return Err(invalid(format!(
+                        "admin.credentials.{id}: plaintext secrets are not allowed; set `sha256` to the hash printed by `keygen`"
+                    )));
+                }
+            }
+        }
+    }
     let Some(keys) = table.get("keys").and_then(toml::Value::as_table) else {
         return Ok(());
     };
