@@ -29,28 +29,29 @@ pub(super) async fn get_stats(
         Ok(caller) => caller,
         Err(error) => return error.into_response_for(format),
     };
+    stats_view(&state, &snap, &params, caller.map(|k| k.id)).await
+}
+
+/// Statistics for `key` (every key when `None`): the client endpoint passes the caller's own id, the admin
+/// endpoint the `key` filter it was given.
+pub(super) async fn stats_view(
+    state: &AppState,
+    snap: &super::Snapshot,
+    params: &HashMap<String, String>,
+    key: Option<String>,
+) -> Response {
+    let format = WireFormat::OpenAiChat;
     let Some(ledger) = state.accounting.ledger() else {
         return GatewayError::ModelNotFound(
             "no ledger is configured, so statistics are not available".into(),
         )
         .into_response_for(format);
     };
-    let longest = longest_window(&snap);
+    let longest = longest_window(snap);
     if params.get("group_by").is_some_and(|g| g == "session") {
-        return super::sessions::sessions_view(
-            &state,
-            caller.as_ref().map(|k| k.id.clone()),
-            &params,
-            longest,
-        )
-        .await;
+        return super::sessions::sessions_view(state, key, params, longest).await;
     }
-    let query = match parse(
-        &params,
-        caller.as_ref().map(|k| k.id.clone()),
-        state.clock.now_ms(),
-        longest,
-    ) {
+    let query = match parse(params, key, state.clock.now_ms(), longest) {
         Ok(query) => query,
         Err(message) => return GatewayError::BadRequest(message).into_response_for(format),
     };
@@ -64,7 +65,7 @@ pub(super) async fn get_stats(
             "data": summary.groups.iter().map(|g| {
                 let mut row = group_json(g);
                 if params.get("group_by").map(String::as_str) == Some("target") {
-                    add_live_latency(&mut row, &state, &g.group);
+                    add_live_latency(&mut row, state, &g.group);
                 }
                 row
             }).collect::<Vec<_>>(),

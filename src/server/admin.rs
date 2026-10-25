@@ -4,7 +4,9 @@
 
 use std::sync::Arc;
 
-use axum::extract::State;
+use std::collections::HashMap;
+
+use axum::extract::{Query, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
@@ -14,11 +16,18 @@ use serde_json::json;
 use super::AppState;
 use crate::admin::{Principal, authenticate};
 use crate::auth::presented_key;
-use crate::config::AdminScope;
+use crate::config::{AdminConfig, AdminScope};
 
 /// The admin routes. They carry no client authentication of any kind.
 pub(super) fn routes() -> Router<Arc<AppState>> {
-    Router::new().route("/admin/v1/whoami", get(whoami))
+    Router::new()
+        .route("/admin/v1/whoami", get(whoami))
+        .route("/admin/v1/config", get(config))
+        .route("/admin/v1/health", get(health))
+        .route("/admin/v1/quota", get(quota))
+        .route("/admin/v1/decisions", get(decisions))
+        .route("/admin/v1/stats", get(stats))
+        .route("/admin/v1/credentials", get(credentials))
 }
 
 /// Adds the admin routes to the main router, unless `[admin] listen` gives them their own address, in which
@@ -99,6 +108,103 @@ pub(super) fn authorize(
     }
     state.metrics.observe_admin_request("ok");
     Ok(principal)
+}
+
+/// Authorizes a read: any valid credential with the `read` scope.
+fn read(state: &AppState, headers: &HeaderMap) -> Result<Principal, Denied> {
+    authorize(state, headers, Some(AdminScope::Read))
+}
+
+/// A credential as the admin API shows it: who it is and what it may do, never a hash.
+fn credential_json(id: &str, credential: &crate::config::AdminCredential) -> serde_json::Value {
+    json!({
+        "id": id,
+        "kind": "credential",
+        "scopes": credential.scopes.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
+        "expires": credential.expires_utc(),
+    })
+}
+
+/// The admin section of the configuration in full, for administrators; client keys that may read the
+/// configuration see only a count (ADR 0027).
+fn admin_detail(admin: &AdminConfig) -> serde_json::Value {
+    let credentials: serde_json::Map<String, serde_json::Value> = admin
+        .credentials
+        .iter()
+        .map(|(id, credential)| (id.clone(), credential_json(id, credential)))
+        .collect();
+    json!({
+        "enabled": admin.enabled(),
+        "listen": admin.listen.map(|addr| addr.to_string()),
+        "credentials": credentials,
+    })
+}
+
+/// The effective configuration, with the admin credentials listed by id, scopes and expiry.
+async fn config(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response {
+    if let Err(denied) = read(&state, &headers) {
+        return denied.into_response();
+    }
+    let snap = state.snapshot();
+    let mut view = super::config_view::config_value(&state, &snap).await;
+    view["admin"] = admin_detail(&snap.config.admin);
+    Json(view).into_response()
+}
+
+async fn health(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response {
+    match read(&state, &headers) {
+        Ok(_) => super::health_report(&state, &state.snapshot()),
+        Err(denied) => denied.into_response(),
+    }
+}
+
+async fn quota(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response {
+    match read(&state, &headers) {
+        Ok(_) => super::quota::quota_report(&state, &state.snapshot()),
+        Err(denied) => denied.into_response(),
+    }
+}
+
+/// Decisions of every key, or of the one named by `key`.
+async fn decisions(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(mut params): Query<HashMap<String, String>>,
+) -> Response {
+    if let Err(denied) = read(&state, &headers) {
+        return denied.into_response();
+    }
+    let key = params.remove("key");
+    super::decisions::decisions_view(&state, &params, key).await
+}
+
+/// Statistics of every key, or of the one named by `key`.
+async fn stats(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(mut params): Query<HashMap<String, String>>,
+) -> Response {
+    if let Err(denied) = read(&state, &headers) {
+        return denied.into_response();
+    }
+    let key = params.remove("key");
+    super::stats::stats_view(&state, &state.snapshot(), &params, key).await
+}
+
+/// Every admin credential: id, scopes and expiry, never a hash.
+async fn credentials(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response {
+    if let Err(denied) = read(&state, &headers) {
+        return denied.into_response();
+    }
+    let snap = state.snapshot();
+    let data: Vec<_> = snap
+        .config
+        .admin
+        .credentials
+        .iter()
+        .map(|(id, credential)| credential_json(id, credential))
+        .collect();
+    Json(json!({"object": "list", "data": data})).into_response()
 }
 
 /// Who the caller is: their id, scopes and expiry. Any valid credential may ask.

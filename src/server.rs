@@ -872,6 +872,12 @@ async fn endpoint_health(State(state): State<Arc<AppState>>, headers: HeaderMap)
     if let Err(error) = authenticate(&snap, &headers).await {
         return error.into_response_for(WireFormat::OpenAiChat);
     }
+    health_report(&state, &snap)
+}
+
+/// Which endpoints are being skipped, per-target latency, the loaded configuration and the last reload; the
+/// client endpoint and the admin API serve the same report.
+fn health_report(state: &AppState, snap: &Snapshot) -> Response {
     let mut targets: Vec<_> = snap.targets.iter().collect();
     targets.sort_by(|a, b| a.0.cmp(b.0));
     let report: Vec<_> = targets

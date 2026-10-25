@@ -262,7 +262,7 @@ async fn the_admin_api_can_have_its_own_listener_and_is_then_off_the_public_port
         &admin_section(&s, &format!("[admin]\nlisten = \"{addr}\"\n")),
     ))
     .await;
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    wait_listening(addr).await;
     let own = format!("http://{addr}");
     let (status, _, body) = get(&own, "/admin/v1/whoami", Some(&s.admin)).await;
     assert_eq!((status, body["id"].as_str()), (200, Some("gary")));
@@ -272,6 +272,18 @@ async fn the_admin_api_can_have_its_own_listener_and_is_then_off_the_public_port
     let (other, _, _) = get(&own, "/v1/models", Some(&s.client)).await;
     assert_eq!(other, 404);
     gateway.finish().await;
+}
+
+/// Waits until something accepts connections at `addr`: the own admin listener is bound a moment after the
+/// gateway starts, and a fixed pause is not enough on a slow machine.
+async fn wait_listening(addr: std::net::SocketAddr) {
+    for _ in 0..200 {
+        if tokio::net::TcpStream::connect(addr).await.is_ok() {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    panic!("nothing listened on {addr} within five seconds");
 }
 
 async fn metrics(gateway: &Gateway, s: &Secrets) -> String {
@@ -380,7 +392,7 @@ async fn moving_the_admin_listener_needs_a_restart() {
         &admin_section(&s, &format!("[admin]\nlisten = \"{addr}\"\n")),
     ))
     .await;
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    wait_listening(addr).await;
     // The same credentials, but no own listener any more.
     std::fs::write(&gateway.path, config_text(&s, &admin_section(&s, ""))).unwrap();
     gateway.reload.send(()).await.unwrap();
