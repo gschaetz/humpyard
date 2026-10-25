@@ -88,6 +88,8 @@ nav:
       - Providers: providers.md
       - Keeping pools current: discovery.md
       - Performance and scale: performance.md
+      - Cut agent costs: cut-agent-costs.md
+      - Compared with other gateways: compare.md
       - Migrating from LiteLLM: migrating-from-litellm.md
       - Moving from ModelRelay: migrating-from-modelrelay.md
       - Example configs: examples.md
