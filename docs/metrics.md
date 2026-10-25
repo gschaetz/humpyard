@@ -54,6 +54,7 @@ cannot call inference or any other endpoint.
 | `humpyard_retry_after_honored_total` | counter | `provider`, `source` (`body` today) |
 | `humpyard_capability_skips_total` | counter | `route`, `target`, `reason` |
 | `humpyard_cost_ceiling_total` | counter | `outcome` (`removed`, `refused`), `key`\* |
+| `humpyard_admin_requests_total` | counter | `result` (`ok`, `unauthorized`, `forbidden`); exported only while an [admin credential](configuration.md) is configured |
 | `humpyard_target_latency_seconds` | gauge | `target` |
 | `humpyard_discovery_targets` | gauge | (none; only when `[discovery] file` is set) |
 | `humpyard_discovery_file_state` | gauge | `state` (`missing`, `empty`, `loaded`, `ignored`; 1 for the current state) |
@@ -90,6 +91,10 @@ Notes:
 - **Cost ceiling** counts requests in which a key's [`max_request_usd`](budgets.md#a-ceiling-on-one-request)
   removed a target (`outcome="removed"`) or left none and refused the request (`outcome="refused"`; those
   are also in `refusals_total` as `request_cost_ceiling`). It stays at 0 for keys without a ceiling.
+- **Admin requests** counts calls to the [admin API](api.md#the-admin-api) by `result`: `ok`, `unauthorized` (no
+  credential, an unknown or expired one, or a client key) and `forbidden` (a valid credential without the scope).
+  It never carries a credential id or secret, and it is not exported at all while no admin credential is
+  configured.
 - **A request that matched no route** is counted under `route="none"`.
 - **Refusal reasons** are `unauthorized`, `forbidden`, `budget_exhausted`, `no_eligible_target`,
   `unknown_model`, `bad_request`, `no_capable_target` and `request_cost_ceiling`. Upstream failures show up in `status_class` and in failovers.
