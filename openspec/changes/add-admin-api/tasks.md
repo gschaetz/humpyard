@@ -32,9 +32,9 @@
 
 ## 5. The contract
 
-- [ ] 5.1 One route table (method, path, scope) from which the router is built, and `docs/openapi/admin-v1.json` served at `GET /admin/v1/openapi.json`; verify the endpoint returns the document to any valid credential
-- [ ] 5.2 A test that fails when the table and the document differ in either direction, in scope or in error codes; verify by temporarily removing a route and seeing it fail
-- [ ] 5.3 Add `docs/openapi/` to the docs build or link it from `docs/api.md` so the site build stays strict-clean; verify the `docs` job's strict build passes locally
+- [x] 5.1 One route table (method, path, scope) from which the router is built, and `docs/openapi/admin-v1.json` served at `GET /admin/v1/openapi.json`; verify the endpoint returns the document to any valid credential
+- [x] 5.2 A test that fails when the table and the document differ in either direction, in scope or in error codes; verify by temporarily removing a route and seeing it fail
+- [x] 5.3 Add `docs/openapi/` to the docs build or link it from `docs/api.md` so the site build stays strict-clean; verify the `docs` job's strict build passes locally
 
 ## 6. Operator experience and wrap-up
 

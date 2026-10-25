@@ -9,6 +9,8 @@ WORKDIR /src
 # The image's own toolchain is used, so rust-toolchain.toml is deliberately not copied.
 COPY Cargo.toml Cargo.lock ./
 COPY src ./src
+# The admin API's OpenAPI document is embedded in the binary (src/server/admin.rs).
+COPY docs/openapi ./docs/openapi
 RUN cargo build --release --locked
 # /data is created here because the runtime image has no shell to do it.
 RUN mkdir /data
