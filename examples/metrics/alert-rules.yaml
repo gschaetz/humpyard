@@ -58,6 +58,12 @@ groups:
         labels: {severity: info}
         annotations:
           summary: "A humpyard runtime override has been active for over six hours; check it is still wanted (it expires on its own)"
+      - alert: HumpyardAdminRevoked
+        expr: humpyard_admin_revocations_active > 0
+        for: 30m
+        labels: {severity: info}
+        annotations:
+          summary: "A humpyard admin credential has been revoked for over 30 minutes; check it is still wanted (it ends on its own)"
       - alert: HumpyardDown
         expr: absent(humpyard_build_info)
         for: 5m

@@ -302,11 +302,9 @@ async fn metrics(gateway: &Gateway, s: &Secrets) -> String {
 async fn outcomes_are_counted_without_naming_anyone_and_only_while_the_admin_api_is_on() {
     let s = secrets();
     let off = start(&config_text(&s, "")).await;
-    assert!(
-        !metrics(&off, &s)
-            .await
-            .contains("humpyard_admin_requests_total")
-    );
+    let quiet = metrics(&off, &s).await;
+    assert!(!quiet.contains("humpyard_admin_requests_total"));
+    assert!(!quiet.contains("humpyard_admin_revocations_active"));
     off.finish().await;
 
     let gateway = start(&config_text(&s, &admin_section(&s, ""))).await;

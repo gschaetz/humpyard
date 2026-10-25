@@ -14,6 +14,7 @@ use humpyard::server;
 async fn exposed() -> BTreeMap<String, String> {
     let dir = tempfile::tempdir().unwrap();
     let (credential, hash) = humpyard::auth::generate_key().unwrap();
+    let (_, admin_hash) = humpyard::auth::generate_key().unwrap();
     let toml = format!(
         r#"listen = "127.0.0.1:0"
 [metrics]
@@ -21,6 +22,9 @@ enabled = true
 bearer_sha256 = "{hash}"
 [ledger]
 path = "{db}"
+[admin.credentials.ops]
+sha256 = "{admin_hash}"
+scopes = ["read"]
 [providers.p]
 base_url = "http://127.0.0.1:1/v1"
 api_key_env = "K"

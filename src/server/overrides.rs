@@ -155,7 +155,19 @@ pub(super) async fn create_override(
     if !may_manage(caller.as_ref()) {
         return not_manageable();
     }
-    let Some(store) = store_of(&state) else {
+    let created_by = caller.as_ref().map_or("anonymous", |key| key.id.as_str());
+    create_core(&state, &snap, body, created_by).await
+}
+
+/// Creates the override `body` asks for, recorded as made by `created_by` (a client key id, or `admin:<id>`);
+/// the client endpoint and the admin API serve the same rules.
+pub(super) async fn create_core(
+    state: &AppState,
+    snap: &Snapshot,
+    body: CreateBody,
+    created_by: &str,
+) -> Response {
+    let Some(store) = store_of(state) else {
         return refuse(
             StatusCode::CONFLICT,
             "invalid_request_error",
@@ -169,10 +181,9 @@ pub(super) async fn create_override(
             body.kind
         ));
     };
-    if let Err(message) = check_subject(&snap, kind, &body.subject, body.route.as_deref()) {
+    if let Err(message) = check_subject(snap, kind, &body.subject, body.route.as_deref()) {
         return invalid(message);
     }
-    let created_by = caller.as_ref().map_or("anonymous", |key| key.id.as_str());
     let request = Create {
         kind,
         subject: body.subject,
@@ -242,6 +253,16 @@ pub(super) async fn list_overrides(
     if !may_list(caller.as_ref()) {
         return not_manageable();
     }
+    list_core(&state, &snap, &params).await
+}
+
+/// The overrides in force, or with `?history=true` those of the last 30 days; the client endpoint and the admin
+/// API serve the same list. Credential revocations are never part of it.
+pub(super) async fn list_core(
+    state: &AppState,
+    snap: &Snapshot,
+    params: &HashMap<String, String>,
+) -> Response {
     let now_ms = state.clock.now_ms();
     if params
         .get("history")
@@ -260,14 +281,14 @@ pub(super) async fn list_overrides(
                 }),
             None => Vec::new(),
         };
-        let rows: Vec<Value> = past.iter().map(|p| past_json(p, &snap, now_ms)).collect();
+        let rows: Vec<Value> = past.iter().map(|p| past_json(p, snap, now_ms)).collect();
         return Json(json!({"overrides": rows})).into_response();
     }
     let overrides: Vec<Value> = state
         .active_overrides()
         .await
         .iter()
-        .map(|o| override_json(o, is_stale(&snap, o), now_ms))
+        .map(|o| override_json(o, is_stale(snap, o), now_ms))
         .collect();
     Json(json!({"overrides": overrides})).into_response()
 }
@@ -285,6 +306,13 @@ pub(super) async fn remove_override(
     if !may_manage(caller.as_ref()) {
         return not_manageable();
     }
+    let by = caller.as_ref().map_or("anonymous", |key| key.id.as_str());
+    remove_core(&state, id, by).await
+}
+
+/// Removes override `id`, recorded as removed by `by`; the client endpoint and the admin API serve the same
+/// rule. Only an override in force can be removed, and never a credential revocation.
+pub(super) async fn remove_core(state: &AppState, id: i64, by: &str) -> Response {
     let not_found = || {
         refuse(
             StatusCode::NOT_FOUND,
@@ -293,10 +321,9 @@ pub(super) async fn remove_override(
             format!("no override {id} is in force"),
         )
     };
-    let Some(store) = store_of(&state) else {
+    let Some(store) = store_of(state) else {
         return not_found();
     };
-    let by = caller.as_ref().map_or("anonymous", |key| key.id.as_str());
     match store.revoke(id, by, state.clock.now_ms()).await {
         Ok(true) => {
             tracing::info!(id, by, "override removed");

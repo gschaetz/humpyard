@@ -47,6 +47,42 @@ impl Kind {
     }
 }
 
+/// The row kind of an admin credential revocation (ADR 0027). It lives in the overrides table, which gives it
+/// expiry, audit rows and removal for free, but it is deliberately not a [`Kind`]: a revocation names no
+/// target, provider or route, so nothing that plans a request can see one.
+const REVOKE_ADMIN: &str = "revoke_admin_credential";
+
+/// A revocation of an admin credential in force: the principal cannot authenticate until it ends.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Revocation {
+    pub id: i64,
+    /// The id of the revoked credential.
+    pub principal: String,
+    pub reason: String,
+    pub created_ms: i64,
+    pub expires_ms: i64,
+    /// Who revoked it, as `admin:<id>`.
+    pub created_by: String,
+}
+
+impl Revocation {
+    #[must_use]
+    pub fn in_force(&self, now_ms: i64) -> bool {
+        self.expires_ms > now_ms
+    }
+
+    fn from_record(record: &OverrideRecord) -> Option<Self> {
+        (record.kind == REVOKE_ADMIN).then(|| Self {
+            id: record.id,
+            principal: record.subject.clone(),
+            reason: record.reason.clone(),
+            created_ms: record.created_ms,
+            expires_ms: record.expires_ms,
+            created_by: record.created_by.clone(),
+        })
+    }
+}
+
 /// An override in force.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Override {
@@ -273,6 +309,32 @@ pub trait OverrideStore: Send + Sync {
     /// Whether a drain of `provider` is in force at `now_ms`. Runs once per endpoint tried, so it must not
     /// allocate.
     fn provider_drained(&self, provider: &str, now_ms: i64) -> bool;
+
+    /// Revokes admin credential `principal` for `expires_in_secs` (the configured default when `None`, never more
+    /// than the maximum). Audited with `created_by`.
+    async fn revoke_principal(
+        &self,
+        principal: &str,
+        reason: &str,
+        expires_in_secs: Option<u64>,
+        created_by: &str,
+        limits: OverridesConfig,
+        now_ms: i64,
+    ) -> Result<Revocation, OverrideError>;
+
+    /// The admin credential revocations in force. Never part of [`OverrideStore::active`].
+    fn revocations(&self, now_ms: i64) -> Vec<Revocation>;
+
+    /// Whether admin credential `principal` is revoked at `now_ms`. Runs on every admin request.
+    fn is_revoked(&self, principal: &str, now_ms: i64) -> bool;
+
+    /// Ends the revocations of `principal` in force; false if there were none.
+    async fn end_revocations(
+        &self,
+        principal: &str,
+        by: &str,
+        now_ms: i64,
+    ) -> Result<bool, OverrideError>;
 }
 
 /// Overrides kept in the ledger and held in memory while in force. State is per instance, like health and
@@ -280,6 +342,8 @@ pub trait OverrideStore: Send + Sync {
 pub struct LedgerOverrides {
     db: OverrideDb,
     active: RwLock<Vec<Override>>,
+    /// Admin credential revocations in force, kept apart from `active` so no consumer of overrides sees them.
+    revoked: RwLock<Vec<Revocation>>,
 }
 
 impl LedgerOverrides {
@@ -290,15 +354,16 @@ impl LedgerOverrides {
     /// A ledger query fails.
     pub async fn open(db: OverrideDb, now_ms: i64) -> Result<Self, OverrideError> {
         db.note_expired(now_ms).await?;
-        let active = db
-            .active(now_ms)
-            .await?
+        let records = db.active(now_ms).await?;
+        let revoked = records.iter().filter_map(Revocation::from_record).collect();
+        let active = records
             .into_iter()
             .filter_map(Override::from_record)
             .collect();
         Ok(Self {
             db,
             active: RwLock::new(active),
+            revoked: RwLock::new(revoked),
         })
     }
 }
@@ -347,6 +412,11 @@ impl OverrideStore for LedgerOverrides {
     }
 
     async fn revoke(&self, id: i64, by: &str, now_ms: i64) -> Result<bool, OverrideError> {
+        // Only an override in force can be removed here: the id of a credential revocation must never end it,
+        // or a key that may manage overrides could restore a revoked admin.
+        if !self.active.read().iter().any(|o| o.id == id) {
+            return Ok(false);
+        }
         let revoked = self.db.revoke(id, now_ms, by).await?;
         if revoked {
             self.active.write().retain(|o| o.id != id);
@@ -356,10 +426,13 @@ impl OverrideStore for LedgerOverrides {
 
     async fn sweep(&self, now_ms: i64) -> Result<(), OverrideError> {
         // Cheap on the request path: nothing to do until something in memory has run out.
-        if !self.active.read().iter().any(|o| !o.in_force(now_ms)) {
+        let lapsed = self.active.read().iter().any(|o| !o.in_force(now_ms))
+            || self.revoked.read().iter().any(|r| !r.in_force(now_ms));
+        if !lapsed {
             return Ok(());
         }
         self.active.write().retain(|o| o.in_force(now_ms));
+        self.revoked.write().retain(|r| r.in_force(now_ms));
         self.db.note_expired(now_ms).await?;
         Ok(())
     }
@@ -404,5 +477,76 @@ impl OverrideStore for LedgerOverrides {
             .read()
             .iter()
             .any(|o| o.kind == Kind::DrainProvider && o.subject == provider && o.in_force(now_ms))
+    }
+
+    async fn revoke_principal(
+        &self,
+        principal: &str,
+        reason: &str,
+        expires_in_secs: Option<u64>,
+        created_by: &str,
+        limits: OverridesConfig,
+        now_ms: i64,
+    ) -> Result<Revocation, OverrideError> {
+        if reason.trim().is_empty() {
+            return Err(OverrideError::NoReason);
+        }
+        let expires_ms = expiry_ms(now_ms, expires_in_secs, limits)?;
+        let new = NewOverride {
+            kind: REVOKE_ADMIN.to_string(),
+            subject: principal.to_string(),
+            route: None,
+            reason: reason.to_string(),
+            created_ms: now_ms,
+            expires_ms,
+            created_by: created_by.to_string(),
+        };
+        let id = self.db.create(&new).await?;
+        let revocation = Revocation {
+            id,
+            principal: principal.to_string(),
+            reason: reason.to_string(),
+            created_ms: now_ms,
+            expires_ms,
+            created_by: created_by.to_string(),
+        };
+        self.revoked.write().push(revocation.clone());
+        Ok(revocation)
+    }
+
+    fn revocations(&self, now_ms: i64) -> Vec<Revocation> {
+        self.revoked
+            .read()
+            .iter()
+            .filter(|r| r.in_force(now_ms))
+            .cloned()
+            .collect()
+    }
+
+    fn is_revoked(&self, principal: &str, now_ms: i64) -> bool {
+        self.revoked
+            .read()
+            .iter()
+            .any(|r| r.principal == principal && r.in_force(now_ms))
+    }
+
+    async fn end_revocations(
+        &self,
+        principal: &str,
+        by: &str,
+        now_ms: i64,
+    ) -> Result<bool, OverrideError> {
+        let ids: Vec<i64> = self
+            .revoked
+            .read()
+            .iter()
+            .filter(|r| r.principal == principal && r.in_force(now_ms))
+            .map(|r| r.id)
+            .collect();
+        for id in &ids {
+            self.db.revoke(*id, now_ms, by).await?;
+        }
+        self.revoked.write().retain(|r| !ids.contains(&r.id));
+        Ok(!ids.is_empty())
     }
 }

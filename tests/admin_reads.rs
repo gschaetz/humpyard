@@ -245,7 +245,16 @@ async fn credentials_are_listed_without_hashes() {
     assert_eq!(ids, ["gary", "sam"]);
     assert_eq!(list["data"][0]["expires"], "2999-01-01T00:00:00Z");
     assert_eq!(list["data"][1]["expires"], Value::Null);
-    assert_eq!(list["data"][0].as_object().unwrap().len(), 4);
+    // Exactly these fields, and nothing that could be a secret or a hash.
+    let mut fields: Vec<&str> = list["data"][0]
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    fields.sort_unstable();
+    assert_eq!(fields, ["expires", "id", "kind", "revoked", "scopes"]);
+    assert_eq!(list["data"][0]["revoked"], false);
 }
 
 #[tokio::test]

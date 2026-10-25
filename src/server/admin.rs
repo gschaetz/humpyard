@@ -6,10 +6,10 @@ use std::sync::Arc;
 
 use std::collections::HashMap;
 
-use axum::extract::{Query, State};
+use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use axum::routing::get;
+use axum::routing::{delete, get, post};
 use axum::{Json, Router};
 use serde_json::json;
 
@@ -17,6 +17,7 @@ use super::AppState;
 use crate::admin::{Principal, authenticate};
 use crate::auth::presented_key;
 use crate::config::{AdminConfig, AdminScope};
+use crate::overrides::OverrideError;
 
 /// The admin routes. They carry no client authentication of any kind.
 pub(super) fn routes() -> Router<Arc<AppState>> {
@@ -28,6 +29,15 @@ pub(super) fn routes() -> Router<Arc<AppState>> {
         .route("/admin/v1/decisions", get(decisions))
         .route("/admin/v1/stats", get(stats))
         .route("/admin/v1/credentials", get(credentials))
+        .route(
+            "/admin/v1/credentials/{id}/revoke",
+            post(revoke_credential).delete(end_revocation),
+        )
+        .route(
+            "/admin/v1/overrides",
+            get(list_overrides).post(create_override),
+        )
+        .route("/admin/v1/overrides/{id}", delete(remove_override))
 }
 
 /// Adds the admin routes to the main router, unless `[admin] listen` gives them their own address, in which
@@ -100,6 +110,15 @@ pub(super) fn authorize(
         state.metrics.observe_admin_request("unauthorized");
         Denied::Invalid
     })?;
+    // A revoked credential is refused exactly like an unknown one, on its very next request.
+    let revoked = state
+        .overrides
+        .as_ref()
+        .is_some_and(|store| store.is_revoked(&principal.id, state.clock.now_ms()));
+    if revoked {
+        state.metrics.observe_admin_request("unauthorized");
+        return Err(Denied::Invalid);
+    }
     if let Some(scope) = scope
         && !principal.may(scope)
     {
@@ -197,14 +216,199 @@ async fn credentials(State(state): State<Arc<AppState>>, headers: HeaderMap) -> 
         return denied.into_response();
     }
     let snap = state.snapshot();
+    let now_ms = state.clock.now_ms();
     let data: Vec<_> = snap
         .config
         .admin
         .credentials
         .iter()
-        .map(|(id, credential)| credential_json(id, credential))
+        .map(|(id, credential)| {
+            let mut row = credential_json(id, credential);
+            row["revoked"] = json!(
+                state
+                    .overrides
+                    .as_ref()
+                    .is_some_and(|store| store.is_revoked(id, now_ms))
+            );
+            row
+        })
         .collect();
     Json(json!({"object": "list", "data": data})).into_response()
+}
+
+fn fail(status: StatusCode, kind: &str, code: &str, message: impl Into<String>) -> Response {
+    (
+        status,
+        Json(json!({"error": {"message": message.into(), "type": kind, "code": code}})),
+    )
+        .into_response()
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RevokeBody {
+    reason: String,
+    expires_in_secs: Option<u64>,
+}
+
+/// Revokes another credential (or the caller's own) for a bounded time. It only removes access, and it ends by
+/// itself; editing the file and reloading is how a credential is removed for good.
+async fn revoke_credential(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(body): Json<RevokeBody>,
+) -> Response {
+    let principal = match authorize(&state, &headers, Some(AdminScope::Credentials)) {
+        Ok(principal) => principal,
+        Err(denied) => return denied.into_response(),
+    };
+    let snap = state.snapshot();
+    if !snap.config.admin.credentials.contains_key(&id) {
+        return fail(
+            StatusCode::BAD_REQUEST,
+            "invalid_request_error",
+            "invalid_revocation",
+            format!("`{id}` is not an admin credential in the loaded configuration"),
+        );
+    }
+    let Some(store) = state.overrides.clone() else {
+        return fail(
+            StatusCode::CONFLICT,
+            "invalid_request_error",
+            "overrides_need_ledger",
+            "revocations need a `[ledger]`: without one nothing would survive a restart",
+        );
+    };
+    let now_ms = state.clock.now_ms();
+    if store.is_revoked(&id, now_ms) {
+        return fail(
+            StatusCode::CONFLICT,
+            "invalid_request_error",
+            "already_revoked",
+            format!("`{id}` is already revoked; end that revocation first to change it"),
+        );
+    }
+    let by = principal.audit_name();
+    match store
+        .revoke_principal(
+            &id,
+            &body.reason,
+            body.expires_in_secs,
+            &by,
+            snap.config.overrides,
+            now_ms,
+        )
+        .await
+    {
+        Ok(revocation) => {
+            tracing::warn!(
+                credential = %id,
+                by = %by,
+                expires_ms = revocation.expires_ms,
+                "admin credential revoked"
+            );
+            (
+                StatusCode::CREATED,
+                Json(json!({
+                    "credential": revocation.principal,
+                    "revoked": true,
+                    "created_by": revocation.created_by,
+                    "expires_ms": revocation.expires_ms,
+                    "expires_in_secs": (revocation.expires_ms.saturating_sub(now_ms) / 1000).max(0),
+                })),
+            )
+                .into_response()
+        }
+        Err(OverrideError::Ledger(error)) => {
+            tracing::error!(%error, "could not store a revocation");
+            fail(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "api_error",
+                "ledger_error",
+                "the revocation could not be stored",
+            )
+        }
+        Err(error) => fail(
+            StatusCode::BAD_REQUEST,
+            "invalid_request_error",
+            "invalid_revocation",
+            error.to_string(),
+        ),
+    }
+}
+
+/// Ends the revocation of a credential before it expires.
+async fn end_revocation(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Response {
+    let principal = match authorize(&state, &headers, Some(AdminScope::Credentials)) {
+        Ok(principal) => principal,
+        Err(denied) => return denied.into_response(),
+    };
+    let by = principal.audit_name();
+    let ended = match &state.overrides {
+        Some(store) => store
+            .end_revocations(&id, &by, state.clock.now_ms())
+            .await
+            .unwrap_or_else(|error| {
+                tracing::error!(%error, "could not end a revocation");
+                false
+            }),
+        None => false,
+    };
+    if ended {
+        tracing::warn!(credential = %id, by = %by, "admin credential revocation ended");
+        Json(json!({"credential": id, "revoked": false})).into_response()
+    } else {
+        fail(
+            StatusCode::NOT_FOUND,
+            "not_found_error",
+            "revocation_not_found",
+            format!("`{id}` has no revocation in force"),
+        )
+    }
+}
+
+/// The runtime overrides in force (`?history=true` adds those of the last 30 days), as `/v1/overrides` lists
+/// them. Credential revocations are not among them.
+async fn list_overrides(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(params): Query<HashMap<String, String>>,
+) -> Response {
+    if let Err(denied) = read(&state, &headers) {
+        return denied.into_response();
+    }
+    super::overrides::list_core(&state, &state.snapshot(), &params).await
+}
+
+/// Creates an override under the rules of `POST /v1/overrides`, recorded as made by `admin:<id>`.
+async fn create_override(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(body): Json<super::overrides::CreateBody>,
+) -> Response {
+    let principal = match authorize(&state, &headers, Some(AdminScope::Overrides)) {
+        Ok(principal) => principal,
+        Err(denied) => return denied.into_response(),
+    };
+    super::overrides::create_core(&state, &state.snapshot(), body, &principal.audit_name()).await
+}
+
+/// Removes an override in force, recorded as removed by `admin:<id>`.
+async fn remove_override(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+) -> Response {
+    let principal = match authorize(&state, &headers, Some(AdminScope::Overrides)) {
+        Ok(principal) => principal,
+        Err(denied) => return denied.into_response(),
+    };
+    super::overrides::remove_core(&state, id, &principal.audit_name()).await
 }
 
 /// Who the caller is: their id, scopes and expiry. Any valid credential may ask.

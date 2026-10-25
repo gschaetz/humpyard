@@ -585,6 +585,11 @@ curl -s -X DELETE -H "Authorization: Bearer $OPS_KEY" http://127.0.0.1:8080/v1/o
 - **Who and where.** Overrides need a `[ledger]` (without one, creating is refused with 409, because nothing would
   survive a restart) and live on this instance only: with several replicas, each has its own. A gateway with no
   `[keys]` allows anyone to manage them, like the rest of the admin surface.
+- **From the admin API.** An [admin credential](api.md#the-admin-api) with the `overrides` scope manages the same
+  overrides under `/admin/v1/overrides`, with the same rules, and the creator is recorded as `admin:<id>` (a client
+  key is recorded by its key id). Revoking an *admin credential* is a different thing that shares the same store:
+  it is never listed here, never counted in `humpyard_overrides_active`, never shown in decisions or `explain`,
+  and cannot be ended through `/v1/overrides`, so a key that manages overrides cannot restore a revoked admin.
 
 ## Routing policy
 

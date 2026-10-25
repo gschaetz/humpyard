@@ -65,17 +65,21 @@ Decisions and statistics already take `key: Option<String>`; the client endpoint
 endpoint passes the `key` query parameter or nothing. One implementation per view keeps the two surfaces from
 drifting, and the response shapes stay identical to the client endpoints'.
 
-### 4. Revocation is an override kind, hidden from planning and from clients
+### 4. Revocation is a row in the overrides table, kept out of `Kind` and hidden from planning and from clients
 
-`revoke_admin_credential` is a new `Kind` in the override store, with the credential id as its subject. That
-reuses expiry, the maximum, audit rows, history and removal. It only removes access, so it fits ADR 0025's rule
-that overrides restrict and never widen. Three consequences are handled on purpose:
+A revocation is stored in the overrides table with its own row kind, `revoke_admin_credential`, and the credential
+id as its subject. That reuses expiry, the maximum, audit rows and removal. It only removes access, so it fits
+ADR 0025's rule that overrides restrict and never widen. It is deliberately **not** a variant of the `Kind` enum
+that planning matches on: it has its own type and its own list inside the store, so no code that plans a request
+or lists overrides can see one by construction, rather than by remembering to filter. Consequences:
 
-- Planning ignores it (it names no target, provider or route), so decisions and `explain` do not show it.
-- `GET /v1/overrides` and `humpyard_overrides_active` do not list or count it, so a client key with `read_config`
-  cannot learn admin ids. It has its own gauge, `humpyard_admin_revocations_active`.
-- The architecture test that confines reading overrides to the pool and the server is extended to the admin
-  module, which is inside the server.
+- Planning, decisions and `explain` cannot show it (it names no target, provider or route).
+- `GET /v1/overrides`, its history and `humpyard_overrides_active` do not list or count it, so a client key with
+  `read_config` cannot learn admin ids. It has its own gauge, `humpyard_admin_revocations_active`.
+- The override removal path only ends an override in force, never a revocation: otherwise a client key that
+  manages overrides could end one by id and restore a revoked admin. A test fails if that guard is removed.
+- An architecture test allows only the override store, `server/admin.rs` and `server/metrics.rs` to mention
+  revocations at all.
 
 Authentication checks the active revocations on each request (the store's active set is already read per
 request for planning), so revocation takes effect on the next call with no reload.
