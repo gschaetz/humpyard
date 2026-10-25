@@ -40,6 +40,7 @@ numbers are monotonic and never reused. Start from [template.md](template.md).
 | [0024](0024-a-pool-route-can-end-in-a-guarded-tail.md) | A pool route can end in a guarded tail |
 | [0025](0025-the-ui-has-no-state-of-its-own.md) | The UI has no state of its own |
 | [0026](0026-a-request-a-pool-member-rejects-moves-on-within-a-bound.md) | A request a pool member rejects moves on, within a bound |
+| [0027](0027-admin-authority-is-granted-by-configuration-to-named-scoped-principals.md) | Admin authority is granted by configuration to named, scoped principals, never to a client key or a database row (proposed) |
 
 How decisions relate to enforcement: invariants that must hold mechanically are listed in
 [../invariants.md](../invariants.md) and checked by tests and CI.
