@@ -17,15 +17,15 @@
 
 ## 3. All-keys reads
 
-- [ ] 3.1 Make the cores of config view, health, quota, decisions and stats callable by both surfaces, with the key filter passed in; verify the existing client-endpoint tests still pass unchanged
-- [ ] 3.2 `GET /admin/v1/config`, `/health`, `/quota`, `/decisions`, `/stats` with the `read` scope and the optional `key` filter; verify a test with two keys that the admin sees both and the filter narrows
-- [ ] 3.3 `GET /admin/v1/credentials`: id, scopes, expiry and revocation state only; verify a test that no hash appears
-- [ ] 3.4 Document the read endpoints in `docs/api.md` and verify the documented requests run against a test gateway
+- [x] 3.1 Make the cores of config view, health, quota, decisions and stats callable by both surfaces, with the key filter passed in; verify the existing client-endpoint tests still pass unchanged
+- [x] 3.2 `GET /admin/v1/config`, `/health`, `/quota`, `/decisions`, `/stats` with the `read` scope and the optional `key` filter; verify a test with two keys that the admin sees both and the filter narrows
+- [x] 3.3 `GET /admin/v1/credentials`: id, scopes and expiry only (revocation state is added with 4.2, when revocations exist); verify a test that no hash appears
+- [x] 3.4 Document the read endpoints in `docs/api.md` and verify the documented requests run against a test gateway
 
 ## 4. Overrides and revocation
 
 - [ ] 4.1 `/admin/v1/overrides` (list with `read`; create and remove with `overrides`) on the same store and rules, recording the creator as `admin:<id>`; verify tests that the rules match `/v1/overrides` and the audit row names `admin:gary`
-- [ ] 4.2 The `revoke_admin_credential` override kind and `POST /admin/v1/credentials/{id}/revoke` (`credentials` scope, expiry within the maximum, unknown id refused); verify the next request by the revoked credential is refused without a reload and works again after expiry or removal
+- [ ] 4.2 The `revoke_admin_credential` override kind, `POST /admin/v1/credentials/{id}/revoke` (`credentials` scope, expiry within the maximum, unknown id refused) and a `revoked` field on `GET /admin/v1/credentials`; verify the next request by the revoked credential is refused without a reload and works again after expiry or removal
 - [ ] 4.3 Keep revocations out of planning, `explain`, decisions, `GET /v1/overrides` and `humpyard_overrides_active`, and add `humpyard_admin_revocations_active`; verify tests for each exclusion and the gauge
 - [ ] 4.4 Extend the architecture test so only the pool and the server read overrides still holds with the admin module, and add admin routes to it; verify `cargo test --test architecture` passes
 - [ ] 4.5 Document revocation and the audit identity in `docs/api.md` and `docs/routing.md#runtime-overrides`, and add an alert example for an old revocation to the alerts file; verify the alert file lints as the others do

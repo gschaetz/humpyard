@@ -33,7 +33,7 @@ curl localhost:8080/v1/responses -H 'content-type: application/json' \
 | `GET /v1/stats/switches` | what changing endpoint in the middle of a session abandoned: switches, cached tokens left behind, the extra cost at the destination's prices, session coverage ([Cache use and sessions](budgets.md#cache-use-and-sessions)) |
 | `GET /v1/quota` | the latest usage windows (percent used, status, reset time) of each provider that names a `quota_source`, with the age of the data, or why it is unknown ([Provider quota](routing.md#provider-quota)) |
 | `GET /v1/quota/history` | stored quota samples (`window` such as `7d`, optional `provider` and `name`), oldest first, each with the cost of the provider's calls since the previous sample of its window; needs a ledger ([Provider quota](routing.md#provider-quota)) |
-| `GET /admin/v1/whoami` | who an [admin credential](#the-admin-api) is: its id, scopes and expiry |
+| `GET /admin/v1/whoami`, `/config`, `/health`, `/quota`, `/decisions`, `/stats`, `/credentials` | the [admin API](#the-admin-api): who you are, and what the gateway is doing across every key |
 | `GET /metrics` | Prometheus metrics, off by default; on a separate listener or behind its own credential ([Metrics and alerts](metrics.md)) |
 | `POST /v1/messages/count_tokens`, `POST /v1/responses/input_tokens` | conservative local estimates: no provider call, no cost |
 
@@ -56,7 +56,25 @@ or any other client endpoint. Send it as `Authorization: Bearer <secret>`.
   needs a restart.
 - **Counted.** `humpyard_admin_requests_total{result}` ([Metrics](metrics.md)).
 
+### Reading
+
 `GET /admin/v1/whoami` returns the caller's `id`, `kind` (`credential`), `scopes` and `expires` (a UTC time, or
-`null`), and needs no particular scope. More endpoints follow as the change lands.
+`null`) and needs no particular scope. Every other read below needs `read`.
+
+| Endpoint | What it returns |
+|---|---|
+| `GET /admin/v1/config` | the effective configuration, as `GET /v1/config` returns it, with the `admin` section in full: each credential's id, scopes and expiry (client keys see only a count) |
+| `GET /admin/v1/health` | what `GET /v1/health` returns: skipped endpoints, latency, the loaded configuration, the last reload |
+| `GET /admin/v1/quota` | what `GET /v1/quota` returns |
+| `GET /admin/v1/decisions` | the decision log of **every key**, newest first; `?key=alice` narrows it to one key, and the usual filters (`limit`, `route`, `outcome`, `since_ms`, ...) apply |
+| `GET /admin/v1/stats` | the [statistics](budgets.md#statistics) of **every key**; `?key=alice` narrows them, and `group_by` and `window` work as on `/v1/stats` |
+| `GET /admin/v1/credentials` | every admin credential: `id`, `kind`, `scopes`, `expires` |
+
+The client endpoints keep their rule that a key sees only its own decisions and statistics, and do not accept
+`key`; only an admin reads across keys. Nothing here ever returns a secret or a hash of one.
+
+```
+curl -H "Authorization: Bearer $ADMIN_SECRET" "https://gateway.example/admin/v1/decisions?key=alice&limit=20"
+```
 
 Verified with real Claude Code, Codex CLI and OpenClaw sessions: see [Clients](clients.md).

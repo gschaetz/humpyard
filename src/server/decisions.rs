@@ -27,13 +27,24 @@ pub(super) async fn list_decisions(
         Ok(caller) => caller,
         Err(error) => return error.into_response_for(format),
     };
+    decisions_view(&state, &params, caller.map(|k| k.id)).await
+}
+
+/// The decision log for `key` (every key when `None`). The client endpoint passes the caller's own id; the
+/// admin endpoint passes the `key` filter it was given.
+pub(super) async fn decisions_view(
+    state: &AppState,
+    params: &HashMap<String, String>,
+    key: Option<String>,
+) -> Response {
+    let format = WireFormat::OpenAiChat;
     let Some(ledger) = state.accounting.ledger() else {
         return GatewayError::ModelNotFound(
             "no ledger is configured, so decisions are not recorded".into(),
         )
         .into_response_for(format);
     };
-    let query = match parse(&params, caller.as_ref().map(|k| k.id.clone())) {
+    let query = match parse(params, key) {
         Ok(query) => query,
         Err(message) => return GatewayError::BadRequest(message).into_response_for(format),
     };
