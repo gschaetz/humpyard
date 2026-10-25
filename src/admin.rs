@@ -7,7 +7,7 @@
 use std::collections::BTreeSet;
 
 use crate::auth::hash_key;
-use crate::config::{AdminConfig, AdminScope};
+use crate::config::{AdminConfig, AdminScope, Config};
 
 /// A caller the admin API has authenticated.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -70,6 +70,39 @@ pub fn authenticate(
         scopes: credential.scopes.clone(),
         expires: credential.expires_utc(),
     })
+}
+
+/// The `[admin.credentials.<id>]` block for a freshly minted secret whose hash is `hash`, ready to paste into a
+/// configuration. The block is checked by loading it through the real configuration loader, so `keygen` can
+/// never print one the gateway would refuse.
+///
+/// # Errors
+/// A message naming what the loader rejected: the id, a scope, or the expiry.
+pub fn credential_block(
+    id: &str,
+    scopes: &[String],
+    expires: Option<&str>,
+    hash: &str,
+) -> Result<String, String> {
+    let list = scopes
+        .iter()
+        .map(|scope| format!("\"{scope}\""))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let mut block = format!("[admin.credentials.{id}]\nsha256 = \"{hash}\"\nscopes = [{list}]\n");
+    if let Some(at) = expires {
+        // An unquoted TOML datetime, as the configuration expects.
+        block.push_str("expires = ");
+        block.push_str(at);
+        block.push('\n');
+    }
+    let probe = format!(
+        "listen = \"127.0.0.1:0\"\n[providers.p]\nbase_url = \"http://127.0.0.1:1\"\napi_key_env = \"PATH\"\n\
+         [targets.t]\nendpoints = [{{ provider = \"p\", model = \"m\" }}]\n{block}"
+    );
+    Config::from_toml(&probe, |name| std::env::var(name).ok())
+        .map_err(|error| error.to_string())?;
+    Ok(block)
 }
 
 #[cfg(test)]

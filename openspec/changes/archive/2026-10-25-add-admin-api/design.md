@@ -130,7 +130,6 @@ log the credential id.
   token against the provider's signing keys, with `[admin.oidc]` naming the issuer and audience and mapping
   groups to scopes, and the GUI performs the login itself. It brings a JWT dependency, a runtime fetch of signing
   keys that must fail closed, and the CORS question. This change keeps the seam open and builds none of it.
-- Whether `keygen` should print an `[admin.credentials.<id>]` block (`keygen --admin <id> --scopes ...`). Likely
-  yes, as a small task here.
+- ~~Whether `keygen` should print an `[admin.credentials.<id>]` block.~~ Yes: `keygen <id> --admin --scopes ...`, with the block checked by the real configuration loader.
 - Whether `ctl` should accept an admin credential and use `/admin/v1`. Deferred: `ctl` works today through the
   client endpoints.

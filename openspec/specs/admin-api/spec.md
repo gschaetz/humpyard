@@ -1,10 +1,9 @@
-# Spec Delta
+# admin-api Specification
 
 ## Purpose
-
 An administration surface for the gateway with its own credentials: named per person, scoped, expiring and revocable without a deploy, kept separate from the keys clients use for inference, and described by a published contract.
 
-## ADDED Requirements
+## Requirements
 
 ### Requirement: Admin credentials are named, hashed and scoped
 The configuration MAY define `[admin.credentials.<id>]` entries, each with the SHA-256 hash of its secret, a non-empty list of scopes drawn from `read`, `overrides` and `credentials`, and an optional `expires` time. The gateway SHALL identify an admin caller by that id and SHALL refuse a configuration that contains a plaintext secret, an unknown scope, a duplicate hash, or a hash equal to that of a client key or the metrics credential.
@@ -115,3 +114,14 @@ With the `credentials` scope, an admin SHALL be able to revoke an admin principa
 #### Scenario: Every route is described
 - **WHEN** the served admin routes are compared with the document
 - **THEN** each route and method appears in the document, and each operation in the document is served
+
+### Requirement: An admin credential can be minted ready to paste
+`humpyard keygen <id> --admin --scopes <list> [--expires <datetime>]` SHALL print the new secret once and an `[admin.credentials.<id>]` block holding its hash, scopes and expiry, and the block SHALL have been checked by the configuration loader the gateway uses. It SHALL refuse an unknown scope, an invalid id or expiry, and no scopes, without printing a secret, and `--scopes` and `--expires` SHALL be refused without `--admin`.
+
+#### Scenario: The printed block loads and authenticates
+- **WHEN** the block is added to a configuration and the gateway presents the printed secret
+- **THEN** the configuration loads and the secret authenticates as that credential with exactly those scopes
+
+#### Scenario: A block the gateway would refuse is never printed
+- **WHEN** the scopes include an unknown name
+- **THEN** the command fails and prints no secret

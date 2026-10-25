@@ -147,5 +147,5 @@ your dashboard.
 
 ## Not here yet
 
-A read-only status page for people who do not run Prometheus is planned. It will read the same
-registry, so it can never disagree with these numbers; see the [roadmap](roadmap.md).
+A page for people who do not run Prometheus is planned as part of the admin GUI, a separate client of the
+[admin API](api.md#the-admin-api); see the [roadmap](roadmap.md).

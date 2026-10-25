@@ -140,3 +140,82 @@ fn keygen_prints_a_key_and_the_matching_hash_and_stores_nothing() {
         "keygen must not write files"
     );
 }
+
+/// Runs `humpyard keygen` with `args`, returning the exit status and the text it printed.
+fn keygen(args: &[&str]) -> (bool, String, String) {
+    let out = Command::new(env!("CARGO_BIN_EXE_humpyard"))
+        .arg("keygen")
+        .args(args)
+        .output()
+        .unwrap();
+    (
+        out.status.success(),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
+}
+
+#[test]
+fn keygen_admin_prints_a_block_that_loads_and_authenticates() {
+    let (ok, text, err) = keygen(&[
+        "gary",
+        "--admin",
+        "--scopes",
+        "read,overrides",
+        "--expires",
+        "2099-01-01T00:00:00Z",
+    ]);
+    assert!(ok, "{err}");
+    let secret = text
+        .split_whitespace()
+        .find(|w| w.starts_with("sk-humpyard-"))
+        .expect("secret printed");
+    let block = &text[text
+        .find("[admin.credentials.gary]")
+        .expect("block printed")..];
+    // The printed block, pasted into a config, loads and opens the admin API for exactly that secret.
+    let config = humpyard::config::Config::from_toml(
+        &format!(
+            "listen = \"127.0.0.1:0\"\n[providers.p]\nbase_url = \"http://127.0.0.1:1\"\napi_key_env = \"PATH\"\n\
+             [targets.t]\nendpoints = [{{ provider = \"p\", model = \"m\" }}]\n{block}"
+        ),
+        |name| std::env::var(name).ok(),
+    )
+    .unwrap();
+    let principal = humpyard::admin::authenticate(&config.admin, Some(secret), 0).unwrap();
+    assert_eq!(principal.id, "gary");
+    assert!(principal.may(humpyard::config::AdminScope::Read));
+    assert!(principal.may(humpyard::config::AdminScope::Overrides));
+    assert!(!principal.may(humpyard::config::AdminScope::Credentials));
+    assert!(principal.expires.is_some());
+    assert!(humpyard::admin::authenticate(&config.admin, Some("not-it"), 0).is_err());
+    // It is an admin credential, not a virtual key.
+    assert!(!text.contains("[keys."), "{text}");
+}
+
+#[test]
+fn keygen_admin_refuses_what_the_gateway_would_refuse() {
+    // No scopes, an unknown scope, a bad id, an expiry without an offset, and admin-only flags without `--admin`.
+    for args in [
+        &["gary", "--admin"][..],
+        &["gary", "--admin", "--scopes", "root"],
+        &["bad id", "--admin", "--scopes", "read"],
+        &[
+            "gary",
+            "--admin",
+            "--scopes",
+            "read",
+            "--expires",
+            "2099-01-01",
+        ],
+        &["gary", "--scopes", "read"],
+        &["gary", "--expires", "2099-01-01T00:00:00Z"],
+    ] {
+        let (ok, text, _) = keygen(args);
+        assert!(!ok, "{args:?} should be refused");
+        assert!(
+            !text.contains("sk-humpyard-"),
+            "a refused keygen must not print a secret: {args:?}"
+        );
+    }
+}
