@@ -34,6 +34,8 @@ traffic** (Claude Code, Codex and the like), and it explains and measures what i
 | route one `auto` model to the right pool | [Auto routing recipe](routing.md#auto-routing-recipe) |
 | understand failover, selectors, health | [Routing](routing.md) |
 | set budgets and read the usage and decision log | [Keys, budgets and the ledger](budgets.md) |
+| cut what a coding agent costs | [Cut agent costs](cut-agent-costs.md) |
+| compare it with other gateways | [Compared with other gateways](compare.md) |
 | move from LiteLLM | [Migrating from LiteLLM](migrating-from-litellm.md) |
 | move from ModelRelay | [Moving from ModelRelay](migrating-from-modelrelay.md) |
 | see the design | [Architecture](architecture.md) and the [decision records](adr/README.md) |
