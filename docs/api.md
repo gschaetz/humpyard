@@ -33,7 +33,7 @@ curl localhost:8080/v1/responses -H 'content-type: application/json' \
 | `GET /v1/stats/switches` | what changing endpoint in the middle of a session abandoned: switches, cached tokens left behind, the extra cost at the destination's prices, session coverage ([Cache use and sessions](budgets.md#cache-use-and-sessions)) |
 | `GET /v1/quota` | the latest usage windows (percent used, status, reset time) of each provider that names a `quota_source`, with the age of the data, or why it is unknown ([Provider quota](routing.md#provider-quota)) |
 | `GET /v1/quota/history` | stored quota samples (`window` such as `7d`, optional `provider` and `name`), oldest first, each with the cost of the provider's calls since the previous sample of its window; needs a ledger ([Provider quota](routing.md#provider-quota)) |
-| `GET /admin/v1/whoami`, `/config`, `/health`, `/quota`, `/decisions`, `/stats`, `/credentials`, `/overrides` and the revoke endpoints | the [admin API](#the-admin-api): who you are, and what the gateway is doing across every key |
+| `GET /admin/v1/whoami`, `/config`, `/health`, `/quota`, `/decisions`, `/stats`, `/credentials`, `/overrides`, the revoke endpoints and `/openapi.json` | the [admin API](#the-admin-api): who you are, and what the gateway is doing across every key |
 | `GET /metrics` | Prometheus metrics, off by default; on a separate listener or behind its own credential ([Metrics and alerts](metrics.md)) |
 | `POST /v1/messages/count_tokens`, `POST /v1/responses/input_tokens` | conservative local estimates: no provider call, no cost |
 
@@ -104,5 +104,13 @@ The client endpoints keep their rule that a key sees only its own decisions and 
 ```
 curl -H "Authorization: Bearer $ADMIN_SECRET" "https://gateway.example/admin/v1/decisions?key=alice&limit=20"
 ```
+
+### The contract
+
+`GET /admin/v1/openapi.json` returns the API as an OpenAPI document to any valid admin credential, and the same
+file is [`admin-v1.json`](openapi/admin-v1.json) in the repository. Each operation lists the scope it needs and
+the error codes it can answer with. One table in the gateway builds the routes, and a test fails if the document
+and the served routes differ in a path, a method, a scope or an error code, so a client typed against the
+document can rely on it.
 
 Verified with real Claude Code, Codex CLI and OpenClaw sessions: see [Clients](clients.md).

@@ -1,0 +1,1325 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "humpyard admin API",
+    "version": "1",
+    "description": "The operator surface of a humpyard gateway (ADR 0027). Opened only by an admin credential defined in the configuration's `[admin]` section; a client key never opens it. Without a configured credential the whole namespace answers 404. Every operation lists the scope it needs under `security`, and the error codes it can answer with under `x-error-codes`; a test fails when this document and the served routes differ."
+  },
+  "servers": [
+    {
+      "url": "/",
+      "description": "The gateway, or its `[admin] listen` address."
+    }
+  ],
+  "security": [
+    {
+      "adminBearer": []
+    }
+  ],
+  "paths": {
+    "/admin/v1/whoami": {
+      "get": {
+        "operationId": "whoami",
+        "summary": "Who the caller is",
+        "security": [
+          {
+            "adminBearer": []
+          }
+        ],
+        "x-error-codes": [
+          "admin_credential_invalid"
+        ],
+        "responses": {
+          "200": {
+            "description": "The caller's id, scopes and expiry.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Principal"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, unknown, expired or revoked credential. One shape for every reason.",
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "Bearer"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/v1/openapi.json": {
+      "get": {
+        "operationId": "openapi",
+        "summary": "This document",
+        "security": [
+          {
+            "adminBearer": []
+          }
+        ],
+        "x-error-codes": [
+          "admin_credential_invalid"
+        ],
+        "responses": {
+          "200": {
+            "description": "The OpenAPI document of the admin API.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, unknown, expired or revoked credential. One shape for every reason.",
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "Bearer"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/v1/config": {
+      "get": {
+        "operationId": "config",
+        "summary": "The effective configuration, with the admin section in full",
+        "security": [
+          {
+            "adminBearer": [
+              "read"
+            ]
+          }
+        ],
+        "x-error-codes": [
+          "admin_credential_invalid",
+          "admin_scope_required"
+        ],
+        "responses": {
+          "200": {
+            "description": "The configuration.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "As `GET /v1/config`, plus an `admin` object listing each credential's id, scopes and expiry."
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, unknown, expired or revoked credential. One shape for every reason.",
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "Bearer"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "A valid credential without the scope the operation needs; `error.scope` names it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/v1/health": {
+      "get": {
+        "operationId": "health",
+        "summary": "Gateway health",
+        "security": [
+          {
+            "adminBearer": [
+              "read"
+            ]
+          }
+        ],
+        "x-error-codes": [
+          "admin_credential_invalid",
+          "admin_scope_required"
+        ],
+        "responses": {
+          "200": {
+            "description": "Skipped endpoints, latency, the loaded configuration and the last reload.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "As `GET /v1/health`."
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, unknown, expired or revoked credential. One shape for every reason.",
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "Bearer"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "A valid credential without the scope the operation needs; `error.scope` names it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/v1/quota": {
+      "get": {
+        "operationId": "quota",
+        "summary": "Provider quota",
+        "security": [
+          {
+            "adminBearer": [
+              "read"
+            ]
+          }
+        ],
+        "x-error-codes": [
+          "admin_credential_invalid",
+          "admin_scope_required"
+        ],
+        "responses": {
+          "200": {
+            "description": "Quota windows and their state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "As `GET /v1/quota`."
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, unknown, expired or revoked credential. One shape for every reason.",
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "Bearer"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "A valid credential without the scope the operation needs; `error.scope` names it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/v1/decisions": {
+      "get": {
+        "operationId": "decisions",
+        "summary": "The routing decision log of every key",
+        "security": [
+          {
+            "adminBearer": [
+              "read"
+            ]
+          }
+        ],
+        "x-error-codes": [
+          "admin_credential_invalid",
+          "admin_scope_required"
+        ],
+        "parameters": [
+          {
+            "name": "key",
+            "in": "query",
+            "required": false,
+            "description": "Only the decisions of this client key; omit for every key.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Rows to return (default 50, at most 500).",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "since_ms",
+            "in": "query",
+            "required": false,
+            "description": "Only decisions at or after this time, in epoch milliseconds.",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "route",
+            "in": "query",
+            "required": false,
+            "description": "Only this route.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "rule",
+            "in": "query",
+            "required": false,
+            "description": "Only this rule.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "outcome",
+            "in": "query",
+            "required": false,
+            "description": "Only this outcome.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "request_id",
+            "in": "query",
+            "required": false,
+            "description": "Only this request.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Decisions, newest first.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "object": {
+                      "type": "string",
+                      "enum": [
+                        "list"
+                      ]
+                    },
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "description": "A decision, as `GET /v1/decisions` returns it."
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, unknown, expired or revoked credential. One shape for every reason.",
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "Bearer"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "A valid credential without the scope the operation needs; `error.scope` names it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "An unknown filter or a malformed number.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No ledger is configured, so decisions are not recorded.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/v1/stats": {
+      "get": {
+        "operationId": "stats",
+        "summary": "Statistics of every key",
+        "security": [
+          {
+            "adminBearer": [
+              "read"
+            ]
+          }
+        ],
+        "x-error-codes": [
+          "admin_credential_invalid",
+          "admin_scope_required"
+        ],
+        "parameters": [
+          {
+            "name": "key",
+            "in": "query",
+            "required": false,
+            "description": "Only the statistics of this client key; omit for every key.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "window",
+            "in": "query",
+            "required": false,
+            "description": "How far back, for example `1h` or `7d`.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "group_by",
+            "in": "query",
+            "required": false,
+            "description": "`route` (default), `target` or `endpoint`.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "route",
+            "in": "query",
+            "required": false,
+            "description": "Only this route.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "target",
+            "in": "query",
+            "required": false,
+            "description": "Only this target.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Statistics over the window.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "As `GET /v1/stats`."
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, unknown, expired or revoked credential. One shape for every reason.",
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "Bearer"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "A valid credential without the scope the operation needs; `error.scope` names it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "An unknown parameter or a malformed window.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/v1/credentials": {
+      "get": {
+        "operationId": "listCredentials",
+        "summary": "Every admin credential",
+        "security": [
+          {
+            "adminBearer": [
+              "read"
+            ]
+          }
+        ],
+        "x-error-codes": [
+          "admin_credential_invalid",
+          "admin_scope_required"
+        ],
+        "responses": {
+          "200": {
+            "description": "Credentials: id, scopes, expiry and whether a revocation is in force. Never a hash.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "object": {
+                      "type": "string",
+                      "enum": [
+                        "list"
+                      ]
+                    },
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Credential"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, unknown, expired or revoked credential. One shape for every reason.",
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "Bearer"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "A valid credential without the scope the operation needs; `error.scope` names it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/v1/credentials/{id}/revoke": {
+      "post": {
+        "operationId": "revokeCredential",
+        "summary": "Revoke an admin credential for a bounded time",
+        "security": [
+          {
+            "adminBearer": [
+              "credentials"
+            ]
+          }
+        ],
+        "x-error-codes": [
+          "admin_credential_invalid",
+          "admin_scope_required",
+          "invalid_revocation",
+          "overrides_need_ledger",
+          "already_revoked",
+          "ledger_error"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "The credential to revoke.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RevokeRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The revocation now in force.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Revocation"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, unknown, expired or revoked credential. One shape for every reason.",
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "Bearer"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "A valid credential without the scope the operation needs; `error.scope` names it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Not a configured admin credential, a missing reason, or an expiry beyond the maximum.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Already revoked, or no ledger is configured.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The revocation could not be stored.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "endRevocation",
+        "summary": "End a revocation before it expires",
+        "security": [
+          {
+            "adminBearer": [
+              "credentials"
+            ]
+          }
+        ],
+        "x-error-codes": [
+          "admin_credential_invalid",
+          "admin_scope_required",
+          "revocation_not_found"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "The credential whose revocation to end.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The revocation has ended.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "credential": {
+                      "type": "string"
+                    },
+                    "revoked": {
+                      "type": "boolean",
+                      "enum": [
+                        false
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, unknown, expired or revoked credential. One shape for every reason.",
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "Bearer"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "A valid credential without the scope the operation needs; `error.scope` names it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No revocation is in force for that credential.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/v1/overrides": {
+      "get": {
+        "operationId": "listOverrides",
+        "summary": "Runtime overrides",
+        "security": [
+          {
+            "adminBearer": [
+              "read"
+            ]
+          }
+        ],
+        "x-error-codes": [
+          "admin_credential_invalid",
+          "admin_scope_required"
+        ],
+        "parameters": [
+          {
+            "name": "history",
+            "in": "query",
+            "required": false,
+            "description": "`true` adds overrides that have ended, with their status.",
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Overrides in force; with `history=true`, those of the last 30 days.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "overrides": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Override"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, unknown, expired or revoked credential. One shape for every reason.",
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "Bearer"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "A valid credential without the scope the operation needs; `error.scope` names it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "createOverride",
+        "summary": "Create a runtime override",
+        "security": [
+          {
+            "adminBearer": [
+              "overrides"
+            ]
+          }
+        ],
+        "x-error-codes": [
+          "admin_credential_invalid",
+          "admin_scope_required",
+          "invalid_override",
+          "overrides_need_ledger",
+          "ledger_error"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateOverride"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The override, recorded as created by `admin:<id>`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Override"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, unknown, expired or revoked credential. One shape for every reason.",
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "Bearer"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "A valid credential without the scope the operation needs; `error.scope` names it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "An unknown kind, a subject the configuration lacks, or an expiry beyond the maximum.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "No ledger is configured.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The override could not be stored.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/v1/overrides/{id}": {
+      "delete": {
+        "operationId": "removeOverride",
+        "summary": "Remove an override in force",
+        "security": [
+          {
+            "adminBearer": [
+              "overrides"
+            ]
+          }
+        ],
+        "x-error-codes": [
+          "admin_credential_invalid",
+          "admin_scope_required",
+          "override_not_found",
+          "ledger_error"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "The override's id.",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The override was removed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "integer"
+                    },
+                    "removed": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, unknown, expired or revoked credential. One shape for every reason.",
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "Bearer"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "A valid credential without the scope the operation needs; `error.scope` names it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No override with that id is in force.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "adminBearer": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "An admin credential's secret. The scope named in an operation's `security` is one of `read`, `overrides` or `credentials`."
+      }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "object",
+            "required": [
+              "message",
+              "type"
+            ],
+            "properties": {
+              "message": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string"
+              },
+              "code": {
+                "type": "string"
+              },
+              "scope": {
+                "type": "string",
+                "description": "With `admin_scope_required`: the scope the credential lacks."
+              }
+            }
+          }
+        }
+      },
+      "Principal": {
+        "type": "object",
+        "required": [
+          "id",
+          "kind",
+          "scopes"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "credential"
+            ]
+          },
+          "scopes": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "read",
+                "overrides",
+                "credentials"
+              ]
+            }
+          },
+          "expires": {
+            "type": "string",
+            "nullable": true,
+            "description": "A UTC time, or null when it does not expire."
+          }
+        }
+      },
+      "Credential": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Principal"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "revoked": {
+                "type": "boolean",
+                "description": "True while a revocation is in force."
+              }
+            }
+          }
+        ]
+      },
+      "Override": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "disable_target",
+              "drain_provider",
+              "pin_route"
+            ]
+          },
+          "subject": {
+            "type": "string"
+          },
+          "route": {
+            "type": "string",
+            "nullable": true
+          },
+          "reason": {
+            "type": "string"
+          },
+          "created_ms": {
+            "type": "integer"
+          },
+          "expires_ms": {
+            "type": "integer"
+          },
+          "expires_in_secs": {
+            "type": "integer"
+          },
+          "created_by": {
+            "type": "string",
+            "description": "`admin:<id>` for an admin credential, otherwise a client key id."
+          },
+          "stale": {
+            "type": "boolean"
+          },
+          "status": {
+            "type": "string",
+            "description": "With `history=true` only."
+          },
+          "ended_ms": {
+            "type": "integer",
+            "nullable": true,
+            "description": "With `history=true` only."
+          }
+        }
+      },
+      "CreateOverride": {
+        "type": "object",
+        "required": [
+          "kind",
+          "subject",
+          "reason"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "disable_target",
+              "drain_provider",
+              "pin_route"
+            ]
+          },
+          "subject": {
+            "type": "string"
+          },
+          "route": {
+            "type": "string",
+            "description": "Required for `pin_route`."
+          },
+          "reason": {
+            "type": "string"
+          },
+          "expires_in_secs": {
+            "type": "integer",
+            "minimum": 1
+          }
+        }
+      },
+      "RevokeRequest": {
+        "type": "object",
+        "required": [
+          "reason"
+        ],
+        "properties": {
+          "reason": {
+            "type": "string"
+          },
+          "expires_in_secs": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Default four hours, at most the `[overrides]` maximum."
+          }
+        }
+      },
+      "Revocation": {
+        "type": "object",
+        "properties": {
+          "credential": {
+            "type": "string"
+          },
+          "revoked": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          },
+          "created_by": {
+            "type": "string"
+          },
+          "expires_ms": {
+            "type": "integer"
+          },
+          "expires_in_secs": {
+            "type": "integer"
+          }
+        }
+      }
+    }
+  }
+}

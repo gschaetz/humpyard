@@ -4,12 +4,12 @@
 
 use std::sync::Arc;
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{delete, get, post};
+use axum::routing::MethodRouter;
 use axum::{Json, Router};
 use serde_json::json;
 
@@ -19,25 +19,162 @@ use crate::auth::presented_key;
 use crate::config::{AdminConfig, AdminScope};
 use crate::overrides::OverrideError;
 
-/// The admin routes. They carry no client authentication of any kind.
+type Register = fn(MethodRouter<Arc<AppState>>) -> MethodRouter<Arc<AppState>>;
+
+/// One operation of the admin API: the single source for the router, for the scope each handler demands of a
+/// caller, and for the drift test against `docs/openapi/admin-v1.json`.
+// `scope` and `codes` are read by the drift tests; the router itself only needs the registration.
+#[cfg_attr(not(test), allow(dead_code))]
+pub(super) struct Route {
+    pub(super) method: &'static str,
+    pub(super) path: &'static str,
+    /// The scope a caller must hold; `None` means any valid credential.
+    pub(super) scope: Option<AdminScope>,
+    /// The error codes this operation can answer with, beyond the ones every operation shares.
+    pub(super) codes: &'static [&'static str],
+    register: Register,
+}
+
+const OVERRIDES_CODES: &[&str] = &["invalid_override", "overrides_need_ledger", "ledger_error"];
+
+/// Every `/admin/v1` operation. Adding a route here without describing it in the `OpenAPI` document, or the
+/// reverse, fails `the_openapi_document_describes_exactly_the_routes`.
+pub(super) const ROUTES: &[Route] = &[
+    Route {
+        method: "GET",
+        path: "/admin/v1/whoami",
+        scope: None,
+        codes: &[],
+        register: |m| m.get(whoami),
+    },
+    Route {
+        method: "GET",
+        path: "/admin/v1/openapi.json",
+        scope: None,
+        codes: &[],
+        register: |m| m.get(openapi),
+    },
+    Route {
+        method: "GET",
+        path: "/admin/v1/config",
+        scope: Some(AdminScope::Read),
+        codes: &[],
+        register: |m| m.get(config),
+    },
+    Route {
+        method: "GET",
+        path: "/admin/v1/health",
+        scope: Some(AdminScope::Read),
+        codes: &[],
+        register: |m| m.get(health),
+    },
+    Route {
+        method: "GET",
+        path: "/admin/v1/quota",
+        scope: Some(AdminScope::Read),
+        codes: &[],
+        register: |m| m.get(quota),
+    },
+    Route {
+        method: "GET",
+        path: "/admin/v1/decisions",
+        scope: Some(AdminScope::Read),
+        codes: &[],
+        register: |m| m.get(decisions),
+    },
+    Route {
+        method: "GET",
+        path: "/admin/v1/stats",
+        scope: Some(AdminScope::Read),
+        codes: &[],
+        register: |m| m.get(stats),
+    },
+    Route {
+        method: "GET",
+        path: "/admin/v1/credentials",
+        scope: Some(AdminScope::Read),
+        codes: &[],
+        register: |m| m.get(credentials),
+    },
+    Route {
+        method: "POST",
+        path: "/admin/v1/credentials/{id}/revoke",
+        scope: Some(AdminScope::Credentials),
+        codes: &[
+            "invalid_revocation",
+            "overrides_need_ledger",
+            "already_revoked",
+            "ledger_error",
+        ],
+        register: |m| m.post(revoke_credential),
+    },
+    Route {
+        method: "DELETE",
+        path: "/admin/v1/credentials/{id}/revoke",
+        scope: Some(AdminScope::Credentials),
+        codes: &["revocation_not_found"],
+        register: |m| m.delete(end_revocation),
+    },
+    Route {
+        method: "GET",
+        path: "/admin/v1/overrides",
+        scope: Some(AdminScope::Read),
+        codes: &[],
+        register: |m| m.get(list_overrides),
+    },
+    Route {
+        method: "POST",
+        path: "/admin/v1/overrides",
+        scope: Some(AdminScope::Overrides),
+        codes: OVERRIDES_CODES,
+        register: |m| m.post(create_override),
+    },
+    Route {
+        method: "DELETE",
+        path: "/admin/v1/overrides/{id}",
+        scope: Some(AdminScope::Overrides),
+        codes: &["override_not_found", "ledger_error"],
+        register: |m| m.delete(remove_override),
+    },
+];
+
+#[cfg_attr(not(test), allow(dead_code))]
+impl Route {
+    /// Every error code this operation can answer with: the shared authentication codes, the scope code when it
+    /// needs a scope, and its own.
+    pub(super) fn error_codes(&self) -> Vec<&'static str> {
+        let mut codes = vec!["admin_credential_invalid"];
+        if self.scope.is_some() {
+            codes.push("admin_scope_required");
+        }
+        codes.extend_from_slice(self.codes);
+        codes
+    }
+}
+
+/// The admin routes, built from [`ROUTES`]. They carry no client authentication of any kind.
 pub(super) fn routes() -> Router<Arc<AppState>> {
-    Router::new()
-        .route("/admin/v1/whoami", get(whoami))
-        .route("/admin/v1/config", get(config))
-        .route("/admin/v1/health", get(health))
-        .route("/admin/v1/quota", get(quota))
-        .route("/admin/v1/decisions", get(decisions))
-        .route("/admin/v1/stats", get(stats))
-        .route("/admin/v1/credentials", get(credentials))
-        .route(
-            "/admin/v1/credentials/{id}/revoke",
-            post(revoke_credential).delete(end_revocation),
-        )
-        .route(
-            "/admin/v1/overrides",
-            get(list_overrides).post(create_override),
-        )
-        .route("/admin/v1/overrides/{id}", delete(remove_override))
+    let mut by_path: BTreeMap<&str, MethodRouter<Arc<AppState>>> = BTreeMap::new();
+    for route in ROUTES {
+        let method_router = by_path.remove(route.path).unwrap_or_default();
+        by_path.insert(route.path, (route.register)(method_router));
+    }
+    by_path
+        .into_iter()
+        .fold(Router::new(), |router, (path, methods)| {
+            router.route(path, methods)
+        })
+}
+
+/// The published contract, embedded so the gateway serves exactly what the repository documents.
+const OPENAPI: &str = include_str!("../../docs/openapi/admin-v1.json");
+
+/// The `OpenAPI` document of the admin API, for any valid credential.
+async fn openapi(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response {
+    match authorize(&state, &headers, None) {
+        Ok(_) => ([(header::CONTENT_TYPE, "application/json")], OPENAPI).into_response(),
+        Err(denied) => denied.into_response(),
+    }
 }
 
 /// Adds the admin routes to the main router, unless `[admin] listen` gives them their own address, in which
@@ -431,6 +568,7 @@ mod tests {
     use super::super::{Options, build};
     use super::*;
     use crate::config::Config;
+    use axum::Router;
 
     fn bearer(secret: &str) -> HeaderMap {
         let mut headers = HeaderMap::new();
@@ -529,5 +667,180 @@ scopes = ["overrides"]
                 "{result}: {text}"
             );
         }
+    }
+
+    /// The admin API as a router with a credential of each kind of scope, and their secrets.
+    async fn served() -> (Router, [String; 3]) {
+        let keys: Vec<_> = (0..3)
+            .map(|_| crate::auth::generate_key().unwrap())
+            .collect();
+        let text = format!(
+            r#"listen = "127.0.0.1:0"
+[providers.p]
+base_url = "http://127.0.0.1:1"
+api_key_env = "PATH"
+[targets.t]
+endpoints = [{{ provider = "p", model = "m" }}]
+[admin.credentials.reader]
+sha256 = "{}"
+scopes = ["read"]
+[admin.credentials.operator]
+sha256 = "{}"
+scopes = ["overrides"]
+[admin.credentials.custodian]
+sha256 = "{}"
+scopes = ["credentials"]
+"#,
+            keys[0].1, keys[1].1, keys[2].1
+        );
+        let config = Config::from_toml(&text, |name| std::env::var(name).ok()).unwrap();
+        let built = build(config, Options::default(), "test".into())
+            .await
+            .unwrap();
+        let [a, b, c] = [&keys[0].0, &keys[1].0, &keys[2].0].map(Clone::clone);
+        (routes().with_state(built.state), [a, b, c])
+    }
+
+    async fn call(
+        app: &Router,
+        route: &Route,
+        secret: Option<&str>,
+    ) -> (StatusCode, serde_json::Value) {
+        use tower::ServiceExt;
+        let uri = route.path.replace("{id}", "1");
+        let body = match (route.method, route.path) {
+            ("POST", "/admin/v1/overrides") => {
+                json!({"kind": "disable_target", "subject": "t", "reason": "x"})
+            }
+            ("POST", _) => json!({"reason": "x"}),
+            _ => json!(null),
+        };
+        let mut request = axum::http::Request::builder()
+            .method(route.method)
+            .uri(uri)
+            .header(header::CONTENT_TYPE, "application/json");
+        if let Some(secret) = secret {
+            request = request.header(header::AUTHORIZATION, format!("Bearer {secret}"));
+        }
+        let request = request
+            .body(axum::body::Body::from(body.to_string()))
+            .unwrap();
+        let response = app.clone().oneshot(request).await.unwrap();
+        let status = response.status();
+        let bytes = axum::body::to_bytes(response.into_body(), 1 << 20)
+            .await
+            .unwrap();
+        (status, serde_json::from_slice(&bytes).unwrap_or_default())
+    }
+
+    #[test]
+    fn the_openapi_document_describes_exactly_the_routes() {
+        let doc: serde_json::Value = serde_json::from_str(OPENAPI).unwrap();
+        let mut described = std::collections::BTreeSet::new();
+        for (path, item) in doc["paths"].as_object().unwrap() {
+            for (method, operation) in item.as_object().unwrap() {
+                let scope = operation["security"][0]["adminBearer"][0]
+                    .as_str()
+                    .map(str::to_owned);
+                let mut codes: Vec<String> = operation["x-error-codes"]
+                    .as_array()
+                    .unwrap_or_else(|| panic!("{method} {path} lists no x-error-codes"))
+                    .iter()
+                    .map(|c| c.as_str().unwrap().to_owned())
+                    .collect();
+                codes.sort();
+                // Every `{name}` in the path is declared as a parameter.
+                for name in path
+                    .split('/')
+                    .filter_map(|s| s.strip_prefix('{')?.strip_suffix('}'))
+                {
+                    let declared = operation["parameters"].as_array().is_some_and(|ps| {
+                        ps.iter().any(|p| p["name"] == name && p["in"] == "path")
+                    });
+                    assert!(declared, "{method} {path} does not declare `{name}`");
+                }
+                described.insert((method.to_uppercase(), path.clone(), scope, codes));
+            }
+        }
+        let served: std::collections::BTreeSet<_> = ROUTES
+            .iter()
+            .map(|r| {
+                let mut codes: Vec<String> =
+                    r.error_codes().iter().map(|c| (*c).to_owned()).collect();
+                codes.sort();
+                (
+                    r.method.to_owned(),
+                    r.path.to_owned(),
+                    r.scope.map(|s| s.as_str().to_owned()),
+                    codes,
+                )
+            })
+            .collect();
+        let only_served: Vec<_> = served.difference(&described).collect();
+        let only_described: Vec<_> = described.difference(&served).collect();
+        assert!(
+            only_served.is_empty() && only_described.is_empty(),
+            "served but not described (or described differently): {only_served:#?}\n\
+             described but not served: {only_described:#?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn every_route_demands_the_scope_the_table_says() {
+        let (app, [reader, operator, custodian]) = served().await;
+        for route in ROUTES {
+            let (status, body) = call(&app, route, None).await;
+            assert_eq!(
+                status,
+                StatusCode::UNAUTHORIZED,
+                "{} {}",
+                route.method,
+                route.path
+            );
+            assert_eq!(body["error"]["code"], "admin_credential_invalid");
+            // A credential holding a different scope is refused, naming the one the table lists.
+            if let Some(scope) = route.scope {
+                let other = match scope {
+                    AdminScope::Read => &operator,
+                    AdminScope::Overrides | AdminScope::Credentials => &reader,
+                };
+                let (status, body) = call(&app, route, Some(other)).await;
+                assert_eq!(
+                    status,
+                    StatusCode::FORBIDDEN,
+                    "{} {}",
+                    route.method,
+                    route.path
+                );
+                assert_eq!(
+                    body["error"]["scope"],
+                    scope.as_str(),
+                    "{} {}",
+                    route.method,
+                    route.path
+                );
+            } else {
+                // No scope listed: any valid credential gets through.
+                for secret in [&reader, &operator, &custodian] {
+                    let (status, _) = call(&app, route, Some(secret)).await;
+                    assert_eq!(status, StatusCode::OK, "{} {}", route.method, route.path);
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn the_served_document_is_the_embedded_one() {
+        let (app, [reader, ..]) = served().await;
+        let route = ROUTES
+            .iter()
+            .find(|r| r.path.ends_with("openapi.json"))
+            .unwrap();
+        let (status, body) = call(&app, route, Some(&reader)).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            body,
+            serde_json::from_str::<serde_json::Value>(OPENAPI).unwrap()
+        );
     }
 }
