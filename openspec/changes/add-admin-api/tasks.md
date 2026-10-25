@@ -2,10 +2,10 @@
 
 ## 1. Configuration
 
-- [ ] 1.1 `[admin]` and `[admin.credentials.<id>]` in the schema and loader: hash, scopes, optional `expires`, optional `listen`; verify with config tests for a valid section, no section, `listen` without credentials, and an empty scope list
-- [ ] 1.2 Load-time validation: unknown scope, duplicate hash, a hash equal to a client key's or the metrics credential's, an unparsable `expires`; verify each is refused with the offending id named
-- [ ] 1.3 Credentials in the configuration snapshot and fingerprint, shown by id, scopes and expiry only in `GET /v1/config` and `check-config`; verify a test that no hash or secret appears and that the fingerprint changes when a credential does
-- [ ] 1.4 Document `[admin]` in `docs/configuration.md` and verify the example in it loads with `check-config`
+- [x] 1.1 `[admin]` and `[admin.credentials.<id>]` in the schema and loader: hash, scopes, optional `expires`, optional `listen`; verify with config tests for a valid section, no section, `listen` without credentials, and an empty scope list
+- [x] 1.2 Load-time validation: unknown scope, duplicate hash, a hash equal to a client key's or the metrics credential's, an unparsable `expires`; verify each is refused with the offending id named
+- [x] 1.3 Credentials in the configuration snapshot and fingerprint, shown by id, scopes and expiry only in `GET /v1/config` and `check-config`; verify a test that no hash or secret appears and that the fingerprint changes when a credential does
+- [x] 1.4 Document `[admin]` in `docs/configuration.md` and verify the example in it loads with `check-config`
 
 ## 2. Authentication and the namespace
 

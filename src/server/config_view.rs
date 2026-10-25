@@ -118,6 +118,13 @@ pub(super) fn view(
         "routes": routes,
         "selectors": config.select,
         "keys": keys,
+        // Only a count: who may administer the gateway is for administrators to see, not for every key that
+        // may read the configuration (ADR 0027).
+        "admin": {
+            "enabled": config.admin.enabled(),
+            "listen": config.admin.listen.map(|addr| addr.to_string()),
+            "credentials": config.admin.credentials.len(),
+        },
     })
 }
 
