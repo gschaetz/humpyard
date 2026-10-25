@@ -9,11 +9,11 @@
 
 ## 2. Authentication and the namespace
 
-- [ ] 2.1 The admin authenticator over the snapshot's credentials (expiry against the clock, constant shape of failure), separate from the client `KeyStore`; verify unit tests for valid, unknown, expired and wrong-kind credentials
-- [ ] 2.2 `/admin/v1` router merged into the main one, or served by its own listener when `[admin] listen` is set, and absent (404) without credentials; verify tests for the 404, the own-listener case and that the main listener 404s when `listen` is set
-- [ ] 2.3 Scope checks with 401 `admin_credential_invalid` (with `WWW-Authenticate`) and 403 `admin_scope_required` naming the scope, plus `GET /admin/v1/whoami`; verify tests that a client key and an admin credential each fail on the other's endpoints
-- [ ] 2.4 `humpyard_admin_requests_total{result}` exported only when the admin API is enabled; verify a metrics test and update `docs/metrics.md`
-- [ ] 2.5 Credentials follow a reload (add, remove, narrow scopes, and a rejected reload keeps the old set); verify a reload test
+- [x] 2.1 The admin authenticator over the snapshot's credentials (expiry against the clock, constant shape of failure), separate from the client `KeyStore`; verify unit tests for valid, unknown, expired and wrong-kind credentials
+- [x] 2.2 `/admin/v1` router merged into the main one, or served by its own listener when `[admin] listen` is set, and absent (404) without credentials; verify tests for the 404, the own-listener case and that the main listener 404s when `listen` is set
+- [x] 2.3 Scope checks with 401 `admin_credential_invalid` (with `WWW-Authenticate`) and 403 `admin_scope_required` naming the scope, plus `GET /admin/v1/whoami`; verify tests that a client key and an admin credential each fail on the other's endpoints
+- [x] 2.4 `humpyard_admin_requests_total{result}` exported only when the admin API is enabled; verify a metrics test and update `docs/metrics.md`
+- [x] 2.5 Credentials follow a reload (add, remove, narrow scopes, and a rejected reload keeps the old set); verify a reload test
 
 ## 3. All-keys reads
 

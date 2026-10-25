@@ -33,7 +33,30 @@ curl localhost:8080/v1/responses -H 'content-type: application/json' \
 | `GET /v1/stats/switches` | what changing endpoint in the middle of a session abandoned: switches, cached tokens left behind, the extra cost at the destination's prices, session coverage ([Cache use and sessions](budgets.md#cache-use-and-sessions)) |
 | `GET /v1/quota` | the latest usage windows (percent used, status, reset time) of each provider that names a `quota_source`, with the age of the data, or why it is unknown ([Provider quota](routing.md#provider-quota)) |
 | `GET /v1/quota/history` | stored quota samples (`window` such as `7d`, optional `provider` and `name`), oldest first, each with the cost of the provider's calls since the previous sample of its window; needs a ledger ([Provider quota](routing.md#provider-quota)) |
+| `GET /admin/v1/whoami` | who an [admin credential](#the-admin-api) is: its id, scopes and expiry |
 | `GET /metrics` | Prometheus metrics, off by default; on a separate listener or behind its own credential ([Metrics and alerts](metrics.md)) |
 | `POST /v1/messages/count_tokens`, `POST /v1/responses/input_tokens` | conservative local estimates: no provider call, no cost |
+
+## The admin API
+
+`/admin/v1` is the operator surface (ADR 0027, OpenSpec change `add-admin-api`). It is opened only by an **admin
+credential**, defined in the configuration's [`[admin]` section](configuration.md), and by nothing else: a
+client key never opens it, however many flags it carries, and an admin credential never serves an inference
+or any other client endpoint. Send it as `Authorization: Bearer <secret>`.
+
+- **Absent by default.** Without a credential in the configuration the whole namespace answers 404, as if it did
+  not exist. With `[admin] listen` it is served only on that address and is a 404 on the public port.
+- **One refusal.** A missing, unknown or expired credential, and a client key, all get the same 401 with the
+  code `admin_credential_invalid` and `WWW-Authenticate: Bearer`, so the answer says nothing about which
+  credentials exist.
+- **Scopes.** An endpoint needs a scope (`read`, `overrides` or `credentials`); a valid credential without it gets
+  403 with the code `admin_scope_required` and the missing scope in `scope`.
+- **Reload.** Credentials are part of the configuration snapshot: a reload applies additions, removals and
+  changed scopes or expiry at once, and a rejected reload leaves the old set in force. Moving `[admin] listen`
+  needs a restart.
+- **Counted.** `humpyard_admin_requests_total{result}` ([Metrics](metrics.md)).
+
+`GET /admin/v1/whoami` returns the caller's `id`, `kind` (`credential`), `scopes` and `expires` (a UTC time, or
+`null`), and needs no particular scope. More endpoints follow as the change lands.
 
 Verified with real Claude Code, Codex CLI and OpenClaw sessions: see [Clients](clients.md).

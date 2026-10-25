@@ -27,6 +27,9 @@ const BUCKETS_MS: [u64; 12] = [
 /// Why a target was removed for capability (ADR 0019).
 const CAPABILITY_REASONS: [&str; 3] = ["tools", "vision", "context"];
 
+/// How an admin API request ended.
+const ADMIN_RESULTS: [&str; 3] = ["ok", "unauthorized", "forbidden"];
+
 /// Client protocols a request can arrive on (the decision's `format`).
 const PROTOCOLS: [&str; 3] = ["openai_chat", "openai_responses", "anthropic_messages"];
 
@@ -339,6 +342,10 @@ pub struct Metrics {
     retry_after: Owned,
     capability: Owned,
     cost_ceiling: Owned,
+    admin_requests: Owned,
+    /// Whether the serving configuration defines an admin credential; the admin metrics are exported only
+    /// then (changes with a reload).
+    admin_enabled: std::sync::atomic::AtomicBool,
     refusals: Owned,
     reloads: Owned,
 }
@@ -425,6 +432,14 @@ impl Metrics {
                 &["outcome"],
                 true,
             ),
+            admin_requests: Owned::new(
+                "admin_requests_total",
+                "Requests to the admin API, by result (ok, unauthorized, forbidden). Exported only while an admin credential is configured.",
+                Kind::Counter,
+                &["result"],
+                false,
+            ),
+            admin_enabled: std::sync::atomic::AtomicBool::new(false),
             refusals: Owned::new(
                 "refusals_total",
                 "Requests the gateway refused before any upstream call, by reason.",
@@ -450,6 +465,14 @@ impl Metrics {
         vocab.targets = config.targets.keys().cloned().collect();
         vocab.providers = config.providers.keys().cloned().collect();
         vocab.keys = config.keys.keys().cloned().collect();
+        self.admin_enabled
+            .store(config.admin.enabled(), Ordering::Relaxed);
+    }
+
+    /// Counts one request to the admin API. The result is one of a fixed set, and no credential id or secret
+    /// is ever a label.
+    pub fn observe_admin_request(&self, result: &str) {
+        self.admin_requests.add(&[fixed(&ADMIN_RESULTS, result)], 1);
     }
 
     /// Records a finished request: the one place a request's route, serving target, status and
@@ -644,6 +667,9 @@ impl Metrics {
         .iter()
         .map(|m| m.snapshot(with_key))
         .collect();
+        if self.admin_enabled.load(Ordering::Relaxed) {
+            families.push(self.admin_requests.snapshot(with_key));
+        }
         families.extend(scraped);
         families
     }

@@ -61,6 +61,8 @@ fn rules() -> BTreeMap<&'static str, Module> {
         ("config", module(Core, &[])),
         ("policy", module(Core, &[])),
         ("auth", module(Core, &["config"])),
+        // Admin authentication: who a presented secret is on `/admin/v1`, separate from client keys (ADR 0027).
+        ("admin", module(Core, &["auth", "config"])),
         (
             "ledger",
             Module {

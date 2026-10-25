@@ -52,6 +52,7 @@ use crate::select::{Facts, Features, Selectors};
 const TARGET_HEADER: &str = "x-humpyard-target";
 const TOKEN_COUNT_HEADER: &str = "x-humpyard-token-count";
 /// Response headers naming the route that served a request and the selector rule that chose it.
+mod admin;
 mod config_view;
 mod decisions;
 mod explain;
@@ -198,6 +199,7 @@ pub async fn run(
     let poll = (poll_secs > 0).then(|| Duration::from_secs(poll_secs));
     let reloader = reload.map(|r| tokio::spawn(reload_loop(built.state.clone(), r, poll)));
     let metrics_listener = spawn_metrics_listener(&built.state).await?;
+    let admin_listener = spawn_admin_listener(&built.state).await?;
     let (drain_tx, drain_rx) = tokio::sync::oneshot::channel::<()>();
     let server = axum::serve(listener, built.router)
         .with_graceful_shutdown(async move {
@@ -229,6 +231,9 @@ pub async fn run(
         reloader.abort();
     }
     if let Some(task) = metrics_listener {
+        task.abort();
+    }
+    if let Some(task) = admin_listener {
         task.abort();
     }
     if cancelled {
@@ -412,6 +417,9 @@ fn restart_only_changes(old: &Config, new: &Config) -> Result<(), String> {
     }
     if old.decision_retention_days != new.decision_retention_days {
         return refuse("decision_retention_days");
+    }
+    if old.admin.listen != new.admin.listen {
+        return refuse("admin.listen");
     }
     if old.keys.is_empty() != new.keys.is_empty() {
         return refuse(
@@ -698,7 +706,7 @@ async fn build(config: Config, options: Options, fingerprint: String) -> Result<
     if metrics_main {
         app = app.route("/metrics", get(metrics::get_metrics));
     }
-    let app = app.with_state(state.clone());
+    let app = admin::mount(app, &state).with_state(state.clone());
     spawn_quota_poller(&state, clock);
     Ok(Built {
         router: app,
@@ -727,6 +735,26 @@ async fn spawn_metrics_listener(
     Ok(Some(tokio::spawn(async move {
         if let Err(error) = axum::serve(listener, app).await {
             tracing::error!(%error, "metrics listener stopped");
+        }
+    })))
+}
+
+/// Serves `/admin/v1` alone on its own address when `[admin] listen` is set, so it is unreachable from the
+/// public port by construction (ADR 0027). It is bound at start-up; changing the address needs a restart.
+async fn spawn_admin_listener(
+    state: &Arc<AppState>,
+) -> Result<Option<tokio::task::JoinHandle<()>>, String> {
+    let Some(addr) = state.snapshot().config.admin.listen else {
+        return Ok(None);
+    };
+    let listener = tokio::net::TcpListener::bind(addr)
+        .await
+        .map_err(|e| format!("cannot bind admin listener {addr}: {e}"))?;
+    tracing::info!(listen = %addr, "serving the admin API");
+    let app = admin::routes().with_state(state.clone());
+    Ok(Some(tokio::spawn(async move {
+        if let Err(error) = axum::serve(listener, app).await {
+            tracing::error!(%error, "admin listener stopped");
         }
     })))
 }
