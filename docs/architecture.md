@@ -40,7 +40,7 @@ Last updated: 2026-10-25 (a failed attempt records the provider's scrubbed error
 | Health-driven target eligibility: a cold target is skipped when an alternative remains, failing open (ADR 0018) | Implemented | `add-health-eligibility` |
 | Capability eligibility: endpoints declare `context_window`, `tools`, `vision`; a target that cannot serve a request is removed before routing, only on certainty (ADR 0019) | Implemented | `add-capability-eligibility` |
 | Per-request cost ceiling on keys (`max_request_usd`): a target the request is certain to cost more on is removed before routing, and a request nothing can serve is refused with 402 `request_cost_ceiling` | Implemented | `add-request-cost-ceiling` |
-| Decisions keep the provider's scrubbed, bounded error message for each failed attempt, so a request several providers refused can be diagnosed (ADR 0028); no schema change | Implemented (unreleased) | `record-attempt-errors` (archived) |
+| Decisions keep the provider's scrubbed, bounded error message for each failed attempt, so a request several providers refused can be diagnosed (ADR 0028); no schema change | Implemented (0.18.0) | `record-attempt-errors` (archived) |
 | Session and cache analytics: cache numbers on every statistics group, `group_by=session`, and a switch report (cached tokens abandoned when a session changes endpoint, priced from the config), read-only | Implemented | `add-session-analytics` |
 | Engineering hardening: invariants + architecture test, lints, structure refactors, CI gates, property tests, ADRs | Implemented | `harden-engineering` |
 | Graceful shutdown: drain, grace period, cancel, ledger flush before exit | Implemented | `add-graceful-shutdown` |
