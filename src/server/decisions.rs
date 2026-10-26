@@ -99,6 +99,16 @@ fn parse(params: &HashMap<String, String>, key: Option<String>) -> Result<Decisi
 }
 
 fn to_json(d: &Decision) -> Value {
+    let mut request = json!({
+        "stream": d.stream,
+        "prompt_tokens_estimate": d.prompt_tokens,
+        "tools": d.tools,
+        "images": d.images,
+    });
+    // Only when some tool call was repaired (ADR 0029); the count, never the arguments.
+    if let Some(count) = d.repaired_tool_arguments {
+        request["repaired_tool_arguments"] = json!(count);
+    }
     json!({
         "request_id": d.request_id,
         "ts_ms": d.ts_ms,
@@ -118,12 +128,7 @@ fn to_json(d: &Decision) -> Value {
         "overrides": d.overrides,
         "cost_ceiling": d.cost_ceiling,
         "ranking": d.ranking,
-        "request": {
-            "stream": d.stream,
-            "prompt_tokens_estimate": d.prompt_tokens,
-            "tools": d.tools,
-            "images": d.images,
-        },
+        "request": request,
         "attempts": d.attempts,
         "fallback_crossed_classes": d.crossed_classes(),
         "status": d.status,

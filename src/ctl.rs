@@ -448,6 +448,26 @@ pub fn render_decisions(v: &Value) -> String {
         out.push_str("\nfailed attempts:\n");
         out.extend(failed);
     }
+    // Tool calls whose cut-off arguments were repaired before routing (ADR 0029); nothing when none were.
+    let repaired: Vec<String> = rows
+        .iter()
+        .filter(|row| {
+            row["request"]["repaired_tool_arguments"]
+                .as_u64()
+                .is_some_and(|n| n > 0)
+        })
+        .map(|row| {
+            format!(
+                "  {}  {}\n",
+                scalar(&row["request_id"]),
+                scalar(&row["request"]["repaired_tool_arguments"])
+            )
+        })
+        .collect();
+    if !repaired.is_empty() {
+        out.push_str("\nrepaired tool-call arguments (request, calls):\n");
+        out.extend(repaired);
+    }
     out
 }
 
@@ -734,6 +754,24 @@ mod tests {
             "request_id": "r2", "requested_model": "m", "route": "x", "rule": "default", "source": "route", "ts_ms": 2,
             "attempts": [{"target": "b", "outcome": "ok"}]}]});
         assert!(!render_decisions(&clean).contains("failed attempts"));
+    }
+
+    #[test]
+    fn decisions_list_repaired_tool_calls_only_when_there_were_any() {
+        let repaired = json!({"data": [
+            {"request_id": "r1", "requested_model": "m", "route": "x", "rule": "default", "source": "route", "ts_ms": 1,
+             "request": {"tools": true, "repaired_tool_arguments": 2}, "attempts": []},
+            {"request_id": "r2", "requested_model": "m", "route": "x", "rule": "default", "source": "route", "ts_ms": 2,
+             "request": {"tools": true}, "attempts": []}
+        ]});
+        let out = render_decisions(&repaired);
+        assert!(out.contains("repaired tool-call arguments"), "{out}");
+        assert!(out.contains("  r1  2\n"), "{out}");
+        assert!(!out.contains("  r2  "), "{out}");
+        let clean = json!({"data": [{
+            "request_id": "r3", "requested_model": "m", "route": "x", "rule": "default", "source": "route", "ts_ms": 3,
+            "request": {"tools": false}, "attempts": []}]});
+        assert!(!render_decisions(&clean).contains("repaired"));
     }
 
     use super::*;

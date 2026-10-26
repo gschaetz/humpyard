@@ -194,6 +194,21 @@ pub(super) async fn migrate_v6(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     Ok(())
 }
 
+/// v12: how many tool calls had their arguments repaired before routing (ADR 0029). Old rows read as none.
+pub(super) async fn migrate_v12(pool: &SqlitePool) -> Result<(), sqlx::Error> {
+    let has: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM pragma_table_info('decisions') WHERE name = 'repaired_tool_arguments'",
+    )
+    .fetch_one(pool)
+    .await?;
+    if has == 0 {
+        sqlx::query("ALTER TABLE decisions ADD COLUMN repaired_tool_arguments INTEGER")
+            .execute(pool)
+            .await?;
+    }
+    Ok(())
+}
+
 /// v11: the key's per-request cost ceiling and the targets it removed. Old rows read as none.
 pub(super) async fn migrate_v11(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     let has: i64 = sqlx::query_scalar(
@@ -303,7 +318,8 @@ pub(super) async fn insert_batch(pool: &SqlitePool, batch: &[Decision]) -> Resul
             "INSERT INTO decisions (request_id, ts_ms, key_id, session_id, format, requested_model, \
              route, rule, source, skipped_rules, budget, eligible_targets, stream, prompt_tokens, \
              tools, images, attempts, status, outcome, message, served_target, served_provider, \
-             latency_ms, excluded_targets, cold_targets, incapable_targets, ranking, overrides, cost_ceiling) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23,?24,?25,?26,?27,?28,?29)",
+             latency_ms, excluded_targets, cold_targets, incapable_targets, ranking, overrides, cost_ceiling, \
+             repaired_tool_arguments) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23,?24,?25,?26,?27,?28,?29,?30)",
         )
         .bind(&d.request_id)
         .bind(d.ts_ms)
@@ -334,6 +350,7 @@ pub(super) async fn insert_batch(pool: &SqlitePool, batch: &[Decision]) -> Resul
         .bind(d.ranking.as_ref().and_then(|r| serde_json::to_string(r).ok()))
         .bind(json_list(&d.overrides))
         .bind(d.cost_ceiling.as_ref().and_then(|c| serde_json::to_string(c).ok()))
+        .bind(d.repaired_tool_arguments.map(i64::from))
         .execute(&mut *tx)
         .await?;
     }
@@ -390,8 +407,10 @@ pub(super) async fn query(
             prompt_tokens: row.get::<Option<i64>, _>("prompt_tokens").map(from_i64),
             tools: row.get("tools"),
             images: row.get("images"),
-            // Persisted by the next schema step (repair-tool-arguments group 3); no row carries it yet.
-            repaired_tool_arguments: None,
+            repaired_tool_arguments: row
+                .get::<Option<i64>, _>("repaired_tool_arguments")
+                .and_then(|n| u32::try_from(n).ok())
+                .filter(|n| *n > 0),
             attempts: serde_json::from_str(&row.get::<String, _>("attempts")).unwrap_or_default(),
             status: u16::try_from(row.get::<i64, _>("status")).unwrap_or(0),
             outcome: row.get("outcome"),
