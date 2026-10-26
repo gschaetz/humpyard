@@ -1,7 +1,7 @@
 //! Making a provider's error text safe to keep in a decision (ADR 0028, ADR 0004).
 //!
-//! The text is provider-controlled. [`line`] turns it into one bounded line with anything key-shaped replaced,
-//! and [`error_text`] picks the provider's message out of an error body first. Neither ever returns more than
+//! The text is provider-controlled. [`line()`] turns it into one bounded line with anything key-shaped replaced,
+//! and [`error_text()`] picks the provider's message out of an error body first. Neither ever returns more than
 //! the limit it is given, and neither looks at the request.
 
 /// What replaces a value that looked like a secret.
