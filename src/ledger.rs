@@ -31,7 +31,7 @@ pub use quota::{QuotaPoint, QuotaQuery, QuotaSample};
 pub use sessions::{SessionQuery, SessionScan, SessionStats, Switch};
 pub use stats::{GroupBy, GroupStats, Stats, StatsQuery, TokenTotals, percentile};
 
-const SCHEMA_VERSION: i64 = 11;
+const SCHEMA_VERSION: i64 = 12;
 /// How often the writer deletes decisions past their retention.
 const PRUNE_EVERY: std::time::Duration = std::time::Duration::from_secs(3600);
 /// Decision retention when none is given, in days.
@@ -521,6 +521,10 @@ async fn migrate(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     if version < 11 {
         // v11 (`add-request-cost-ceiling`): the per-request cost ceiling and what it removed.
         decisions::migrate_v11(pool).await?;
+    }
+    if version < 12 {
+        // v12 (`repair-tool-arguments`): how many tool calls were repaired before routing.
+        decisions::migrate_v12(pool).await?;
     }
     if version < SCHEMA_VERSION {
         // PRAGMA does not take bound parameters; the value is a compile-time constant.

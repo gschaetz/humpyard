@@ -14,10 +14,10 @@
 
 ## 3. Recording and showing the count
 
-- [ ] 3.1 Ledger schema v12: `ALTER TABLE decisions ADD COLUMN repaired_tool_arguments INTEGER` (nullable, written only when more than zero), `SCHEMA_VERSION` 12, and a migration test that opens a v11 database, upgrades it and reads an old row with no count; verify reopening is harmless
-- [ ] 3.2 `repaired_tool_arguments` on the decision record, filled from the guard; verify a round trip and that an old row reads with none; verify a request refused before any provider is tried (an unknown model or a spent budget) still carries the count
-- [ ] 3.3 `GET /v1/decisions` and `GET /admin/v1/decisions` return the field only when set; `humpyard ctl decisions` prints it only when set; verify tests on all three and that the output for a decision without it is unchanged
-- [ ] 3.4 A test that no part of the arguments reaches the decision, original or repaired: a request whose cut-off call holds a recognizable string is routed and its stored decision, read through both endpoints, holds the count and none of that string; verify
+- [x] 3.1 Ledger schema v12: `ALTER TABLE decisions ADD COLUMN repaired_tool_arguments INTEGER` (nullable, written only when more than zero), `SCHEMA_VERSION` 12, and a migration test that opens a v11 database, upgrades it and reads an old row with no count; verify reopening is harmless
+- [x] 3.2 `repaired_tool_arguments` on the decision record, filled from the guard; verify a round trip and that an old row reads with none; verify a request refused before any provider is tried (an unknown model or a spent budget) still carries the count
+- [x] 3.3 `GET /v1/decisions` and `GET /admin/v1/decisions` return the field only when set; `humpyard ctl decisions` prints it only when set; verify tests on all three and that the output for a decision without it is unchanged
+- [x] 3.4 A test that no part of the arguments reaches the decision, original or repaired: a request whose cut-off call holds a recognizable string is routed and its stored decision, read through both endpoints, holds the count and none of that string; verify
 
 ## 4. Wrap-up
 
