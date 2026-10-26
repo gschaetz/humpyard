@@ -191,6 +191,15 @@ often each rule fires and what each pool costs and how long it takes: tune the t
   target answers, the client gets the last error (a timeout is still reported as 504). To see why each provider
   refused a request, read its [decision](budgets.md#the-decision-log): every failed attempt carries the provider's
   scrubbed `message`, and `humpyard ctl decisions` lists them under "failed attempts".
+- **A cut-off tool call in the history.** A model can end a turn with a tool call whose JSON arguments are cut off,
+  and the client replays it on every later turn. Providers that check arguments (NVIDIA, Google) then refuse the
+  whole conversation (`...function.arguments must be a valid JSON object string`) while lenient ones accept it. So
+  before routing, the gateway makes every assistant tool call's arguments a JSON object: a cut-off object is
+  completed (the open string and brackets closed, an unfinished escape or a key with no value dropped), and
+  arguments that are not JSON, empty, or not an object become `{}`. Arguments that already are an object are
+  never touched, and nothing else in the request changes. It is the same for chat and Responses requests and for
+  every provider. The decision shows `request.repaired_tool_arguments` (the number of calls repaired), so a
+  model that keeps cutting off its calls is visible; it does not stop the model from doing so.
 - **Choosing what falls through.** A route can limit this with `fallback_on`, a list of failure
   classes (`overflow`, `rate_limit`, `timeout`, `server_error`, `connection`, `forbidden`,
   `unavailable`, `rejected`). A failure outside the list ends the request and the client sees the original status and

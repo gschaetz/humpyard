@@ -21,10 +21,10 @@
 
 ## 4. Wrap-up
 
-- [ ] 4.1 Document the repair and the count in `docs/routing.md` (reading a failed request), `docs/api.md` (the decision field) and `docs/ctl.md` if decisions are described there, plus the one-way schema note and the backup advice in `docs/deployment.md` if upgrades are described there; verify the strict docs build
-- [ ] 4.2 Update `docs/architecture.md` (the module table, the request flow if it lists the adaptation step, the "Last updated" line and the status table row) and verify the Mermaid diagrams still match the code
-- [ ] 4.3 Accept ADR 0029 when the design is confirmed; verify `docs/adr/README.md` lists it
-- [ ] 4.4 Run fmt, clippy `-D warnings`, `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features --document-private-items` and the full test suite, then archive this change with `openspec archive repair-tool-arguments --yes`; verify all gates pass and the spec deltas merge
+- [x] 4.1 Document the repair and the count in `docs/routing.md` (reading a failed request), `docs/api.md` (the decision field) and `docs/ctl.md` if decisions are described there, plus the one-way schema note and the backup advice in `docs/deployment.md` if upgrades are described there; verify the strict docs build
+- [x] 4.2 Update `docs/architecture.md` (the module table, the request flow if it lists the adaptation step, the "Last updated" line and the status table row) and verify the Mermaid diagrams still match the code
+- [x] 4.3 Accept ADR 0029 when the design is confirmed; verify `docs/adr/README.md` lists it
+- [x] 4.4 Run fmt, clippy `-D warnings`, `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features --document-private-items` and the full test suite, then archive this change with `openspec archive repair-tool-arguments --yes`; verify all gates pass and the spec deltas merge
 
 ## Workflow follow-up
 

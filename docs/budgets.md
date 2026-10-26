@@ -142,6 +142,11 @@ requested model name clipped too. Error text is also scrubbed: it is one line, a
 bearer token, a key with a well-known prefix, the value after `key=` or `token=`, a long run of letters and digits)
 is replaced with `[redacted]`.
 
+A request whose history held a **cut-off tool call** (a model ended a turn mid-JSON and the client replays it) has
+the call's arguments repaired before routing, and its decision shows how many: `request.repaired_tool_arguments`,
+present only when it is more than zero (see [Routing](routing.md#failover)). Only the count is stored, never
+any of the arguments.
+
 A **failed attempt** carries the provider's own error `message`, such as `400: Request contains an invalid argument.`,
 so when a request fails over you can see why each provider refused it and not only the last one. It is the status
 and the provider's error text (or the description of a timeout or connection failure), scrubbed and cut to 200
@@ -149,7 +154,8 @@ characters; a successful attempt has none, and neither does a row written by an 
 fragment of the request in its error, which the limit and the scrubbing bound; a key reads only its own decisions. It is written by the same asynchronous writer as usage (never
 delaying a response, flushed on shutdown), and pruned after `decision_retention_days` (top level,
 default 90, `0` keeps everything; changing it needs a restart). An older database is upgraded in
-place when the gateway first opens it.
+place when the gateway first opens it; the upgrade only adds columns and is not undone, so back up
+`ledger.db` (with its `-wal` and `-shm`) before a release that adds one.
 
 Only decisions (and provider quota samples) are pruned. The `usage` table, the spend history that budgets are
 computed from, is kept forever. [Performance and scale](performance.md) lists the retention of each table and how

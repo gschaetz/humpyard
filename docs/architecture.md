@@ -5,7 +5,7 @@ component status (see [AGENTS.md](../AGENTS.md)). Diagrams are Mermaid and rende
 
 At-a-glance view of what shipped and what is next: [roadmap.md](roadmap.md).
 
-Last updated: 2026-10-25 (a failed attempt records the provider's scrubbed error message: `scrub.rs` in the module table, ADR 0028; no diagram changes). Earlier, 2026-10-25 (the admin API implemented: named, scoped admin credentials in `[admin]`, `/admin/v1` reads across every key, overrides and credential revocation, and a published OpenAPI contract, ADR 0027; `admin.rs` and `server/admin.rs` in the module table; the operator-surface diagram; the Direction section rewritten around it; the status page folded into the admin GUI row). Earlier, 2026-10-24 (per-request cost ceiling on keys implemented, with its row in the status table; runtime overrides implemented and their change archived; `/v1/overrides` and the override step in planning; `init --out -` in the `init.rs` row; expiring runtime overrides added to the status table as a merged proposal). Earlier, 2026-10-17 (the request-flow diagram redrawn top to bottom and split from the accounting diagram; capability eligibility, ADR 0019; health-driven eligibility, ADR 0018; strict routes, ADR 0017; `/metrics` on one metrics registry, ADR 0016; quota history; roadmap page added). Earlier, 2026-10-10 (roadmap refresh: auto-routing, pool classes with opt-in strict fallback, stickiness, advisory cost-aware ordering and a native Anthropic upstream added; packaging row corrected). Operator-surface order: `/metrics`, health-driven eligibility, native Anthropic upstream, then the admin API and database-managed keys.
+Last updated: 2026-10-26 (a cut-off tool call in a request's history is repaired before routing and a decision counts the repairs: `repair.rs` and `repair_request.rs` in the module table, ledger schema v12, ADR 0029; the request-flow diagram gains the repair step). Earlier, 2026-10-25 (a failed attempt records the provider's scrubbed error message: `scrub.rs` in the module table, ADR 0028; no diagram changes). Earlier, 2026-10-25 (the admin API implemented: named, scoped admin credentials in `[admin]`, `/admin/v1` reads across every key, overrides and credential revocation, and a published OpenAPI contract, ADR 0027; `admin.rs` and `server/admin.rs` in the module table; the operator-surface diagram; the Direction section rewritten around it; the status page folded into the admin GUI row). Earlier, 2026-10-24 (per-request cost ceiling on keys implemented, with its row in the status table; runtime overrides implemented and their change archived; `/v1/overrides` and the override step in planning; `init --out -` in the `init.rs` row; expiring runtime overrides added to the status table as a merged proposal). Earlier, 2026-10-17 (the request-flow diagram redrawn top to bottom and split from the accounting diagram; capability eligibility, ADR 0019; health-driven eligibility, ADR 0018; strict routes, ADR 0017; `/metrics` on one metrics registry, ADR 0016; quota history; roadmap page added). Earlier, 2026-10-10 (roadmap refresh: auto-routing, pool classes with opt-in strict fallback, stickiness, advisory cost-aware ordering and a native Anthropic upstream added; packaging row corrected). Operator-surface order: `/metrics`, health-driven eligibility, native Anthropic upstream, then the admin API and database-managed keys.
 
 ## Component status
 
@@ -41,6 +41,7 @@ Last updated: 2026-10-25 (a failed attempt records the provider's scrubbed error
 | Capability eligibility: endpoints declare `context_window`, `tools`, `vision`; a target that cannot serve a request is removed before routing, only on certainty (ADR 0019) | Implemented | `add-capability-eligibility` |
 | Per-request cost ceiling on keys (`max_request_usd`): a target the request is certain to cost more on is removed before routing, and a request nothing can serve is refused with 402 `request_cost_ceiling` | Implemented | `add-request-cost-ceiling` |
 | Decisions keep the provider's scrubbed, bounded error message for each failed attempt, so a request several providers refused can be diagnosed (ADR 0028); no schema change | Implemented (0.18.0) | `record-attempt-errors` (archived) |
+| A cut-off tool call in a request's history is repaired before routing, so one bad call cannot make every strict provider refuse a conversation; a decision counts the repairs and keeps nothing of the arguments (ADR 0029); ledger schema v12 | Implemented | `repair-tool-arguments` |
 | Session and cache analytics: cache numbers on every statistics group, `group_by=session`, and a switch report (cached tokens abandoned when a session changes endpoint, priced from the config), read-only | Implemented | `add-session-analytics` |
 | Engineering hardening: invariants + architecture test, lints, structure refactors, CI gates, property tests, ADRs | Implemented | `harden-engineering` |
 | Graceful shutdown: drain, grace period, cancel, ledger flush before exit | Implemented | `add-graceful-shutdown` |
@@ -86,7 +87,8 @@ provider before authorization, the budget check and planning have passed.
 ```mermaid
 flowchart TD
     CL[Client<br/>OpenAI Chat, Responses or Anthropic] --> API[Decode<br/>to Switchyard IR]
-    API --> AUTH[Auth<br/>virtual key, allowed routes]
+    API --> REP[Repair tool calls<br/>cut-off arguments made a JSON object]
+    REP --> AUTH[Auth<br/>virtual key, allowed routes]
     AUTH --> BUD[Budget check<br/>402 when exhausted]
     BUD --> SEL[Route selection<br/>selector rules, then the requested route]
     SEL --> PLAN[Planning<br/>remove: strict classes, policy,<br/>capabilities, health<br/>then order: speed and quality]
@@ -164,6 +166,8 @@ Switchyard decides the macro question (which target); the provider pool answers 
 | `ctl.rs` | `ctl`: a client for a running gateway, read-only except `ctl/overrides.rs` (list, add and remove runtime overrides); one request per subcommand to an existing endpoint with the caller's key (from the environment, never printed), no redirects, plain HTTP only to loopback; used only by that command, never by `serve` |
 | `latency.rs` | Smoothed time to answer per target (answered attempts only) and the ordering a `fastest` route derives from it, with seedable exploration draws |
 | `scrub.rs` | Makes a provider's error text safe to keep in a decision (ADR 0028): picks the provider's message out of an error body, flattens it to one line, replaces anything key-shaped and cuts it to 200 characters; used for a decision's own message and for each failed attempt's |
+| `repair.rs` | Makes a tool call's argument text a JSON object (ADR 0029): `None` when it already is one, otherwise the cut-off object completed (open string and brackets closed, an unfinished escape, key or comma dropped) or `{}`; one pure scan, depth and size bounded |
+| `repair_request.rs` | Applies `repair.rs` to a request: every assistant tool call in the decoded messages and in each preserved same-format body (chat and Responses); returns the count that goes on the decision |
 | `retry_after.rs` | Reads a retry time from an upstream error body (a few well-known phrasings, first 4 KiB, a bounded duration out); the one seam where the `Retry-After` header joins once Switchyard exposes it |
 | `num.rs` | Checked integer/float conversions for money and token paths (the only lossy casts) |
 | `error.rs` | Gateway errors rendered per client protocol |
@@ -186,7 +190,7 @@ Switchyard decides the macro question (which target); the provider pool answers 
 | `routing.rs` | Builds one long-lived Switchyard algorithm (and target groups) per route and per bare target; applies policy eligibility, tier substitution and random-weight realignment |
 | `pool.rs` | Per-target `RoutedLlmClient`: ordered endpoints, failover, circuit breaking via `health`, provider attribution header; endpoints on a provider a runtime override has drained are never tried |
 | `health.rs` | Per-endpoint circuit breaker (cooldown, doubling, single probe) with an injected clock |
-| `server.rs` (snapshot, reload) | Router, request stages (decode, authorize, budget, plan, execute, encode), SSE framing, attribution headers; `run` owns the server lifecycle (graceful drain, hard stop, ledger flush) |
+| `server.rs` (snapshot, reload) | Router, request stages (decode, tool-call repair, authorize, budget, plan, execute, encode), SSE framing, attribution headers; `run` owns the server lifecycle (graceful drain, hard stop, ledger flush) |
 | `main.rs` / `lib.rs` | CLI and library root |
 
 Tests: unit tests beside the code; end-to-end suites in `tests/` (shared helpers in

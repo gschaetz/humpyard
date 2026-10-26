@@ -1,6 +1,6 @@
 # 0029. The gateway repairs invalid tool-call arguments in a request's history
 
-- Status: proposed
+- Status: accepted
 - Date: 2026-10-26
 - Supersedes: none
 - Change: `openspec/changes/repair-tool-arguments`
