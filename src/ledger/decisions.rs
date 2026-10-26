@@ -133,10 +133,11 @@ impl Decision {
         Some(classes.iter().any(|c| *c != classes[0]))
     }
 
-    /// Truncates a text to 200 characters.
+    /// Makes a text fit a decision: one line of at most 200 characters with anything key-shaped redacted
+    /// (ADR 0028).
     #[must_use]
     pub fn clip(message: &str) -> String {
-        message.chars().take(MESSAGE_LIMIT).collect()
+        crate::scrub::line(message, MESSAGE_LIMIT)
     }
 }
 
@@ -413,4 +414,23 @@ pub(super) async fn query(
                 .and_then(|json| serde_json::from_str(&json).ok()),
         })
         .collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_decision_text_is_one_bounded_line_with_keys_redacted() {
+        let key = format!("{}{}", "sk-", "abcdefghijkl1234");
+        assert_eq!(
+            Decision::clip(&format!("rejected\nbad key {key} here")),
+            "rejected bad key [redacted] here"
+        );
+        assert_eq!(
+            Decision::clip(&"x".repeat(500)).chars().count(),
+            MESSAGE_LIMIT
+        );
+        assert_eq!(Decision::clip("unknown model gpt-9"), "unknown model gpt-9");
+    }
 }
