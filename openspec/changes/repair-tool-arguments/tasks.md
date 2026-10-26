@@ -2,8 +2,8 @@
 
 ## 1. The repair
 
-- [ ] 1.1 A pure module (registered in the architecture test's layer rules) with one function that takes tool-call argument text and returns `None` when it already parses as a JSON object, otherwise the replacement text: a single pass that tracks string and escape state and the stack of open `{` and `[`, closes an open string (dropping a dangling backslash or partial `\u` escape), drops a trailing comma, colon or valueless key, appends the closers, and falls back to `{}` when the result is not an object; no `unwrap`, `expect`, panic or fallible indexing; verify unit tests for a truncated object, a cut inside a string, inside a nested array, after a colon, after a comma, mid-escape, empty text, non-JSON text, and valid objects with odd spacing returned as `None`
-- [ ] 1.2 Property-style tests over the function: every prefix of several valid objects yields `None` or a replacement that parses as an object, and a valid object is never rewritten; verify they fail if the fallback or the closer order is broken (mutation check)
+- [x] 1.1 A pure module (registered in the architecture test's layer rules) with one function that takes tool-call argument text and returns `None` when it already parses as a JSON object, otherwise the replacement text: a single pass that tracks string and escape state and the stack of open `{` and `[`, closes an open string (dropping a dangling backslash or partial `\u` escape), drops a trailing comma, colon or valueless key, appends the closers, and falls back to `{}` when the result is not an object; no `unwrap`, `expect`, panic or fallible indexing; verify unit tests for a truncated object, a cut inside a string, inside a nested array, after a colon, after a comma, mid-escape, empty text, non-JSON text, and valid objects with odd spacing returned as `None`
+- [x] 1.2 Property-style tests over the function: every prefix of several valid objects yields `None` or a replacement that parses as an object, and a valid object is never rewritten; verify they fail if the fallback or the closer order is broken (mutation check)
 
 ## 2. Applying it to a request
 
