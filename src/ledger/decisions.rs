@@ -8,7 +8,7 @@ use super::LedgerError;
 use crate::num::{from_i64, to_i64};
 
 /// Longest error text (and client-supplied model name) kept on a decision.
-pub const MESSAGE_LIMIT: usize = 200;
+pub const MESSAGE_LIMIT: usize = crate::scrub::MESSAGE_LIMIT;
 
 /// One upstream attempt made while serving a request, in the order they happened.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -25,6 +25,10 @@ pub struct Attempt {
     /// The retry time the endpoint stated for this failure, in milliseconds, when it was honored.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub retry_after_ms: Option<u64>,
+    /// Why a failed attempt failed, in the provider's own words: one scrubbed line of at most
+    /// `MESSAGE_LIMIT` characters (ADR 0028). Absent for a success and for an older row.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
 }
 
 /// The order a `fastest` route used for one request, and why its first target was first (ADR 0020).
@@ -432,5 +436,29 @@ mod tests {
             MESSAGE_LIMIT
         );
         assert_eq!(Decision::clip("unknown model gpt-9"), "unknown model gpt-9");
+    }
+
+    #[test]
+    fn an_attempt_message_round_trips_and_an_older_row_reads_without_one() {
+        let attempt = Attempt {
+            target: "t".into(),
+            provider: "p".into(),
+            model: "m".into(),
+            outcome: "rejected".into(),
+            ms: 5,
+            class: None,
+            retry_after_ms: None,
+            message: Some("400: invalid argument".into()),
+        };
+        let stored = serde_json::to_string(&vec![attempt.clone()]).unwrap();
+        assert_eq!(
+            serde_json::from_str::<Vec<Attempt>>(&stored).unwrap(),
+            vec![attempt]
+        );
+        // A row written before the field existed has no `message`, and one without a message stores none.
+        let old = r#"[{"target":"t","provider":"p","model":"m","outcome":"ok","ms":5}]"#;
+        let read = serde_json::from_str::<Vec<Attempt>>(old).unwrap();
+        assert_eq!(read[0].message, None);
+        assert!(!serde_json::to_string(&read).unwrap().contains("message"));
     }
 }

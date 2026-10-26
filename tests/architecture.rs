@@ -99,6 +99,7 @@ fn rules() -> BTreeMap<&'static str, Module> {
                     "health",
                     "overrides",
                     "retry_after",
+                    "scrub",
                 ],
             ),
         ),

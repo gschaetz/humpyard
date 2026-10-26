@@ -78,6 +78,9 @@ pub struct EndpointAttempt {
     /// The retry time the endpoint stated (clamped), when this failure stated one and the endpoint was
     /// cooled for it.
     pub retry_after_ms: Option<u64>,
+    /// For a failure, the provider's scrubbed error text (ADR 0028); `None` for a success or when the
+    /// provider said nothing usable.
+    pub message: Option<String>,
 }
 
 /// Which endpoint served a call, so usage can be attributed and priced.
@@ -93,6 +96,19 @@ pub struct TargetClient {
     endpoints: Vec<EndpointClient>,
     /// Providers a runtime override has drained; their endpoints are never tried (`add-runtime-overrides`).
     drains: Arc<dyn Drains>,
+}
+
+/// What a failed call says about itself, for the decision log (ADR 0028): an upstream answer's status and the
+/// provider's own message, or the description of a timeout or connection failure. Scrubbed and bounded.
+fn failure_message(error: &LlmClientError) -> Option<String> {
+    let limit = crate::scrub::MESSAGE_LIMIT;
+    match error {
+        LlmClientError::UpstreamHttp { status, body } => crate::scrub::error_text(body, limit)
+            .map(|text| crate::scrub::line(&format!("{}: {text}", status.as_u16()), limit)),
+        other => {
+            Some(crate::scrub::line(&other.to_string(), limit)).filter(|text| !text.is_empty())
+        }
+    }
 }
 
 /// Failures that another endpoint of the same target may not share. Other client errors (bad
@@ -322,6 +338,7 @@ impl TargetClient {
                 },
                 ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
                 retry_after_ms: wait_hint.map(|d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX)),
+                message: result.as_ref().err().and_then(failure_message),
             });
             match result {
                 Ok(mut response) => {

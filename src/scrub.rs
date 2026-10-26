@@ -4,6 +4,8 @@
 //! and [`error_text()`] picks the provider's message out of an error body first. Neither ever returns more than
 //! the limit it is given, and neither looks at the request.
 
+/// The longest message kept for an error: a decision's own text and each failed attempt's provider message.
+pub const MESSAGE_LIMIT: usize = 200;
 /// What replaces a value that looked like a secret.
 const REDACTED: &str = "[redacted]";
 /// How much of a text is examined; a key straddling this point is far beyond any limit a caller keeps.

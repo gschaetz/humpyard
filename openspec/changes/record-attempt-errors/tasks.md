@@ -8,10 +8,10 @@
 
 ## 2. Recording the message
 
-- [ ] 2.1 `message` on the pool's attempt report and on the stored `Attempt` (optional, skipped when absent, defaulting when a row lacks it); verify a round-trip test and that a row written without the field still reads
-- [ ] 2.2 Fill it in the pool from the error it already holds: upstream HTTP answers (status and text), timeouts and connection failures (their description), nothing for a success; verify pool tests for a rejection, a rate limit, a timeout and a success
-- [ ] 2.3 A failover test through the real server: three providers reject one request and the decision lists three attempts, each with its own provider's message; verify it fails if the message is dropped from any attempt (mutation check)
-- [ ] 2.4 A test that no request content reaches the decision: a request whose body holds a recognizable string is rejected by a provider that does not echo it, and the string appears nowhere in the stored decision; verify
+- [x] 2.1 `message` on the pool's attempt report and on the stored `Attempt` (optional, skipped when absent, defaulting when a row lacks it); verify a round-trip test and that a row written without the field still reads
+- [x] 2.2 Fill it in the pool from the error it already holds: upstream HTTP answers (status and text), timeouts and connection failures (their description), nothing for a success; verify pool tests for a rejection, a rate limit, a timeout and a success
+- [x] 2.3 A failover test through the real server: three providers reject one request and the decision lists three attempts, each with its own provider's message; verify it fails if the message is dropped from any attempt (mutation check)
+- [x] 2.4 A test that no request content reaches the decision: a request whose body holds a recognizable string is rejected by a provider that does not echo it, and the string appears nowhere in the stored decision; verify
 
 ## 3. Showing it
 

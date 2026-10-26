@@ -117,6 +117,7 @@ fn make_row(rng: &mut Rng, i: u64, ts_ms: i64) -> (Entry, Decision) {
             ms: 100 + rng.below(4_000),
             class: Some("public".to_string()),
             retry_after_ms: None,
+            message: None,
         })
         .collect();
     let decision = Decision {
