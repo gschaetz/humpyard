@@ -2,9 +2,9 @@
 
 ## 1. The scrub
 
-- [ ] 1.1 A pure `scrub` function (new module, registered in the architecture test's layer rules): one line, control characters and line breaks to single spaces, `Bearer` tokens, known key prefixes, `key=`/`api_key=`/`token=`/`access_token=` values and long mixed letter-and-digit runs replaced with `[redacted]`, cut to `MESSAGE_LIMIT` characters on a character boundary; verify unit tests for each rule, a multi-line input, a multi-byte character at the cut, and ordinary text left alone
-- [ ] 1.2 A function that reads a provider's error text from a body: the JSON `error.message` (including a body wrapped in a list), otherwise the start of the body, capped before scrubbing; verify tests for an OpenAI-shaped body, a Google-shaped list body, plain text, an empty body and a body that is not UTF-8-clean
-- [ ] 1.3 Route a decision's own `message` through the same scrub as well as the cut; verify the existing decision tests pass and a decision whose error text holds a key-shaped string stores it redacted
+- [x] 1.1 A pure `scrub` function (new module, registered in the architecture test's layer rules): one line, control characters and line breaks to single spaces, `Bearer` tokens, known key prefixes, `key=`/`api_key=`/`token=`/`access_token=` values and long mixed letter-and-digit runs replaced with `[redacted]`, cut to `MESSAGE_LIMIT` characters on a character boundary; verify unit tests for each rule, a multi-line input, a multi-byte character at the cut, and ordinary text left alone
+- [x] 1.2 A function that reads a provider's error text from a body: the JSON `error.message` (including a body wrapped in a list), otherwise the start of the body, capped before scrubbing; verify tests for an OpenAI-shaped body, a Google-shaped list body, plain text, an empty body and a body that is not UTF-8-clean
+- [x] 1.3 Route a decision's own `message` through the same scrub as well as the cut; verify the existing decision tests pass and a decision whose error text holds a key-shaped string stores it redacted
 
 ## 2. Recording the message
 

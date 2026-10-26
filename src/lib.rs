@@ -25,5 +25,6 @@ pub mod pricing;
 pub mod quota;
 pub mod retry_after;
 pub mod routing;
+pub mod scrub;
 pub mod select;
 pub mod server;

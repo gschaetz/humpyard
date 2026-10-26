@@ -54,6 +54,8 @@ fn rules() -> BTreeMap<&'static str, Module> {
         ("latency", module(Core, &["clock", "num"])),
         // Reads a retry time out of an upstream error body; pure text parsing (ADR 0018, amended).
         ("retry_after", module(Core, &[])),
+        // Makes a provider's error text safe to keep in a decision: one bounded line, key-shaped values redacted (ADR 0028).
+        ("scrub", module(Core, &[])),
         ("health", module(Core, &["clock", "config"])),
         ("select", module(Core, &["config"])),
         // Expiring runtime overrides: the store only; nothing here changes a plan yet (`add-runtime-overrides`).
@@ -67,7 +69,7 @@ fn rules() -> BTreeMap<&'static str, Module> {
             "ledger",
             Module {
                 sqlx: true,
-                ..module(Core, &["num"])
+                ..module(Core, &["num", "scrub"])
             },
         ),
         (
