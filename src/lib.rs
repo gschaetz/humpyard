@@ -23,6 +23,7 @@ pub mod pool;
 pub mod prices;
 pub mod pricing;
 pub mod quota;
+pub mod repair;
 pub mod retry_after;
 pub mod routing;
 pub mod scrub;

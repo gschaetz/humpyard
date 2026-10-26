@@ -56,6 +56,8 @@ fn rules() -> BTreeMap<&'static str, Module> {
         ("retry_after", module(Core, &[])),
         // Makes a provider's error text safe to keep in a decision: one bounded line, key-shaped values redacted (ADR 0028).
         ("scrub", module(Core, &[])),
+        // Makes a tool call's arguments a JSON object, completing a cut-off one; pure text (ADR 0029).
+        ("repair", module(Core, &[])),
         ("health", module(Core, &["clock", "config"])),
         ("select", module(Core, &["config"])),
         // Expiring runtime overrides: the store only; nothing here changes a plan yet (`add-runtime-overrides`).
