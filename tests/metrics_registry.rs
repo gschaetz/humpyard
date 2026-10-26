@@ -210,6 +210,7 @@ fn a_clients_strings_never_become_labels() {
             ms: 1,
             class: None,
             retry_after_ms: None,
+            message: None,
         },
         Attempt {
             target: "fast".into(),
@@ -219,6 +220,7 @@ fn a_clients_strings_never_become_labels() {
             ms: 1,
             class: None,
             retry_after_ms: None,
+            message: None,
         },
     ];
     m.observe_decision(&d);
@@ -385,6 +387,7 @@ fn a_failed_attempt_followed_by_another_is_a_failover() {
             ms: 5,
             class: None,
             retry_after_ms: None,
+            message: None,
         },
         Attempt {
             target: "fast".into(),
@@ -394,6 +397,7 @@ fn a_failed_attempt_followed_by_another_is_a_failover() {
             ms: 5,
             class: None,
             retry_after_ms: None,
+            message: None,
         },
     ];
     m.observe_decision(&d);

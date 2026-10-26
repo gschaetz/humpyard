@@ -438,6 +438,7 @@ impl RoutedLlmClient for Metered {
                         ms: a.ms,
                         class: None,
                         retry_after_ms: a.retry_after_ms,
+                        message: a.message,
                     });
                 },
             )
