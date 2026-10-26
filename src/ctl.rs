@@ -412,7 +412,7 @@ pub fn render_decisions(v: &Value) -> String {
     if rows.is_empty() {
         return "no decisions match\n".into();
     }
-    table(
+    let mut out = table(
         &rows,
         &[
             ("REQUEST", "request_id"),
@@ -422,7 +422,33 @@ pub fn render_decisions(v: &Value) -> String {
             ("SOURCE", "source"),
             ("TS ms", "ts_ms"),
         ],
-    )
+    );
+    // Why each failed attempt failed, in the provider's words (ADR 0028); nothing is added when no decision has one.
+    let failed: Vec<String> = rows
+        .iter()
+        .flat_map(|row| {
+            let request = scalar(&row["request_id"]);
+            row["attempts"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter(|attempt| attempt["message"].is_string())
+                .map(move |attempt| {
+                    format!(
+                        "  {request}  {}  {}  {}\n",
+                        scalar(&attempt["target"]),
+                        scalar(&attempt["outcome"]),
+                        scalar(&attempt["message"])
+                    )
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    if !failed.is_empty() {
+        out.push_str("\nfailed attempts:\n");
+        out.extend(failed);
+    }
+    out
 }
 
 #[must_use]
@@ -688,6 +714,28 @@ async fn status(gateway: &Gateway, json_output: bool, out: &mut dyn Write) -> Re
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn decisions_list_why_each_failed_attempt_failed_and_add_nothing_when_none_did() {
+        let failed = json!({"data": [{
+        "request_id": "r1", "requested_model": "m", "route": "x", "rule": "default", "source": "route", "ts_ms": 1,
+        "attempts": [
+            {"target": "a", "outcome": "rejected", "message": "400: invalid argument"},
+            {"target": "b", "outcome": "ok"}
+        ]}]});
+        let out = render_decisions(&failed);
+        assert!(out.contains("failed attempts:"), "{out}");
+        assert!(
+            out.contains("r1  a  rejected  400: invalid argument"),
+            "{out}"
+        );
+        assert!(!out.contains("  b  ok"), "{out}");
+        // A decision with no messages renders exactly the table, as before.
+        let clean = json!({"data": [{
+            "request_id": "r2", "requested_model": "m", "route": "x", "rule": "default", "source": "route", "ts_ms": 2,
+            "attempts": [{"target": "b", "outcome": "ok"}]}]});
+        assert!(!render_decisions(&clean).contains("failed attempts"));
+    }
+
     use super::*;
 
     fn settings(url: Option<&str>) -> Settings {

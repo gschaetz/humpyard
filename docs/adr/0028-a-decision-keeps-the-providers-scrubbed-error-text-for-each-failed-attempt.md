@@ -1,6 +1,6 @@
 # 0028. A decision keeps the provider's scrubbed error text for each failed attempt
 
-- Status: proposed
+- Status: accepted
 - Date: 2026-10-25
 - Supersedes: none
 - Change: `openspec/changes/record-attempt-errors`

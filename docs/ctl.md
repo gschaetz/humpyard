@@ -73,7 +73,9 @@ kubectl -n <namespace> port-forward svc/humpyard 8080:8080 &
 HUMPYARD_URL=http://127.0.0.1:8080 humpyard ctl decisions --limit 5
 ```
 
-A key sees what its own requests did: `decisions` and `stats` are scoped to the key you use.
+A key sees what its own requests did: `decisions` and `stats` are scoped to the key you use. When a request had
+failed attempts, `decisions` lists them under the table (request, target, outcome and the provider's message), so a
+request every provider refused shows why; `--json` returns the full attempts.
 
 ## Is the running gateway the repository's?
 

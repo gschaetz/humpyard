@@ -131,14 +131,22 @@ that applied and whether it came from a `selector` or the `requested_model`, rul
 were skipped because the key may not use their route, the budget state, the targets that were
 eligible, the `excluded_targets` a strict route removed, the `cold_targets` skipped for health, the `incapable_targets` removed for capability, the `cost_ceiling` of a key with a [per-request ceiling](#a-ceiling-on-one-request) and the targets it removed, the `overrides` (id, kind and subject) that took a target out of its plan, request features (streaming, estimated prompt size when a rule needs it, tools, images),
 the **attempts** in order (target, provider, model, class, outcome such as `ok`, `rate_limit`,
-`timeout`, `server_error`, and milliseconds), `fallback_crossed_classes` (whether those attempts spanned
+`timeout`, `server_error`, and milliseconds, plus for a failed attempt the provider's own `message`, see below), `fallback_crossed_classes` (whether those attempts spanned
 more than one [target class](routing.md#target-classes)), the final status and `outcome`, the serving target and
 the latency. Refusals are decisions too (`unauthorized`, `forbidden`, `unknown_model`,
 `budget_exhausted`, `no_eligible_target`, ...), and a request the client abandons is recorded as
 `cancelled`.
 
 It is **metadata only**: no prompts, no responses, error text clipped to 200 characters, and the
-requested model name clipped too. It is written by the same asynchronous writer as usage (never
+requested model name clipped too. Error text is also scrubbed: it is one line, and anything key-shaped (a
+bearer token, a key with a well-known prefix, the value after `key=` or `token=`, a long run of letters and digits)
+is replaced with `[redacted]`.
+
+A **failed attempt** carries the provider's own error `message`, such as `400: Request contains an invalid argument.`,
+so when a request fails over you can see why each provider refused it and not only the last one. It is the status
+and the provider's error text (or the description of a timeout or connection failure), scrubbed and cut to 200
+characters; a successful attempt has none, and neither does a row written by an older gateway. A provider can echo a
+fragment of the request in its error, which the limit and the scrubbing bound; a key reads only its own decisions. It is written by the same asynchronous writer as usage (never
 delaying a response, flushed on shutdown), and pruned after `decision_retention_days` (top level,
 default 90, `0` keeps everything; changing it needs a restart). An older database is upgraded in
 place when the gateway first opens it.

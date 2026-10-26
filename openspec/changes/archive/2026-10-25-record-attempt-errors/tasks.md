@@ -15,15 +15,15 @@
 
 ## 3. Showing it
 
-- [ ] 3.1 `GET /v1/decisions` and `GET /admin/v1/decisions` return the field with each attempt; verify a test on both, and that a row without it returns attempts unchanged
-- [ ] 3.2 `humpyard ctl decisions` prints the message with an attempt when present; verify a ctl test, and that the output for a decision with no messages is unchanged
-- [ ] 3.3 Document the field and its scrubbing in `docs/api.md` (decisions) and `docs/routing.md` (reading a failed request), and the retention note in `docs/budgets.md` if decisions are described there; verify the strict docs build
+- [x] 3.1 `GET /v1/decisions` and `GET /admin/v1/decisions` return the field with each attempt; verify a test on both, and that a row without it returns attempts unchanged
+- [x] 3.2 `humpyard ctl decisions` prints the message with an attempt when present; verify a ctl test, and that the output for a decision with no messages is unchanged
+- [x] 3.3 Document the field and its scrubbing in `docs/api.md` (decisions) and `docs/routing.md` (reading a failed request), and the retention note in `docs/budgets.md` if decisions are described there; verify the strict docs build
 
 ## 4. Wrap-up
 
-- [ ] 4.1 Update `docs/architecture.md` (the module table and the "Last updated" line; the status table row) and verify the Mermaid diagrams still match the code
-- [ ] 4.2 Accept ADR 0028 when the design is confirmed; verify `docs/adr/README.md` lists it
-- [ ] 4.3 Run fmt, clippy `-D warnings` and the full test suite, then archive this change with `openspec archive record-attempt-errors --yes`; verify all gates pass and the spec delta merges
+- [x] 4.1 Update `docs/architecture.md` (the module table and the "Last updated" line; the status table row) and verify the Mermaid diagrams still match the code
+- [x] 4.2 Accept ADR 0028 when the design is confirmed; verify `docs/adr/README.md` lists it
+- [x] 4.3 Run fmt, clippy `-D warnings` and the full test suite, then archive this change with `openspec archive record-attempt-errors --yes`; verify all gates pass and the spec delta merges
 
 ## Workflow follow-up
 
