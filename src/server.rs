@@ -1217,9 +1217,13 @@ async fn handle(
 ) -> Result<(String, Response), GatewayError> {
     let Decoded {
         body,
-        llm_request,
+        mut llm_request,
         model,
     } = decode(format, raw)?;
+    // A cut-off tool call in the history would be refused by every provider that checks arguments (ADR 0029).
+    // Repaired before anything reads the request, so a refusal below still records that it happened.
+    let repaired = crate::repair_request::tool_calls(&mut llm_request);
+    guard.decision.repaired_tool_arguments = (repaired > 0).then_some(repaired);
     let info = request_info(headers);
     let stream = body["stream"].as_bool().unwrap_or(false);
     let features = request_features(&llm_request, &snap.selectors, &snap.config, caller);

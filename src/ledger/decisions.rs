@@ -108,6 +108,9 @@ pub struct Decision {
     pub prompt_tokens: Option<u64>,
     pub tools: bool,
     pub images: bool,
+    /// How many assistant tool calls had their arguments repaired before routing; `None` when none did
+    /// (ADR 0029). Only the count: nothing of the arguments is kept.
+    pub repaired_tool_arguments: Option<u32>,
     pub attempts: Vec<Attempt>,
     pub status: u16,
     /// `ok`, or why not: `unauthorized`, `forbidden`, `unknown_model`, `bad_request`,
@@ -387,6 +390,8 @@ pub(super) async fn query(
             prompt_tokens: row.get::<Option<i64>, _>("prompt_tokens").map(from_i64),
             tools: row.get("tools"),
             images: row.get("images"),
+            // Persisted by the next schema step (repair-tool-arguments group 3); no row carries it yet.
+            repaired_tool_arguments: None,
             attempts: serde_json::from_str(&row.get::<String, _>("attempts")).unwrap_or_default(),
             status: u16::try_from(row.get::<i64, _>("status")).unwrap_or(0),
             outcome: row.get("outcome"),

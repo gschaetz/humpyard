@@ -58,6 +58,8 @@ fn rules() -> BTreeMap<&'static str, Module> {
         ("scrub", module(Core, &[])),
         // Makes a tool call's arguments a JSON object, completing a cut-off one; pure text (ADR 0029).
         ("repair", module(Core, &[])),
+        // Applies it to a request: the decoded tool calls and the preserved same-format bodies (ADR 0029).
+        ("repair_request", module(Engine, &["repair"])),
         ("health", module(Core, &["clock", "config"])),
         ("select", module(Core, &["config"])),
         // Expiring runtime overrides: the store only; nothing here changes a plan yet (`add-runtime-overrides`).
