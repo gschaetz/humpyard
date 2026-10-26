@@ -68,8 +68,10 @@ to pin in tests.
   `input[]` items of type `function_call` (`arguments`). A string is replaced by the repaired text; a value that is
   already a valid object string is not rewritten, so a valid body stays byte for byte the client's.
 
-The count is the number of decoded tool calls repaired; the preserved bodies describe the same calls and add
-nothing to it.
+The count is the larger of the number of decoded calls repaired and the number repaired in a preserved body. They
+describe the same calls and must not be added, and neither alone is enough: the Responses decoder keeps the bad
+text as a string (so the decoded side sees it), while the chat decoder turns bad text into `{"raw": ...}`, which is
+already an object (so only the preserved chat body, the one that is replayed, still shows it).
 
 ### 4. The decision keeps a count, in an additive column
 
