@@ -41,7 +41,7 @@ numbers are monotonic and never reused. Start from [template.md](template.md).
 | [0025](0025-the-ui-has-no-state-of-its-own.md) | The UI has no state of its own |
 | [0026](0026-a-request-a-pool-member-rejects-moves-on-within-a-bound.md) | A request a pool member rejects moves on, within a bound |
 | [0027](0027-admin-authority-is-granted-by-configuration-to-named-scoped-principals.md) | Admin authority is granted by configuration to named, scoped principals, never to a client key or a database row |
-| [0028](0028-a-decision-keeps-the-providers-scrubbed-error-text-for-each-failed-attempt.md) | A decision keeps the provider's scrubbed error text for each failed attempt (proposed) |
+| [0028](0028-a-decision-keeps-the-providers-scrubbed-error-text-for-each-failed-attempt.md) | A decision keeps the provider's scrubbed error text for each failed attempt |
 
 How decisions relate to enforcement: invariants that must hold mechanically are listed in
 [../invariants.md](../invariants.md) and checked by tests and CI.

@@ -55,10 +55,12 @@ fn json_body(value: &Value) -> String {
 
 /// A gateway with one provider and target per upstream (`t0`, `t1`, ...), a passthrough route `r` over them that
 /// falls over on `fallback_on`, and a ledger. Returns its URL.
-async fn gateway(upstreams: Vec<Answer>, fallback_on: &str) -> (String, tempfile::TempDir) {
+async fn gateway(upstreams: Vec<Answer>, fallback_on: &str) -> (String, tempfile::TempDir, String) {
     let dir = tempfile::tempdir().unwrap();
+    let (admin_secret, admin_hash) = humpyard::auth::generate_key().unwrap();
     let mut toml = format!(
-        "listen = \"127.0.0.1:0\"\n[ledger]\npath = \"{}\"\n",
+        "listen = \"127.0.0.1:0\"\n[ledger]\npath = \"{}\"\n\
+         [admin.credentials.gary]\nsha256 = \"{admin_hash}\"\nscopes = [\"read\"]\n",
         dir.path().join("ledger.db").display()
     );
     let mut targets = Vec::new();
@@ -83,7 +85,7 @@ async fn gateway(upstreams: Vec<Answer>, fallback_on: &str) -> (String, tempfile
         "http://{}",
         serve(server::router(config).await.unwrap()).await
     );
-    (url, dir)
+    (url, dir, admin_secret)
 }
 
 async fn send(url: &str, content: &str) -> u16 {
@@ -122,7 +124,7 @@ async fn every_rejection_in_a_chain_keeps_its_own_providers_message() {
     // Three providers, three body shapes: OpenAI's, Google's list, and plain text. The first echoes a key-shaped
     // value, built at run time so no source line holds one.
     let key = format!("{}{}", "sk-", "abcdefghijkl1234");
-    let (url, _dir) = gateway(
+    let (url, _dir, _) = gateway(
         vec![
             Answer::Fail(
                 400,
@@ -170,7 +172,7 @@ async fn every_rejection_in_a_chain_keeps_its_own_providers_message() {
 
 #[tokio::test]
 async fn a_rate_limit_keeps_its_message_and_the_success_that_follows_has_none() {
-    let (url, _dir) = gateway(
+    let (url, _dir, _) = gateway(
         vec![
             Answer::Fail(
                 429,
@@ -196,7 +198,7 @@ async fn a_rate_limit_keeps_its_message_and_the_success_that_follows_has_none() 
 
 #[tokio::test]
 async fn a_timeout_keeps_a_description_of_what_happened() {
-    let (url, _dir) = gateway(vec![Answer::Stall, Answer::Ok], "[\"timeout\"]").await;
+    let (url, _dir, _) = gateway(vec![Answer::Stall, Answer::Ok], "[\"timeout\"]").await;
     assert_eq!(send(&url, "hello").await, 200);
 
     let decision = last_decision(&url).await;
@@ -211,7 +213,7 @@ async fn a_timeout_keeps_a_description_of_what_happened() {
 async fn no_part_of_the_request_reaches_the_decision() {
     // The provider's refusal does not echo the request, so nothing of it may appear anywhere in the decision.
     let marker = "zebra-quartz-marker-request-text";
-    let (url, _dir) = gateway(
+    let (url, _dir, _) = gateway(
         vec![Answer::Fail(
             400,
             "application/json",
@@ -227,5 +229,33 @@ async fn no_part_of_the_request_reaches_the_decision() {
     assert_eq!(
         messages(&decision),
         vec![Some("400: invalid argument".into())]
+    );
+}
+
+#[tokio::test]
+async fn the_admin_decisions_endpoint_returns_the_message_too() {
+    let (url, _dir, admin) = gateway(
+        vec![Answer::Fail(
+            400,
+            "application/json",
+            json_body(&json!({"error": {"message": "invalid argument"}})),
+        )],
+        "[]",
+    )
+    .await;
+    assert_eq!(send(&url, "hello").await, 400);
+
+    let body: Value = reqwest::Client::new()
+        .get(format!("{url}/admin/v1/decisions?limit=1"))
+        .bearer_auth(&admin)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(
+        body["data"][0]["attempts"][0]["message"], "400: invalid argument",
+        "{body}"
     );
 }

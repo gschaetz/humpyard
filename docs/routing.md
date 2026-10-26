@@ -188,7 +188,9 @@ often each rule fires and what each pool costs and how long it takes: tune the t
   rejected the same request it stops and the client gets the last rejection, because a request wrong on three
   providers is the request. Other client errors stop at once and reach the client, and on other routes a 400, 422,
   404 or 401 does too unless the route opts in with `fallback_on = ["unavailable"]` or `["rejected"]`. If no
-  target answers, the client gets the last error (a timeout is still reported as 504).
+  target answers, the client gets the last error (a timeout is still reported as 504). To see why each provider
+  refused a request, read its [decision](budgets.md#the-decision-log): every failed attempt carries the provider's
+  scrubbed `message`, and `humpyard ctl decisions` lists them under "failed attempts".
 - **Choosing what falls through.** A route can limit this with `fallback_on`, a list of failure
   classes (`overflow`, `rate_limit`, `timeout`, `server_error`, `connection`, `forbidden`,
   `unavailable`, `rejected`). A failure outside the list ends the request and the client sees the original status and

@@ -97,7 +97,7 @@ through the override endpoints, so a client key that manages overrides cannot re
 | `GET /admin/v1/config` | the effective configuration, as `GET /v1/config` returns it, with the `admin` section in full: each credential's id, scopes and expiry (client keys see only a count) |
 | `GET /admin/v1/health` | what `GET /v1/health` returns: skipped endpoints, latency, the loaded configuration, the last reload |
 | `GET /admin/v1/quota` | what `GET /v1/quota` returns |
-| `GET /admin/v1/decisions` | the decision log of **every key**, newest first; `?key=alice` narrows it to one key, and the usual filters (`limit`, `route`, `outcome`, `since_ms`, ...) apply |
+| `GET /admin/v1/decisions` | the decision log of **every key**, newest first, each failed attempt with the provider's `message`; `?key=alice` narrows it to one key, and the usual filters (`limit`, `route`, `outcome`, `since_ms`, ...) apply |
 | `GET /admin/v1/stats` | the [statistics](budgets.md#statistics) of **every key**; `?key=alice` narrows them, and `group_by` and `window` work as on `/v1/stats` |
 | `GET /admin/v1/credentials` | every admin credential: `id`, `kind`, `scopes`, `expires`, and `revoked` while a revocation is in force |
 
