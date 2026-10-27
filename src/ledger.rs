@@ -156,12 +156,23 @@ impl Ledger {
             .create_if_missing(true)
             .journal_mode(SqliteJournalMode::Wal)
             .synchronous(SqliteSynchronous::Normal);
+        // Migrate on a pool of its own and close it before the real one exists. A pooled connection that loads
+        // the schema first keeps that copy after another connection's `ALTER TABLE`, and sqlx then panics in its
+        // worker on the next `SELECT *` (its cached column list is shorter than the re-prepared statement's), so
+        // that query returns nothing. Opening the pool afterwards means no connection can predate the migration.
+        let migrator = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(options.clone())
+            .await
+            .map_err(open_error)?;
+        let migrated = migrate(&migrator).await;
+        migrator.close().await;
+        migrated.map_err(open_error)?;
         let pool = SqlitePoolOptions::new()
             .max_connections(2)
             .connect_with(options)
             .await
             .map_err(open_error)?;
-        migrate(&pool).await.map_err(open_error)?;
 
         let (tx, mut rx) = mpsc::channel::<Message>(capacity.max(1));
         let failed = Arc::new(AtomicU64::new(0));
