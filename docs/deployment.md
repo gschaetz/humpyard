@@ -151,7 +151,9 @@ endpoints that did not change, budget counters, and the session state of unchang
 - Ledger and budgets live in the SQLite file; back it up by copying the `.db` together with its
   `-wal` file, or stop the service first.
 - Upgrading: replace the binary (or pull the new tag) and restart. The ledger schema is created on
-  open; before 1.0, read the release notes for schema changes.
+  open; before 1.0, read the release notes for schema changes. A schema step only adds columns and is not undone,
+  so before an upgrade that carries one (ledger v12 adds the repaired tool-call count), copy `ledger.db` together
+  with its `-wal` and `-shm` files while the gateway is stopped.
 
 ## Releases (maintainers)
 

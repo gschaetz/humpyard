@@ -18,4 +18,4 @@ arguments, count only) is recorded now. The scanner's rules, where the repair ru
 
 ## New ADRs
 
-- [ADR-0029 The gateway repairs invalid tool-call arguments in a request's history](../../../docs/adr/0029-the-gateway-repairs-invalid-tool-call-arguments-in-a-requests-history.md) (proposed; supersedes none)
+- [ADR-0029 The gateway repairs invalid tool-call arguments in a request's history](../../../docs/adr/0029-the-gateway-repairs-invalid-tool-call-arguments-in-a-requests-history.md) (accepted; supersedes none)
