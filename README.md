@@ -68,7 +68,7 @@ curl -fsSLO https://raw.githubusercontent.com/gschaetz/humpyard/main/examples/qu
 export GROQ_API_KEY=...        # your key; the config reads it from the environment
 
 docker run -d -p 127.0.0.1:8080:8080 -e GROQ_API_KEY \
-  -v "$PWD/quickstart.toml:/etc/humpyard/config.toml:ro" ghcr.io/gschaetz/humpyard:0.18.0
+  -v "$PWD/quickstart.toml:/etc/humpyard/config.toml:ro" ghcr.io/gschaetz/humpyard:0.19.0
 
 curl localhost:8080/v1/chat/completions -H 'content-type: application/json' \
   -d '{"model":"fast","messages":[{"role":"user","content":"hi"}]}'
