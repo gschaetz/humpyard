@@ -43,6 +43,7 @@ numbers are monotonic and never reused. Start from [template.md](template.md).
 | [0027](0027-admin-authority-is-granted-by-configuration-to-named-scoped-principals.md) | Admin authority is granted by configuration to named, scoped principals, never to a client key or a database row |
 | [0028](0028-a-decision-keeps-the-providers-scrubbed-error-text-for-each-failed-attempt.md) | A decision keeps the provider's scrubbed error text for each failed attempt |
 | [0029](0029-the-gateway-repairs-invalid-tool-call-arguments-in-a-requests-history.md) | The gateway repairs invalid tool-call arguments in a request's history |
+| [0030](0030-response-quality-is-recorded-as-content-free-flags-per-call.md) | Response quality is recorded as content-free flags per call |
 
 How decisions relate to enforcement: invariants that must hold mechanically are listed in
 [../invariants.md](../invariants.md) and checked by tests and CI.
