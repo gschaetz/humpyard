@@ -86,6 +86,7 @@ fn entry(key: Option<&str>) -> Entry {
         outcome: "ok".into(),
         usage_missing: false,
         request_id: Some("r1".into()),
+        signals: None,
     }
 }
 

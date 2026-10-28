@@ -107,6 +107,7 @@ fn make_row(rng: &mut Rng, i: u64, ts_ms: i64) -> (Entry, Decision) {
         outcome: if result == "ok" { "ok" } else { "error" }.to_string(),
         usage_missing: false,
         request_id: Some(request_id.clone()),
+        signals: None,
     };
     let attempts = (0..=rng.below(2))
         .map(|n| Attempt {

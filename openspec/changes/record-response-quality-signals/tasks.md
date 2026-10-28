@@ -13,7 +13,7 @@
 
 ## 3. Storing the flags
 
-- [ ] 3.1 Ledger schema v13: four nullable integer columns on `usage` (`empty_output`, `truncated_output`, `bad_tool_call`, `cut_stream`), `SCHEMA_VERSION` 13, migrated on the one-connection pool before the real pool opens like v12, and `Entry` carrying them as optional booleans; verify a migration test that opens a v12 file, upgrades it, reads an old row as unknown and writes a new row, and that reopening is harmless
+- [x] 3.1 Ledger schema v13: four nullable integer columns on `usage` (`empty_output`, `truncated_output`, `bad_tool_call`, `cut_stream`), `SCHEMA_VERSION` 13, migrated on the one-connection pool before the real pool opens like v12, and `Entry` carrying them as optional booleans; verify a migration test that opens a v12 file, upgrades it, reads an old row as unknown and writes a new row, and that reopening is harmless
 - [ ] 3.2 `StreamRecorder::submit()` and the buffered finalize fill the entry's flags from the judge and `Accounting::complete()` queues it as today; verify a real-server test that a served request's usage row holds the right flags for a clean answer, a truncated one and a malformed tool call, and that a judge call's row reads unknown
 - [ ] 3.3 No content reaches storage: a test where the answer's text, tool name and arguments hold a recognizable string, the call is recorded, and neither the ledger file's bytes, the decisions read through both endpoints, the statistics, the metrics exposition nor the captured logs contain it; verify
 

@@ -75,7 +75,7 @@ fn rules() -> BTreeMap<&'static str, Module> {
             "ledger",
             Module {
                 sqlx: true,
-                ..module(Core, &["num", "scrub"])
+                ..module(Core, &["num", "scrub", "signals"])
             },
         ),
         (

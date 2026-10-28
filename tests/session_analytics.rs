@@ -47,6 +47,7 @@ fn call(
         outcome: "ok".into(),
         usage_missing: false,
         request_id: None,
+        signals: None,
     }
 }
 
