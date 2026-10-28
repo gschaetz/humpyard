@@ -2,8 +2,8 @@
 
 ## 1. The judge
 
-- [ ] 1.1 A pure module (registered in `tests/architecture.rs`, depending only on the repair module) that takes what a response showed (text seen, reasoning seen, tool calls with name and accumulated arguments, stop reason or string, whether the stream ended normally, failed or never ended) and returns the four flags; no I/O, `unwrap`, `expect`, panic or fallible indexing; verify table tests for every scenario of the `response-signals` spec: empty, reasoning-only, length stop in each spelling and an unknown stop string, cut-off arguments, blank arguments, a missing name, a non-object, a stream cut before its final chunk, and a good answer with no flag
-- [ ] 1.2 The bounds: at most 16 tool calls and 64 KiB of arguments per call are judged, and a call past either is left unflagged; verify a test with a 1 MiB argument and with 40 calls, that memory stays within the bound, and that the flags for the calls inside the bound are unaffected
+- [x] 1.1 A pure module (registered in `tests/architecture.rs`, depending only on the repair module) that takes what a response showed (text seen, reasoning seen, tool calls with name and accumulated arguments, stop reason or string, whether the stream ended normally, failed or never ended) and returns the four flags; no I/O, `unwrap`, `expect`, panic or fallible indexing; verify table tests for every scenario of the `response-signals` spec: empty, reasoning-only, length stop in each spelling and an unknown stop string, cut-off arguments, blank arguments, a missing name, a non-object, a stream cut before its final chunk, and a good answer with no flag
+- [x] 1.2 The bounds: at most 16 tool calls and 64 KiB of arguments per call are judged, and a call past either is left unflagged; verify a test with a 1 MiB argument and with 40 calls, that memory stays within the bound, and that the flags for the calls inside the bound are unaffected
 
 ## 2. Observing responses
 
