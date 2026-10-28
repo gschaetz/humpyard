@@ -116,7 +116,7 @@ fn rules() -> BTreeMap<&'static str, Module> {
                 Engine,
                 &[
                     "budget", "clock", "config", "error", "estimate", "latency", "ledger",
-                    "metrics", "pool", "pricing",
+                    "metrics", "pool", "pricing", "signals",
                 ],
             ),
         ),
