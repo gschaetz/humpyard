@@ -4,7 +4,7 @@ What has shipped, what is being built, and what comes next, at a glance. The det
 lives in the [component status table](architecture.md#component-status), the OpenSpec change named
 in it, and the [decision records](adr/README.md). Update this page in the same PR as the change.
 
-Last updated: 2026-10-26. Latest release: 0.19.0. Community: [Discord](https://discord.gg/qfTGr7KTfq) for questions and feedback; GitHub issues for bugs and requests.
+Last updated: 2026-10-27. Latest release: 0.19.0. Community: [Discord](https://discord.gg/qfTGr7KTfq) for questions and feedback; GitHub issues for bugs and requests.
 
 ## Where routing is going
 
@@ -135,6 +135,25 @@ In this order, API first. See [Direction: operating humpyard](architecture.md#di
   on a target no more public than the request, stores only a score and a reason code (never content),
   and shows counts and spread in `/v1/stats`; calibrated against a stronger judge before it is trusted.
   Requests are grouped by task class (matching rule, tools, size), not by their text.
+- **Response-side repair or retry.** The 0.19.0 repair only mends cut-off tool calls in a request's history. A
+  response can still end with a malformed or empty tool call (an OpenClaw cron job failed on one on 2026-10-27), and
+  a stream already under way cannot be corrected. Options: buffer and validate short responses, or retry on another
+  target when a stream ends with a bad tool call. Needs its own ADR because streaming makes both costly. Trigger:
+  malformed responses on a measurable share of a route's requests.
+- **Mid-stream failures counted.** A stream can end without usage or output and still count as a success; today
+  nothing records how often. Trigger: the quality-signals work above, which would use it.
+- **Pool health you can see.** A per-route count of eligible members, and an alert when it falls below a floor. The
+  deep public pool shrank to three members (one near-sole, on rate limits) without anything saying so.
+- **Rate-limit awareness.** Learn each provider's limits from its 429s and spread load before reaching them, instead
+  of cooling a target for a fixed time after the fact. Relates to the per-request cap for tight free tiers.
+- **A budget guard for any paid tail** that is reached on more than overflow (for example on a rate limit): a daily
+  cap so an exhausted free pool cannot spend without limit.
+- **Client conformance tests.** A small replayable suite of real conversation histories (content removed) from
+  Codex, OpenClaw and Claude Code, run before a release, so a client and provider quirk (strict argument checks,
+  Responses versus chat) is caught early.
+- **A dry-run diff of a config change.** Which pools gain or lose members, and which routes change, before it is
+  applied; it would have shown a quality change thinning the deep pool.
+- **Pruning old ledger backups** taken before an upgrade, rather than by hand.
 - **An LLM `classify` route action**, only if the decision log shows a large catch-all share and a costly
   default pool: a classifier call with a timeout and a fallback pool, where a slow, failing or inconclusive
   classifier always falls back. Not built until the numbers ask for it.
