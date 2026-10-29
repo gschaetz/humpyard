@@ -18,4 +18,4 @@ One durable decision qualifies: what a provider's timeout covers, and that the g
 
 ## New ADRs
 
-- [ADR-0031 A provider's timeout bounds the wait to start and a stream's idle time, not an answer's length](../../../docs/adr/0031-a-providers-timeout-bounds-the-wait-to-start-and-a-streams-idle-time.md)
+- [ADR-0031 A provider's timeout bounds the wait to start and a stream's idle time, not an answer's length](../../../../docs/adr/0031-a-providers-timeout-bounds-the-wait-to-start-and-a-streams-idle-time.md)

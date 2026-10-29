@@ -19,10 +19,10 @@
 
 ## 5. Docs and architecture
 
-- [ ] 5.1 Describe `timeout_secs` as the three limits in `docs/configuration.md`, `docs/routing.md` (failover on a timeout) and the comment in `examples/config.toml`; verify the strict docs build
+- [x] 5.1 Describe `timeout_secs` as the three limits in `docs/configuration.md`, `docs/routing.md` (failover on a timeout) and the comment in `examples/config.toml`; verify the strict docs build
 - [x] 5.2 Update `docs/architecture.md` (the `pool.rs` row, the status table, the "Last updated" line) and verify its Mermaid diagrams still match the code
 - [x] 5.3 Accept ADR 0031 when the design is confirmed; verify `docs/adr/README.md` lists it as accepted
-- [ ] 5.4 Run fmt, clippy `-D warnings`, `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features --document-private-items` and the full test suite, then archive this change with `openspec archive bound-the-wait-for-a-response-not-the-whole-stream --yes`; verify all gates pass and the spec delta merges
+- [x] 5.4 Run fmt, clippy `-D warnings`, `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features --document-private-items` and the full test suite, then archive this change with `openspec archive bound-the-wait-for-a-response-not-the-whole-stream --yes`; verify all gates pass and the spec delta merges
 
 ## Workflow follow-up
 
