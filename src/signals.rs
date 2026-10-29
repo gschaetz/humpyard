@@ -80,6 +80,11 @@ impl Observation {
         }
     }
 
+    /// Some other content that is an answer by itself (a refusal, an image): the answer is not empty.
+    pub fn other_content(&mut self) {
+        self.text = true;
+    }
+
     /// A fragment of tool call `index`: its name when the fragment carries one, and a piece of its arguments.
     /// A call with an index past the first [`MAX_CALLS`] distinct ones still counts as a tool call but is not
     /// judged.
