@@ -264,6 +264,29 @@ impl Ledger {
         decisions::query(&self.pool, query).await
     }
 
+    /// The response signals of the answer call of each request in `request_ids`. A request whose answer row is
+    /// missing (its stream is still open), or whose signals are unknown, is left out.
+    pub async fn answer_signals(
+        &self,
+        request_ids: &[String],
+    ) -> Result<HashMap<String, Signals>, LedgerError> {
+        if request_ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let ids = serde_json::to_string(request_ids).unwrap_or_else(|_| "[]".into());
+        let rows = sqlx::query(
+            "SELECT request_id, empty_output, truncated_output, bad_tool_call, cut_stream FROM usage \
+             WHERE kind = 'answer' AND request_id IN (SELECT value FROM json_each(?1))",
+        )
+        .bind(ids)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .iter()
+            .filter_map(|row| Some((row.get::<String, _>("request_id"), signals_of(row)?)))
+            .collect())
+    }
+
     /// Sessions, their cache use and the switches between endpoints, from the usage rows (read-only).
     pub async fn session_scan(&self, query: &SessionQuery) -> Result<SessionScan, LedgerError> {
         sessions::scan(&self.pool, query).await

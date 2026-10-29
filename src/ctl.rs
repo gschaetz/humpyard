@@ -468,6 +468,23 @@ pub fn render_decisions(v: &Value) -> String {
         out.push_str("\nrepaired tool-call arguments (request, calls):\n");
         out.extend(repaired);
     }
+    // The facts set on the answer that served each request (ADR 0030); nothing when none were.
+    let signalled: Vec<String> = rows
+        .iter()
+        .filter_map(|row| {
+            let names: Vec<&str> = row["response_signals"]
+                .as_array()?
+                .iter()
+                .filter_map(Value::as_str)
+                .collect();
+            (!names.is_empty())
+                .then(|| format!("  {}  {}\n", scalar(&row["request_id"]), names.join(", ")))
+        })
+        .collect();
+    if !signalled.is_empty() {
+        out.push_str("\nresponse signals (request, signals):\n");
+        out.extend(signalled);
+    }
     out
 }
 

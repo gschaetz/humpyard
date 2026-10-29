@@ -41,6 +41,20 @@ pub struct Signals {
 }
 
 impl Signals {
+    /// The names of the facts that apply, in a fixed order; empty for a good answer.
+    #[must_use]
+    pub fn names(self) -> Vec<&'static str> {
+        [
+            (self.empty_output, "empty_output"),
+            (self.truncated_output, "truncated_output"),
+            (self.bad_tool_call, "bad_tool_call"),
+            (self.cut_stream, "cut_stream"),
+        ]
+        .into_iter()
+        .filter_map(|(set, name)| set.then_some(name))
+        .collect()
+    }
+
     /// No fact applies: a good answer.
     #[must_use]
     pub fn is_clean(self) -> bool {
