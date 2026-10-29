@@ -1,6 +1,6 @@
 # 0031. A provider's timeout bounds the wait to start and a stream's idle time, not an answer's length
 
-- Status: proposed
+- Status: accepted
 - Date: 2026-10-29
 - Supersedes: none
 - Change: `openspec/changes/bound-the-wait-for-a-response-not-the-whole-stream`
