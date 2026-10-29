@@ -30,6 +30,7 @@ use crate::ledger::{Attempt, Entry, Kind, Ledger};
 use crate::metrics::Metrics;
 use crate::pool::{Served, TargetClient};
 use crate::pricing::cost_micro_usd;
+use crate::signals::{End, Observation};
 
 /// Internal response header carrying a call's id from the metered client back to the handler.
 /// It never reaches the client: the handler removes it.
@@ -260,6 +261,8 @@ impl CallContext {
             streamed_bytes: 0,
             terminal: false,
             failed: false,
+            finished_loop: false,
+            observation: Observation::new(),
             submitted: false,
         };
         Box::pin(async_stream::stream! {
@@ -271,6 +274,7 @@ impl CallContext {
                             recorder.streamed_bytes = recorder
                                 .streamed_bytes
                                 .saturating_add(generated_bytes(chunk));
+                            recorder.observe(chunk);
                             match chunk {
                                 LlmResponseChunk::Usage(usage) => recorder.usage = Some(usage.clone()),
                                 LlmResponseChunk::MessageStop { .. } => recorder.terminal = true,
@@ -288,6 +292,9 @@ impl CallContext {
                     break;
                 }
             }
+            // Reaching here means the provider's stream ended or failed; a client that disconnects drops
+            // the stream before this line and is not held against the model.
+            recorder.finished_loop = true;
             recorder.submit();
         })
     }
@@ -302,6 +309,8 @@ impl Drop for CallContext {
     }
 }
 
+// Independent facts about how one stream went (final chunk seen, failed, ran to its end, submitted).
+#[allow(clippy::struct_excessive_bools)]
 struct StreamRecorder {
     template: StreamTemplate,
     accounting: Arc<Accounting>,
@@ -310,15 +319,56 @@ struct StreamRecorder {
     streamed_bytes: usize,
     terminal: bool,
     failed: bool,
+    /// The provider's stream ran to its end or failed, as opposed to the tap being dropped (ADR 0030).
+    finished_loop: bool,
+    /// What the answer showed, for the four facts; nothing of it is kept past `submit()`.
+    observation: Observation,
     submitted: bool,
 }
 
 impl StreamRecorder {
+    /// Reads a chunk the tap already holds; never changes it.
+    fn observe(&mut self, chunk: &LlmResponseChunk) {
+        match chunk {
+            LlmResponseChunk::TextDelta { text, .. } => self.observation.text(text),
+            LlmResponseChunk::ToolCallDelta {
+                index,
+                name,
+                arguments_delta,
+                ..
+            } => self.observation.tool_call(
+                u64::try_from(*index).unwrap_or(u64::MAX),
+                name.as_deref(),
+                arguments_delta.as_deref().unwrap_or(""),
+            ),
+            LlmResponseChunk::MessageStop {
+                reason: Some(reason),
+            } => self.observation.stop_string(reason),
+            _ => {}
+        }
+    }
+
+    /// The four facts, or `None` (unknown) when the tap was dropped before the provider's stream ended and no
+    /// final chunk had arrived: the client left, so the answer was not seen whole.
+    fn signals(&self) -> Option<crate::signals::Signals> {
+        let end = if self.failed {
+            End::Failed
+        } else if self.terminal {
+            End::Finished
+        } else if self.finished_loop {
+            End::Ended
+        } else {
+            return None;
+        };
+        Some(self.observation.judge(end))
+    }
+
     fn submit(&mut self) {
         if std::mem::replace(&mut self.submitted, true) {
             return;
         }
         let mut entry = self.template.entry.clone();
+        entry.signals = self.signals();
         entry.outcome = if self.failed {
             "error"
         } else if self.terminal {
