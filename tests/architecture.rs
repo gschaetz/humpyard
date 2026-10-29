@@ -60,6 +60,8 @@ fn rules() -> BTreeMap<&'static str, Module> {
         ("repair", module(Core, &[])),
         // Applies it to a request: the decoded tool calls and the preserved same-format bodies (ADR 0029).
         ("repair_request", module(Engine, &["repair"])),
+        // Judges an answer for four facts (empty, cut by the length limit, a malformed tool call, a stream cut early); pure (ADR 0030).
+        ("signals", module(Core, &["repair"])),
         ("health", module(Core, &["clock", "config"])),
         ("select", module(Core, &["config"])),
         // Expiring runtime overrides: the store only; nothing here changes a plan yet (`add-runtime-overrides`).
