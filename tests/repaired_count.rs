@@ -263,7 +263,7 @@ async fn an_older_ledger_gains_the_column_and_keeps_its_decisions() {
         .fetch_one(&mut conn)
         .await
         .unwrap();
-    assert_eq!(version, 12);
+    assert_eq!(version, 13);
     let stored: Option<i64> = sqlx::query_scalar(
         "SELECT repaired_tool_arguments FROM decisions WHERE request_id = 'new'",
     )

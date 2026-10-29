@@ -185,6 +185,7 @@ impl CallContext {
             outcome: "ok".into(),
             usage_missing: true,
             request_id: Some(self.request_id.clone()),
+            signals: None,
         }
     }
 

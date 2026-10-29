@@ -16,6 +16,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use sqlx::Row;
 
 use crate::num::{from_i64, to_i64};
+use crate::signals::Signals;
 use sqlx::sqlite::{
     SqliteConnectOptions, SqliteJournalMode, SqlitePool, SqlitePoolOptions, SqliteSynchronous,
 };
@@ -31,7 +32,7 @@ pub use quota::{QuotaPoint, QuotaQuery, QuotaSample};
 pub use sessions::{SessionQuery, SessionScan, SessionStats, Switch};
 pub use stats::{GroupBy, GroupStats, Stats, StatsQuery, TokenTotals, percentile};
 
-const SCHEMA_VERSION: i64 = 12;
+const SCHEMA_VERSION: i64 = 13;
 /// How often the writer deletes decisions past their retention.
 const PRUNE_EVERY: std::time::Duration = std::time::Duration::from_secs(3600);
 /// Decision retention when none is given, in days.
@@ -79,6 +80,9 @@ pub struct Entry {
     pub usage_missing: bool,
     /// The request this call belongs to (joins to `decisions`); `None` on rows from before v2.
     pub request_id: Option<String>,
+    /// The four facts about the answer (ADR 0030); `None` when unknown: rows from before v13, judge calls and
+    /// calls with no response to look at. Stored as four nullable columns, all set or all null.
+    pub signals: Option<Signals>,
 }
 
 impl Entry {
@@ -343,6 +347,7 @@ impl Ledger {
                 outcome: row.get("outcome"),
                 usage_missing: row.get("usage_missing"),
                 request_id: row.get("request_id"),
+                signals: signals_of(&row),
             })
             .collect())
     }
@@ -537,6 +542,10 @@ async fn migrate(pool: &SqlitePool) -> Result<(), sqlx::Error> {
         // v12 (`repair-tool-arguments`): how many tool calls were repaired before routing.
         decisions::migrate_v12(pool).await?;
     }
+    if version < 13 {
+        // v13 (`record-response-quality-signals`): four facts about each answer. Old rows read as unknown.
+        migrate_v13(pool).await?;
+    }
     if version < SCHEMA_VERSION {
         // PRAGMA does not take bound parameters; the value is a compile-time constant.
         sqlx::query(sqlx::AssertSqlSafe(format!(
@@ -548,14 +557,53 @@ async fn migrate(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     Ok(())
 }
 
+/// The four nullable columns of v13, in the order `insert_batch` binds them.
+const SIGNAL_COLUMNS: [&str; 4] = [
+    "empty_output",
+    "truncated_output",
+    "bad_tool_call",
+    "cut_stream",
+];
+
+async fn migrate_v13(pool: &SqlitePool) -> Result<(), sqlx::Error> {
+    for column in SIGNAL_COLUMNS {
+        let has: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM pragma_table_info('usage') WHERE name = ?1")
+                .bind(column)
+                .fetch_one(pool)
+                .await?;
+        if has == 0 {
+            // The name comes from the constant above, never from input.
+            sqlx::query(sqlx::AssertSqlSafe(format!(
+                "ALTER TABLE usage ADD COLUMN {column} INTEGER"
+            )))
+            .execute(pool)
+            .await?;
+        }
+    }
+    Ok(())
+}
+
+/// The signals of a `usage` row, or `None` when any column is null (unknown).
+fn signals_of(row: &sqlx::sqlite::SqliteRow) -> Option<Signals> {
+    let flag = |column: &str| row.get::<Option<i64>, _>(column).map(|v| v != 0);
+    Some(Signals {
+        empty_output: flag("empty_output")?,
+        truncated_output: flag("truncated_output")?,
+        bad_tool_call: flag("bad_tool_call")?,
+        cut_stream: flag("cut_stream")?,
+    })
+}
+
 async fn insert_batch(pool: &SqlitePool, batch: &[Entry]) -> Result<(), sqlx::Error> {
     let mut tx = pool.begin().await?;
     for e in batch {
         sqlx::query(
             "INSERT INTO usage (ts_ms, key_id, session_id, route, target, provider, model, kind, \
              input_tokens, cached_input_tokens, cache_creation_tokens, output_tokens, reasoning_tokens, \
-             cost_micro_usd, outcome, usage_missing, request_id) \
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17)",
+             cost_micro_usd, outcome, usage_missing, request_id, \
+             empty_output, truncated_output, bad_tool_call, cut_stream) \
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21)",
         )
         .bind(e.ts_ms)
         .bind(&e.key_id)
@@ -574,6 +622,10 @@ async fn insert_batch(pool: &SqlitePool, batch: &[Entry]) -> Result<(), sqlx::Er
         .bind(&e.outcome)
         .bind(e.usage_missing)
         .bind(&e.request_id)
+        .bind(e.signals.map(|s| i64::from(s.empty_output)))
+        .bind(e.signals.map(|s| i64::from(s.truncated_output)))
+        .bind(e.signals.map(|s| i64::from(s.bad_tool_call)))
+        .bind(e.signals.map(|s| i64::from(s.cut_stream)))
         .execute(&mut *tx)
         .await?;
     }
@@ -603,6 +655,7 @@ mod tests {
             outcome: "ok".into(),
             usage_missing: false,
             request_id: None,
+            signals: None,
         }
     }
 

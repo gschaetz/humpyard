@@ -377,6 +377,7 @@ endpoints = [{ provider = "p", model = "m", price = { input = 0.0, output = 0.0,
             outcome: "ok".into(),
             usage_missing: false,
             request_id: None,
+            signals: None,
         };
         ledger.record(base(day_start_ms(now) + 5, 400_000));
         ledger.record(base(month_start_ms(now) + 5, 100_000));
