@@ -44,6 +44,7 @@ numbers are monotonic and never reused. Start from [template.md](template.md).
 | [0028](0028-a-decision-keeps-the-providers-scrubbed-error-text-for-each-failed-attempt.md) | A decision keeps the provider's scrubbed error text for each failed attempt |
 | [0029](0029-the-gateway-repairs-invalid-tool-call-arguments-in-a-requests-history.md) | The gateway repairs invalid tool-call arguments in a request's history |
 | [0030](0030-response-quality-is-recorded-as-content-free-flags-per-call.md) | Response quality is recorded as content-free flags per call |
+| [0031](0031-a-providers-timeout-bounds-the-wait-to-start-and-a-streams-idle-time.md) | A provider's timeout bounds the wait to start and a stream's idle time, not an answer's length |
 
 How decisions relate to enforcement: invariants that must hold mechanically are listed in
 [../invariants.md](../invariants.md) and checked by tests and CI.
