@@ -9,12 +9,12 @@
 
 - [x] 2.1 The stream tap collects what the judge needs from each chunk it already reads (text and reasoning seen, tool-call name and argument fragments per index within the bounds, the stop string, whether a terminal chunk arrived or a failure) and passes every chunk on exactly as before; `submit()` calls the judge when the provider's stream ends or fails, and a dropped tap (client disconnect) leaves `cut_stream` unset; verify tests with a fake streaming upstream for a whole answer, a stream that stops early, a stream that errors, and a client that disconnects mid-stream, and that the bytes the client receives are identical with and without a malformed tool call in the stream
 - [x] 2.2 The buffered path judges the aggregated response (content blocks, normalized stop reason) with the same module and sets the flags on the answer's entry, while judge calls and calls with no response to look at stay unknown; verify tests for a buffered empty answer, a buffered length stop and a buffered malformed tool call
-- [ ] 2.3 Observation cannot fail a request: a response that cannot be judged (no usage, an undecodable chunk) is delivered as today with its flags unknown or unset; verify a test whose upstream sends a decode error in the middle of a stream
+- [x] 2.3 Observation cannot fail a request: a response that cannot be judged (no usage, an undecodable chunk) is delivered as today with its flags unknown or unset; verify a test whose upstream sends a decode error in the middle of a stream
 
 ## 3. Storing the flags
 
 - [x] 3.1 Ledger schema v13: four nullable integer columns on `usage` (`empty_output`, `truncated_output`, `bad_tool_call`, `cut_stream`), `SCHEMA_VERSION` 13, migrated on the one-connection pool before the real pool opens like v12, and `Entry` carrying them as optional booleans; verify a migration test that opens a v12 file, upgrades it, reads an old row as unknown and writes a new row, and that reopening is harmless
-- [ ] 3.2 `StreamRecorder::submit()` and the buffered finalize fill the entry's flags from the judge and `Accounting::complete()` queues it as today; verify a real-server test that a served request's usage row holds the right flags for a clean answer, a truncated one and a malformed tool call, and that a judge call's row reads unknown
+- [x] 3.2 `StreamRecorder::submit()` and the buffered finalize fill the entry's flags from the judge and `Accounting::complete()` queues it as today; verify a real-server test that a served request's usage row holds the right flags for a clean answer, a truncated one and a malformed tool call, and that a judge call's row reads unknown
 - [ ] 3.3 No content reaches storage: a test where the answer's text, tool name and arguments hold a recognizable string, the call is recorded, and neither the ledger file's bytes, the decisions read through both endpoints, the statistics, the metrics exposition nor the captured logs contain it; verify
 
 ## 4. Showing the flags
