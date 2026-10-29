@@ -259,3 +259,24 @@ fn the_bounded_state_holds_at_most_the_bound() {
         held.len()
     );
 }
+
+#[test]
+fn names_list_the_facts_that_apply_in_a_fixed_order() {
+    assert_eq!(NONE.names(), Vec::<&str>::new());
+    let all = Signals {
+        empty_output: true,
+        truncated_output: true,
+        bad_tool_call: true,
+        cut_stream: true,
+    };
+    assert_eq!(
+        all.names(),
+        [
+            "empty_output",
+            "truncated_output",
+            "bad_tool_call",
+            "cut_stream"
+        ]
+    );
+    assert_eq!(only(|s| s.cut_stream = true).names(), ["cut_stream"]);
+}
