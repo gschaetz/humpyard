@@ -35,6 +35,8 @@ enum Script {
     Length,
     /// A finish with neither text nor a tool call.
     Empty,
+    /// Text, a chunk that is not valid JSON, then more text and a normal finish.
+    Undecodable,
 }
 
 const GOOD: &str = r#"{\"city\":\"Paris\"}"#;
@@ -75,6 +77,10 @@ async fn gateway(script: Script) -> (String, tempfile::TempDir) {
                     Script::Length => {
                         yield Ok(event(chunk(json!({"content": "lo"}), Some("length"))));
                     }
+                    Script::Undecodable => {
+                        yield Ok(Event::default().data("{this is not json"));
+                        yield Ok(event(chunk(json!({"content": "lo"}), Some("stop"))));
+                    }
                     Script::Errors => {
                         // Let the first event reach the client before the connection breaks.
                         tokio::time::sleep(Duration::from_millis(200)).await;
@@ -85,7 +91,11 @@ async fn gateway(script: Script) -> (String, tempfile::TempDir) {
                 }
                 if matches!(
                     script,
-                    Script::Whole | Script::Length | Script::ToolCall(_) | Script::Empty
+                    Script::Whole
+                        | Script::Length
+                        | Script::ToolCall(_)
+                        | Script::Empty
+                        | Script::Undecodable
                 ) {
                     yield Ok(Event::default().data("[DONE]"));
                 }
@@ -243,4 +253,32 @@ async fn the_client_receives_the_same_events_with_and_without_a_malformed_tool_c
     // Same events in the same order; only the argument text differs.
     assert_eq!(good.replace(GOOD, CUT), cut);
     assert!(cut.trim_end().ends_with("[DONE]"));
+}
+
+#[tokio::test]
+async fn an_undecodable_chunk_does_not_fail_the_request() {
+    let (url, dir) = gateway(Script::Undecodable).await;
+    let response = reqwest::Client::new()
+        .post(format!("{url}/v1/chat/completions"))
+        .json(&request())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200, "delivered as without observation");
+    let text = response.text().await.unwrap();
+    assert!(
+        text.contains("Hel"),
+        "what was decoded reaches the client: {text}"
+    );
+    // The gateway already stops a stream at a chunk it cannot decode, so the provider's stream did not reach
+    // its final chunk: the call is recorded as before (outcome `error`) and carries `cut_stream` and no other flag.
+    let entry = answer(&dir).await;
+    assert_eq!(entry.outcome, "error");
+    assert_eq!(
+        entry.signals,
+        Some(Signals {
+            cut_stream: true,
+            ..Signals::default()
+        })
+    );
 }
