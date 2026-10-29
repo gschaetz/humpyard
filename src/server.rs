@@ -47,6 +47,7 @@ use crate::policy::{
 };
 use crate::pool::{self, PROVIDER_HEADER, TargetClient};
 use crate::routing::{Plan, Route, Routes};
+use crate::scrub;
 use crate::select::{Facts, Features, Selectors};
 
 const TARGET_HEADER: &str = "x-humpyard-target";
@@ -1994,11 +1995,17 @@ fn frame_stream(
             let event = match item {
                 Ok(value) => frame_event(format, &value),
                 Err(LlmStreamError::Upstream(value)) => {
+                    // The provider's own error event, passed on as it came. The log keeps the one-line,
+                    // bounded, key-redacted text the decision log uses for a failed attempt (ADR 0028).
+                    tracing::warn!(
+                        reason = %scrub::error_text(&value.to_string(), scrub::MESSAGE_LIMIT).unwrap_or_default(),
+                        "provider sent an error mid-stream"
+                    );
                     failed = true;
                     frame_event(format, &value)
                 }
                 Err(LlmStreamError::Client(error)) => {
-                    tracing::warn!("stream iteration failed");
+                    tracing::warn!(reason = %failure_reason(&error), "stream iteration failed");
                     failed = true;
                     error_event(format, &error.to_string())
                 }
@@ -2028,6 +2035,11 @@ fn frame_event(format: WireFormat, value: &Value) -> Event {
     }
 }
 
+/// Why a stream broke, as the one bounded, key-redacted line the decision log uses for a failed attempt (ADR 0028).
+fn failure_reason(error: &switchyard_protocol::LlmClientError) -> String {
+    scrub::line(&error.to_string(), scrub::MESSAGE_LIMIT)
+}
+
 fn error_event(format: WireFormat, message: &str) -> Event {
     let body = GatewayError::UpstreamUnreachable(message.to_string()).body(format);
     match format {
@@ -2043,6 +2055,28 @@ mod tests {
 
     fn raw(value: &Value) -> Vec<u8> {
         serde_json::to_vec(value).unwrap()
+    }
+
+    #[test]
+    fn a_stream_failure_reason_is_one_bounded_line_with_keys_redacted() {
+        let error = switchyard_protocol::LlmClientError::ResponseTranslation(format!(
+            "bad frame\nfrom upstream, key {}{} rejected {}",
+            "sk-",
+            "abcdefghijklmnopqrstuvwxyz1234",
+            "x".repeat(500)
+        ));
+        let reason = failure_reason(&error);
+        assert!(!reason.contains('\n'), "{reason}");
+        assert!(reason.contains("[redacted]"), "{reason}");
+        assert!(
+            !reason.contains(&format!("{}{}", "sk-", "abcdefghijkl")),
+            "{reason}"
+        );
+        assert!(reason.chars().count() <= scrub::MESSAGE_LIMIT, "{reason}");
+        assert!(
+            reason.starts_with("response translation") || reason.contains("bad frame"),
+            "{reason}"
+        );
     }
 
     #[test]
