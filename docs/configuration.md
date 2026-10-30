@@ -10,6 +10,13 @@ See the [example configs](examples.md); `humpyard check-config <file>` validates
   [Providers](providers.md#providers-that-reject-unknown-request-fields)). Optional
   `tool_call_extra_content = { ... }` is added as `extra_content` to every replayed assistant tool call sent to
   that provider (see [Providers](providers.md#gemini-3x-wants-a-thought-signature-on-replayed-tool-calls)).
+  `timeout_secs` (default 120) is how long the gateway waits for the provider, and it bounds three different
+  things: the **wait for a response to start**, retries included (a streamed answer has started when its first
+  event arrives); the **idle time** of a stream that has started, meaning nothing received for that long; and, for
+  an answer that is not streamed, the **whole call**. A stream that keeps sending is never ended because of its
+  length, so a slow model can answer at length without a long timeout, and a short timeout still fails over
+  quickly from a model that stalls. A timeout is a `timeout` failure in every case; its message says which limit
+  ran out.
 - `[targets.<name>]`: a model served by an ordered list of `{ provider, model }` endpoints.
   Clients may request a target by name; endpoints are tried in order, failing over on
   connection errors, timeouts, HTTP 429 and 5xx (not on other 4xx, and not once a stream has begun).

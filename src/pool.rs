@@ -5,10 +5,12 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
+use futures::StreamExt;
 use http::{HeaderName, HeaderValue, StatusCode};
 use switchyard_llm_client::{Backend, HttpBackendConfig, ModelConfig, TranslatingLlmClient};
 use switchyard_protocol::{
-    ContentBlock, LlmClientError, ModelId, Request, Response, Role, RoutedLlmClient, WireFormat,
+    ContentBlock, LlmClientError, LlmResponse, LlmResponseStream, ModelId, Request, Response, Role,
+    RoutedLlmClient, WireFormat,
 };
 use switchyard_translation::encode_request;
 
@@ -36,6 +38,9 @@ struct EndpointClient {
     drop_fields: Vec<String>,
     /// Added as `extra_content` to replayed assistant tool calls sent to this endpoint.
     tool_call_extra_content: Option<serde_json::Value>,
+    /// The provider's `timeout_secs`: the wait for a response to start, a started stream's idle time, or a
+    /// buffered call as a whole (ADR 0031). The client library has no deadline of its own.
+    timeout: Duration,
 }
 
 /// One endpoint's health, for reporting.
@@ -141,6 +146,42 @@ fn stated_retry_time(error: &LlmClientError, health: HealthConfig) -> Option<Dur
         }
         _ => None,
     }
+}
+
+/// The timeout error for a call that did not start (or, buffered, finish) within `limit`. The same variant the
+/// client library raises, so classification, failover, health and the 504 are unchanged.
+fn wait_timeout(streaming: bool, limit: Duration) -> LlmClientError {
+    let ms = limit.as_millis();
+    let message = if streaming {
+        format!("no response started within {ms} ms, retries included")
+    } else {
+        format!("response did not finish within {ms} ms, retries included")
+    };
+    LlmClientError::Timeout {
+        source: Box::new(std::io::Error::new(std::io::ErrorKind::TimedOut, message)),
+    }
+}
+
+/// Ends a stream that sends nothing for `limit` with the timeout error. Every event resets the clock and passes
+/// through untouched and in order; a stream that keeps sending is never ended for its length.
+fn idle_guard(stream: LlmResponseStream, limit: Duration) -> LlmResponseStream {
+    futures::stream::unfold(Some(stream), move |state| async move {
+        let mut stream = state?;
+        match tokio::time::timeout(limit, stream.next()).await {
+            Ok(Some(item)) => Some((item, Some(stream))),
+            Ok(None) => None,
+            Err(_) => Some((
+                Err(LlmClientError::Timeout {
+                    source: Box::new(std::io::Error::new(
+                        std::io::ErrorKind::TimedOut,
+                        format!("stream was idle for {} ms", limit.as_millis()),
+                    )),
+                }),
+                None,
+            )),
+        }
+    })
+    .boxed()
 }
 
 /// A timeout that exhausted a target is re-labelled as a gateway timeout (HTTP 504) so the route
@@ -318,7 +359,7 @@ impl TargetClient {
                 add_tool_call_extra_content(&mut attempt, content);
             }
             let started = std::time::Instant::now();
-            let result = endpoint.client.call(attempt).await;
+            let result = endpoint.call_within_limits(attempt).await;
             // A rate-limited or unavailable endpoint that says when it will serve again is cooled for
             // exactly that long (ADR 0018, amended); the breaker records it only for failures that
             // fail over.
@@ -344,6 +385,7 @@ impl TargetClient {
                 Ok(mut response) => {
                     slot.resolved();
                     endpoint.log(endpoint.breaker.success());
+
                     if let Ok(value) = HeaderValue::from_str(&endpoint.provider) {
                         response
                             .upstream_headers
@@ -418,6 +460,22 @@ impl TargetClient {
 }
 
 impl EndpointClient {
+    /// One call with the provider's timeout applied (ADR 0031). The wait for a response to start, retries
+    /// included, is bounded; for a stream the client library returns once the first event has arrived, and for a
+    /// buffered answer this is the whole call. A stream that has started is then limited by idle time, never by
+    /// its length.
+    async fn call_within_limits(&self, request: Request) -> Result<Response, LlmClientError> {
+        let streaming = request.llm_request.stream;
+        let mut response = tokio::time::timeout(self.timeout, self.client.call(request))
+            .await
+            .map_err(|_| wait_timeout(streaming, self.timeout))??;
+        response.llm_response = match response.llm_response {
+            LlmResponse::Stream(stream) => LlmResponse::Stream(idle_guard(stream, self.timeout)),
+            other @ LlmResponse::Agg(_) => other,
+        };
+        Ok(response)
+    }
+
     fn log(&self, transition: Option<Transition>) {
         match transition {
             Some(Transition::Opened { cooldown_ms }) => tracing::warn!(
@@ -449,7 +507,9 @@ fn endpoint_client(
         extra_body: std::collections::BTreeMap::default(),
         reasoning_effort: None,
         max_retries: provider.max_retries,
-        timeout: Some(Duration::from_secs(provider.timeout_secs)),
+        // The gateway applies the provider's timeout itself (ADR 0031); the library's single deadline would also
+        // end a stream that is still producing.
+        timeout: None,
     });
     let client = TranslatingLlmClient::new(&[ModelConfig::new(
         ModelId::from(endpoint.model.as_str()),
@@ -466,6 +526,7 @@ fn endpoint_client(
         base_url: provider.base_url.clone(),
         drop_fields: provider.drop_fields.clone(),
         tool_call_extra_content: provider.tool_call_extra_content.clone(),
+        timeout: Duration::from_secs(provider.timeout_secs),
     })
 }
 
