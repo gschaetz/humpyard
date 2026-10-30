@@ -174,5 +174,12 @@ fn group_json(g: &GroupStats) -> Value {
         "avg_tokens": g.avg_tokens,
         "tokens": tokens_json(&g.tokens),
         "cache_hit_ratio": g.tokens.cache_hit_ratio(),
+        "response_signals": {
+            "observed": g.signals.observed,
+            "empty_output": g.signals.empty_output,
+            "truncated_output": g.signals.truncated_output,
+            "bad_tool_call": g.signals.bad_tool_call,
+            "cut_stream": g.signals.cut_stream,
+        },
     })
 }
