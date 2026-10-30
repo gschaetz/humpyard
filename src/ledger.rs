@@ -30,7 +30,7 @@ pub use decisions::{
 pub use overrides::{NewOverride, OverrideAudit, OverrideDb, OverrideRecord};
 pub use quota::{QuotaPoint, QuotaQuery, QuotaSample};
 pub use sessions::{SessionQuery, SessionScan, SessionStats, Switch};
-pub use stats::{GroupBy, GroupStats, Stats, StatsQuery, TokenTotals, percentile};
+pub use stats::{GroupBy, GroupStats, SignalCounts, Stats, StatsQuery, TokenTotals, percentile};
 
 const SCHEMA_VERSION: i64 = 13;
 /// How often the writer deletes decisions past their retention.
