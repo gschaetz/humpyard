@@ -25,7 +25,7 @@
 
 ## 5. Metrics
 
-- [ ] 5.1 Add `humpyard_response_calls_observed_total{route,target}` and `humpyard_response_signals_total{route,target,signal}`, counted in `Accounting::complete()` beside the existing usage counters, with `signal` from the fixed set and the existing bounded vocabulary for route and target; verify a test that each flag raises its series, a clean call raises only the observed counter, an unknown target uses the bounded fallback label, and the exposition parses strictly
+- [x] 5.1 Add `humpyard_response_calls_observed_total{route,target}` and `humpyard_response_signals_total{route,target,signal}`, counted in `Accounting::complete()` beside the existing usage counters, with `signal` from the fixed set and the existing bounded vocabulary for route and target; verify a test that each flag raises its series, a clean call raises only the observed counter, an unknown target uses the bounded fallback label, and the exposition parses strictly
 
 ## 6. Wrap-up
 
