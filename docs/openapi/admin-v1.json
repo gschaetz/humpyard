@@ -386,11 +386,14 @@
                     "data": {
                       "type": "array",
                       "items": {
-                        "type": "object",
-                        "description": "A decision, as `GET /v1/decisions` returns it."
+                        "$ref": "#/components/schemas/Decision"
                       }
                     }
-                  }
+                  },
+                  "required": [
+                    "object",
+                    "data"
+                  ]
                 }
               }
             }
@@ -517,7 +520,37 @@
               "application/json": {
                 "schema": {
                   "type": "object",
-                  "description": "As `GET /v1/stats`."
+                  "description": "Statistics over the window, as `GET /v1/stats`.",
+                  "required": [
+                    "object",
+                    "group_by",
+                    "window",
+                    "truncated",
+                    "data"
+                  ],
+                  "properties": {
+                    "object": {
+                      "type": "string",
+                      "enum": [
+                        "stats"
+                      ]
+                    },
+                    "group_by": {
+                      "type": "string"
+                    },
+                    "window": {
+                      "type": "object"
+                    },
+                    "truncated": {
+                      "type": "boolean"
+                    },
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/StatsGroup"
+                      }
+                    }
+                  }
                 }
               }
             }
@@ -1317,6 +1350,172 @@
           },
           "expires_in_secs": {
             "type": "integer"
+          }
+        }
+      },
+      "ResponseSignal": {
+        "type": "string",
+        "enum": [
+          "empty_output",
+          "truncated_output",
+          "bad_tool_call",
+          "cut_stream"
+        ],
+        "description": "One fact about an answer (ADR 0030): `empty_output` (finished with no text and no tool call; reasoning alone does not count), `truncated_output` (the provider stopped it at its output limit), `bad_tool_call` (a tool call with no name, or with arguments that are neither blank nor a JSON object) or `cut_stream` (the provider's stream ended or failed before its final chunk). Only that a fact is set is kept, never any text."
+      },
+      "ResponseSignalCounts": {
+        "type": "object",
+        "description": "How the group's answer calls fared on the response signals: `observed` is the number of answer calls whose signals are known, and each other field counts those that carried that signal, so a rate is a count over `observed`. Calls with unknown signals (written before ledger schema v13, routing-time judge calls) are in neither figure.",
+        "required": [
+          "observed",
+          "empty_output",
+          "truncated_output",
+          "bad_tool_call",
+          "cut_stream"
+        ],
+        "properties": {
+          "observed": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "empty_output": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "truncated_output": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "bad_tool_call": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "cut_stream": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "Decision": {
+        "type": "object",
+        "description": "A routing decision, as `GET /v1/decisions` returns it. Only the fields listed here are part of the contract; others may be present.",
+        "required": [
+          "request_id",
+          "ts_ms",
+          "route",
+          "outcome",
+          "status",
+          "request",
+          "attempts",
+          "served"
+        ],
+        "properties": {
+          "request_id": {
+            "type": "string"
+          },
+          "ts_ms": {
+            "type": "integer",
+            "description": "When the decision was made, in epoch milliseconds."
+          },
+          "key": {
+            "type": "string",
+            "nullable": true,
+            "description": "The client key the request came in with."
+          },
+          "route": {
+            "type": "string",
+            "nullable": true
+          },
+          "outcome": {
+            "type": "string"
+          },
+          "status": {
+            "type": "integer"
+          },
+          "request": {
+            "type": "object",
+            "description": "Facts about the request: `stream`, `prompt_tokens_estimate`, `tools`, `images`, and `repaired_tool_arguments` when some were."
+          },
+          "attempts": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "served": {
+            "type": "object",
+            "description": "The `target` and `provider` that served it."
+          },
+          "response_signals": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ResponseSignal"
+            },
+            "description": "The signals set on the call that served the request, read from the usage ledger. Absent when none is set, when they are unknown (a decision from before schema v13) and while the answer is still streaming."
+          }
+        }
+      },
+      "StatsGroup": {
+        "type": "object",
+        "description": "Performance of one group over the window, as `GET /v1/stats` returns it. Only the fields listed here are part of the contract; others may be present.",
+        "required": [
+          "group",
+          "requests",
+          "attempts",
+          "failures",
+          "fallbacks",
+          "answered",
+          "outcomes",
+          "tokens",
+          "response_signals"
+        ],
+        "properties": {
+          "group": {
+            "type": "string"
+          },
+          "requests": {
+            "type": "integer"
+          },
+          "attempts": {
+            "type": "integer"
+          },
+          "failures": {
+            "type": "integer"
+          },
+          "fallbacks": {
+            "type": "integer"
+          },
+          "answered": {
+            "type": "integer"
+          },
+          "outcomes": {
+            "type": "object"
+          },
+          "tokens": {
+            "type": "object",
+            "required": [
+              "input",
+              "cached_input",
+              "cache_creation",
+              "output"
+            ],
+            "properties": {
+              "input": {
+                "type": "integer"
+              },
+              "cached_input": {
+                "type": "integer"
+              },
+              "cache_creation": {
+                "type": "integer"
+              },
+              "output": {
+                "type": "integer"
+              }
+            }
+          },
+          "response_signals": {
+            "$ref": "#/components/schemas/ResponseSignalCounts"
           }
         }
       }
