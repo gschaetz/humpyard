@@ -4,7 +4,7 @@
 
 Observed on 2026-10-30/31: OpenCode Go answered `mimo-v2.5` with `410 ... deprecated. Use mimo-v2.6-flash instead` (seven failed attempts in 100 hours); `error.rs` already classes 404, 410, 401, 402 and a 400 naming a missing model as `unavailable` (ADR 0023), so failover worked and the cooldown skipped the endpoint. What was missing is a **signal**: the failure is in the decision log and as a log line, but there is no metric, and `HumpyardEndpointCoolingDown` did not fire (a 30 s cooldown rarely holds long enough to alert on).
 
-Discovery (ADR 0022) is deliberately limited to free chat models, on the reasoning that a wrong member costs a worse pick or a failed attempt, never money, provided no paid model can get in. OpenCode Go is a flat-fee plan that caps each model at a dollar amount of usage priced at list rates (`docs/budgets.md`), so for it "paid" means share of a cap already bought. The gone-detection in discovery (`plan.gone`, `src/discover.rs`) only covers generated targets, so hand-written plan targets are never reported, and it relies on the dataset, which still listed `mimo-v2.5`.
+Discovery (ADR 0022) is deliberately limited to free chat models, on the reasoning that a wrong member costs a worse pick or a failed attempt, never money, provided no paid model can get in. OpenCode Go is a flat-fee plan that caps each model at a dollar amount of usage priced at list rates (`docs/budgets.md`), so for it "paid" means share of a cap already bought. `models check` does report a hand-written endpoint whose model the dataset no longer lists (`configured_drift` in `src/discover.rs`, shown as `gone`; it is what exits the weekly price check with 1 for four retired poolside models), but only for providers that set `discover`, and only against the dataset. The `opencode` provider sets none, and the dataset still listed `mimo-v2.5`, so nothing was reported.
 
 In-force ADRs read: 0004 and 0013 (no content stored), 0009 (health in the pool), 0014 (prices proposed, never fetched at runtime), 0015 (quota advisory), 0022 (free-pool discovery), 0023 (answers that describe the endpoint make it unavailable), 0030 (proposed; counters for signals).
 
@@ -42,5 +42,5 @@ In-force ADRs read: 0004 and 0013 (no content stored), 0009 (health in the pool)
 
 ## Open Questions
 
-- Does a plan provider's own model list (`/models`) drop a retired model such as `mimo-v2.5`? If it does, `models check` can report hand-written targets whose model is no longer listed, closing the gap discovery cannot see today. Task 1.1 finds out against the live list and records the answer; this change does not depend on it.
+- Does a plan provider's own model list (`/models`) drop a retired model such as `mimo-v2.5`? If it does, `models check` can compare hand-written endpoints against the provider's list as well as the dataset, closing the gap a lagging dataset leaves. Task 1.1 finds out against the live list and records the answer; this change does not depend on it.
 - Whether to ship the cluster alert rule with the first release or after a week of counter data is the operator's call in the cluster repository.

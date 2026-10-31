@@ -7,7 +7,7 @@
 
 ## Context
 
-ADR 0022 lets free pools update themselves because a wrong free member costs a worse pick or a failed attempt, never money, and it therefore never adds a model for a paid provider. A flat-fee plan such as OpenCode Go is paid in a different way: the money is spent whatever is used, each model is capped at an amount of usage, and a new model draws on that existing cap. On 2026-10-30 that plan retired a model the pool still listed; failover hid it, but nothing reported it, because the scheduled checks read a dataset that lagged and discovery does not look at hand-written targets.
+ADR 0022 lets free pools update themselves because a wrong free member costs a worse pick or a failed attempt, never money, and it therefore never adds a model for a paid provider. A flat-fee plan such as OpenCode Go is paid in a different way: the money is spent whatever is used, each model is capped at an amount of usage, and a new model draws on that existing cap. On 2026-10-30 that plan retired a model the pool still listed; failover hid it, but nothing reported it, because the scheduled checks compare against a dataset that lagged, and the provider had not opted in to discovery's report.
 
 ## Decision
 

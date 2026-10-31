@@ -2,7 +2,7 @@
 
 ## Why
 
-On 2026-10-30 OpenCode Go retired `mimo-v2.5` and began answering it with `410 Model mimo-v2.5 has been deprecated. Use mimo-v2.6-flash instead`. Failover worked and no request failed, but nothing told the operator: the weekly price check reads the models.dev dataset (which still lists the model) and discovery only maintains free pools, so a hand-written plan target that goes away is invisible until someone reads logs. Separately, OpenCode Go is a flat-fee plan capped per model, not per-token billing, yet discovery treats every paid provider as "adding a model costs money" (ADR 0022) and never adds anything. On a plan, a new model draws on a cap that already exists, so that rule is stricter than the risk it guards against.
+On 2026-10-30 OpenCode Go retired `mimo-v2.5` and began answering it with `410 Model mimo-v2.5 has been deprecated. Use mimo-v2.6-flash instead`. Failover worked and no request failed, but nothing told the operator: the weekly price check reads the models.dev dataset (which still lists the model) and the discovery report only looks at providers that opt in (OpenCode Go does not) and only against that same dataset, so a hand-written plan target that goes away is invisible until someone reads logs. Separately, OpenCode Go is a flat-fee plan capped per model, not per-token billing, yet discovery treats every paid provider as "adding a model costs money" (ADR 0022) and never adds anything. On a plan, a new model draws on a cap that already exists, so that rule is stricter than the risk it guards against.
 
 ## What Changes
 
