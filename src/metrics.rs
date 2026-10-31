@@ -359,6 +359,8 @@ impl Default for Metrics {
 }
 
 impl Metrics {
+    // A flat list of metric definitions; splitting it would only scatter them.
+    #[allow(clippy::too_many_lines)]
     pub fn new(settings: Settings) -> Self {
         Self {
             settings,

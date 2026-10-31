@@ -520,7 +520,7 @@ fn a_clean_call_raises_only_the_observed_counter() {
         find(&samples, "humpyard_response_calls_observed_total")[0].2,
         1.0
     );
-    assert!(find(&samples, "humpyard_response_signals_total").is_empty());
+    assert_eq!(find(&samples, "humpyard_response_signals_total").len(), 0);
 }
 
 #[test]
@@ -528,7 +528,10 @@ fn a_call_that_was_not_judged_is_not_counted() {
     let m = registry(Settings::default());
     m.observe_usage(&entry(None));
     let samples = parse(&m.render(vec![]));
-    assert!(find(&samples, "humpyard_response_calls_observed_total").is_empty());
+    assert_eq!(
+        find(&samples, "humpyard_response_calls_observed_total").len(),
+        0
+    );
 }
 
 #[test]
