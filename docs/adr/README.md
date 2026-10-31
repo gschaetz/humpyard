@@ -45,6 +45,7 @@ numbers are monotonic and never reused. Start from [template.md](template.md).
 | [0029](0029-the-gateway-repairs-invalid-tool-call-arguments-in-a-requests-history.md) | The gateway repairs invalid tool-call arguments in a request's history |
 | [0030](0030-response-quality-is-recorded-as-content-free-flags-per-call.md) | Response quality is recorded as content-free flags per call |
 | [0031](0031-a-providers-timeout-bounds-the-wait-to-start-and-a-streams-idle-time.md) | A provider's timeout bounds the wait to start and a stream's idle time, not an answer's length |
+| [0032](0032-a-plan-provider-may-be-discovered-and-unavailable-endpoints-are-counted.md) | A flat-fee plan provider may be discovered, and unavailable endpoints are counted |
 
 How decisions relate to enforcement: invariants that must hold mechanically are listed in
 [../invariants.md](../invariants.md) and checked by tests and CI.
