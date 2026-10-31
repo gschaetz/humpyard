@@ -47,6 +47,8 @@ cannot call inference or any other endpoint.
 | `humpyard_request_duration_seconds` | histogram | `route`, `target` |
 | `humpyard_tokens_total` | counter | `route`, `target`, `direction` (`input`, `output`, `cached_input`, `cache_creation`), `key`\* |
 | `humpyard_cost_micro_usd_total` | counter | `route`, `target`, `key`\* |
+| `humpyard_response_calls_observed_total` | counter | `route`, `target` |
+| `humpyard_response_signals_total` | counter | `route`, `target`, `signal` (`empty_output`, `truncated_output`, `bad_tool_call`, `cut_stream`) |
 | `humpyard_failovers_total` | counter | `route`, `from_target`, `to_target` |
 | `humpyard_refusals_total` | counter | `reason`, `key`\* |
 | `humpyard_fallback_blocked_total` | counter | `route` |

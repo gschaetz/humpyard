@@ -336,6 +336,8 @@ pub struct Metrics {
     duration: Owned,
     tokens: Owned,
     cost: Owned,
+    response_calls: Owned,
+    response_signals: Owned,
     failovers: Owned,
     blocked: Owned,
     skips: Owned,
@@ -357,6 +359,8 @@ impl Default for Metrics {
 }
 
 impl Metrics {
+    // A flat list of metric definitions; splitting it would only scatter them.
+    #[allow(clippy::too_many_lines)]
     pub fn new(settings: Settings) -> Self {
         Self {
             settings,
@@ -389,6 +393,20 @@ impl Metrics {
                 Kind::Counter,
                 &["route", "target"],
                 true,
+            ),
+            response_calls: Owned::new(
+                "response_calls_observed_total",
+                "Provider calls whose answer was judged for quality signals; the denominator for response_signals_total.",
+                Kind::Counter,
+                &["route", "target"],
+                false,
+            ),
+            response_signals: Owned::new(
+                "response_signals_total",
+                "Judged provider calls showing a quality signal: empty_output, truncated_output, bad_tool_call or cut_stream.",
+                Kind::Counter,
+                &["route", "target", "signal"],
+                false,
             ),
             failovers: Owned::new(
                 "failovers_total",
@@ -612,9 +630,17 @@ impl Metrics {
             labels.extend(key.clone());
             self.tokens.add(&labels, n);
         }
-        let mut labels = vec![route, target];
+        let mut labels = vec![route.clone(), target.clone()];
         labels.extend(key);
         self.cost.add(&labels, e.cost_micro_usd);
+        // A call the judge never saw (no signals) is not counted, so the ratio stays honest.
+        if let Some(signals) = e.signals {
+            self.response_calls.add(&[route.clone(), target.clone()], 1);
+            for signal in signals.names() {
+                self.response_signals
+                    .add(&[route.clone(), target.clone(), signal.to_string()], 1);
+            }
+        }
     }
 
     /// Records a configuration reload attempt.
@@ -655,6 +681,8 @@ impl Metrics {
             &self.duration,
             &self.tokens,
             &self.cost,
+            &self.response_calls,
+            &self.response_signals,
             &self.failovers,
             &self.blocked,
             &self.skips,

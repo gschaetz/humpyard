@@ -462,3 +462,92 @@ fn scraped_values_join_the_same_output_and_the_snapshot_equals_the_text() {
     assert_eq!(find(&samples, "humpyard_quota_percent")[0].2, 42.5);
     assert_eq!(metrics::encode(&m.snapshot(scraped())), text);
 }
+
+fn judged(signals: humpyard::signals::Signals) -> Entry {
+    let mut e = entry(None);
+    e.signals = Some(signals);
+    e
+}
+
+fn signal_count(samples: &[(String, BTreeMap<String, String>, f64)], signal: &str) -> Option<f64> {
+    find(samples, "humpyard_response_signals_total")
+        .into_iter()
+        .find(|s| s.1["signal"] == signal)
+        .map(|s| s.2)
+}
+
+#[test]
+fn each_response_signal_raises_its_own_series() {
+    use humpyard::signals::Signals;
+    let m = registry(Settings::default());
+    m.observe_usage(&judged(Signals {
+        empty_output: true,
+        ..Signals::default()
+    }));
+    m.observe_usage(&judged(Signals {
+        truncated_output: true,
+        ..Signals::default()
+    }));
+    m.observe_usage(&judged(Signals {
+        bad_tool_call: true,
+        ..Signals::default()
+    }));
+    m.observe_usage(&judged(Signals {
+        cut_stream: true,
+        ..Signals::default()
+    }));
+    let samples = parse(&m.render(vec![]));
+    for signal in [
+        "empty_output",
+        "truncated_output",
+        "bad_tool_call",
+        "cut_stream",
+    ] {
+        assert_eq!(signal_count(&samples, signal), Some(1.0), "{signal}");
+    }
+    assert_eq!(
+        find(&samples, "humpyard_response_calls_observed_total")[0].2,
+        4.0
+    );
+}
+
+#[test]
+fn a_clean_call_raises_only_the_observed_counter() {
+    let m = registry(Settings::default());
+    m.observe_usage(&judged(humpyard::signals::Signals::default()));
+    let samples = parse(&m.render(vec![]));
+    assert_eq!(
+        find(&samples, "humpyard_response_calls_observed_total")[0].2,
+        1.0
+    );
+    assert_eq!(find(&samples, "humpyard_response_signals_total").len(), 0);
+}
+
+#[test]
+fn a_call_that_was_not_judged_is_not_counted() {
+    let m = registry(Settings::default());
+    m.observe_usage(&entry(None));
+    let samples = parse(&m.render(vec![]));
+    assert_eq!(
+        find(&samples, "humpyard_response_calls_observed_total").len(),
+        0
+    );
+}
+
+#[test]
+fn response_signals_use_the_bounded_labels() {
+    let m = registry(Settings::default());
+    let mut e = judged(humpyard::signals::Signals {
+        empty_output: true,
+        ..humpyard::signals::Signals::default()
+    });
+    e.route = "evil-route".into();
+    e.target = "evil-target".into();
+    m.observe_usage(&e);
+    let text = m.render(vec![]);
+    assert!(!text.contains("evil"), "{text}");
+    let samples = parse(&text);
+    let s = &find(&samples, "humpyard_response_signals_total")[0];
+    assert_eq!(s.1["route"], "other");
+    assert_eq!(s.1["target"], "other");
+}
