@@ -21,7 +21,7 @@
 
 - [x] 4.1 `GET /v1/decisions`, `GET /admin/v1/decisions` and `humpyard ctl decisions` show the names of the flags set on the serving call (read from the usage row by `request_id` and `kind = 'answer'`) and nothing when none is set or the stream is still open; verify tests on all three for a flagged, a clean, an open-stream and a pre-v13 decision, and that output for a decision without flags is unchanged
 - [x] 4.2 `GET /v1/stats` and its admin counterpart add, per group, the number of observed calls and one count per flag, with unknown calls left out of both figures, under the existing window and key-isolation rules; verify tests for a group with a known mix, a window containing pre-v13 rows, and two keys with separate figures
-- [ ] 4.3 Update the admin API's OpenAPI contract for the new fields and keep its contract test green; verify the test fails if a documented field is missing from a response
+- [x] 4.3 Update the admin API's OpenAPI contract for the new fields and keep its contract test green; verify the test fails if a documented field is missing from a response
 
 ## 5. Metrics
 
