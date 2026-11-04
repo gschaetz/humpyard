@@ -157,9 +157,18 @@ pub async fn fetch_provider_models(
     base_url: &str,
     api_key: &str,
 ) -> Result<BTreeSet<String>, DiscoverError> {
+    fetch_provider_models_within(base_url, api_key, FETCH_TIMEOUT).await
+}
+
+/// [`fetch_provider_models`] with the time limit given (a test uses a short one).
+pub async fn fetch_provider_models_within(
+    base_url: &str,
+    api_key: &str,
+    timeout: Duration,
+) -> Result<BTreeSet<String>, DiscoverError> {
     let url = format!("{}/models", base_url.trim_end_matches('/'));
     let client = reqwest::Client::builder()
-        .timeout(FETCH_TIMEOUT)
+        .timeout(timeout)
         .redirect(reqwest::redirect::Policy::none())
         .build()
         .map_err(|e| DiscoverError::Source(e.to_string()))?;

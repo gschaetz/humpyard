@@ -66,6 +66,33 @@ For a provider on a **paid plan** (for example OpenCode Go), nothing is ever add
 a paid model costs money. `humpyard models check --paid` lists the new paid chat models with their price and
 window so you can add the ones you want by hand (`humpyard prices import` proposes the price).
 
+## Finding models a provider has retired
+
+Discovery and `prices check` compare your configuration with the models.dev dataset, which can lag behind a
+provider by days or weeks. When a provider retires a model your targets still use, requests to it fail over and
+nobody is told. `humpyard models check --retired` asks each provider for its **own** model list instead and reports
+every configured endpoint, hand-written or generated, whose model the provider no longer lists:
+
+```
+$ humpyard models check --retired --config /etc/humpyard/config.toml
+retired:    pf3 uses opencode/mimo-v2.5, which the provider no longer lists
+```
+
+It needs no `discover` and no `price_source`, sends each provider's key only to that provider's own host (redirects
+are not followed, and the response is size- and time-limited), never writes a file and never changes the
+configuration. `--provider NAME` checks one provider and `--json` prints the report. It exits **0** when nothing is
+reported, **1** when an endpoint is, and **2** when a provider's list could not be used (a rejected key, a timeout, a
+body that is not a model list); that provider is reported as `unusable` and the others are still checked, so run it
+from a scheduler that alerts on a non-zero exit. A provider with no key is skipped and listed as `skipped`.
+
+A report is evidence, not proof. A provider can serve a model it does not list (an alias, a preview or hidden
+model), and a local provider lists only what is pulled, so look before you remove a target. To be told sooner, watch
+`humpyard_endpoint_unavailable_total` ([metrics](metrics.md)), which counts the attempts a provider answers with
+"this model is gone", "your key is rejected" or "no credit".
+
+A weekly check beside the price check is plenty, for example the cron entry
+`23 6 * * 1  humpyard  . /etc/humpyard/env && /usr/local/bin/humpyard models check --retired --config /etc/humpyard/config.toml`.
+
 ## Scheduling it
 
 Run `models sync` on a schedule, on the machine or container that has the generated file where the gateway can
