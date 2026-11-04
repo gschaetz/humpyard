@@ -31,8 +31,8 @@
 
 - [x] 6.1 Document the four signals, their definitions and the schema note: `docs/routing.md` (reading a bad answer), `docs/api.md` (decision and statistics fields), `docs/ctl.md`, `docs/metrics.md` (the two counters) and the one-way schema note and backup advice in `docs/deployment.md`; verify the strict docs build
 - [x] 6.2 Update `docs/architecture.md` (the module table, the response path if it lists the tap, the "Last updated" line and the status table row) and verify the Mermaid diagrams still match the code
-- [ ] 6.3 Accept ADR 0030 when the design is confirmed; verify `docs/adr/README.md` lists it as accepted
-- [ ] 6.4 Run fmt, clippy `-D warnings`, `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features --document-private-items` and the full test suite, then archive this change with `openspec archive record-response-quality-signals --yes`; verify all gates pass and the spec deltas merge
+- [x] 6.3 Accept ADR 0030 when the design is confirmed; verify `docs/adr/README.md` lists it as accepted
+- [x] 6.4 Run fmt, clippy `-D warnings`, `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features --document-private-items` and the full test suite, then archive this change with `openspec archive record-response-quality-signals --yes`; verify all gates pass and the spec deltas merge
 
 ## Workflow follow-up
 
