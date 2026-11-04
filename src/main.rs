@@ -8,6 +8,7 @@ use humpyard::config::Config;
 use humpyard::discover;
 use humpyard::migrate;
 use humpyard::prices;
+use humpyard::retired;
 use humpyard::server;
 
 #[derive(Parser)]
@@ -242,6 +243,11 @@ struct ModelsArgs {
     /// added automatically, and finding one makes the exit code 1.
     #[arg(long)]
     paid: bool,
+    /// Instead of the dataset comparison, ask each provider for its own model list and report every
+    /// configured endpoint whose model it no longer lists. Report-only; needs no `discover`. Exits 0 when
+    /// nothing is reported, 1 when an endpoint is, 2 when a provider's list could not be used.
+    #[arg(long, conflicts_with = "paid")]
+    retired: bool,
     /// Where the dataset is read (testing); https only, or http to a loopback host.
     #[arg(long, hide = true, default_value = prices::MODELS_DEV_URL)]
     source_url: String,
@@ -410,6 +416,22 @@ async fn load_prices(args: &PriceArgs) -> Result<Vec<prices::Report>, prices::Pr
 /// `models check` and `models sync` (ADR 0022).
 async fn models_command(command: ModelsCommand) -> ExitCode {
     match command {
+        ModelsCommand::Check(args) if args.retired => {
+            match retired::check(&args.config, args.provider.as_deref()).await {
+                Ok(report) => {
+                    if args.json {
+                        println!("{}", retired::report_json(&report));
+                    } else {
+                        print!("{}", retired::render(&report));
+                    }
+                    ExitCode::from(report.exit_code())
+                }
+                Err(error) => {
+                    eprintln!("error: {error}");
+                    ExitCode::from(EXIT_UNUSABLE)
+                }
+            }
+        }
         ModelsCommand::Check(args) => {
             match discover::gather(
                 &args.config,

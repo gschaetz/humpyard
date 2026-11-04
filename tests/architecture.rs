@@ -88,6 +88,8 @@ fn rules() -> BTreeMap<&'static str, Module> {
         ("prices", module(Core, &["config"])),
         // Reads the sources for the `models` commands only; see the serving-path tests (ADR 0022).
         ("discover", module(Core, &["config", "num", "prices"])),
+        // Asks each provider for its own model list for `models check --retired` only; command-only (ADR 0022).
+        ("retired", module(Core, &["config", "discover"])),
         // Reads a ModelRelay setup for the `migrate-modelrelay` command only; see the serving-path test.
         ("migrate", module(Core, &["config", "num"])),
         // Polls provider usage while serving; advisory and fail-open (ADR 0015).
@@ -347,6 +349,28 @@ fn only_the_prices_command_uses_the_price_source_module() {
     );
 }
 
+/// ADR 0022: only the `models` commands (`main`) may use the module that compares configured endpoints with
+/// each provider's own list, so `serve` can never fetch a model list.
+#[test]
+fn only_the_models_command_uses_the_retired_module() {
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut offenders = Vec::new();
+    for path in rust_files(&src) {
+        let module = module_of(path.strip_prefix(&src).unwrap());
+        if matches!(module.as_str(), "retired" | "main" | "lib") {
+            continue;
+        }
+        let code = production_code(&fs::read_to_string(&path).unwrap());
+        if code.contains("retired::") || code.contains("humpyard::retired") {
+            offenders.push(path.display().to_string());
+        }
+    }
+    assert!(
+        offenders.is_empty(),
+        "these files use the retired-model check, which only `humpyard models` may (ADR 0022): {offenders:?}"
+    );
+}
+
 /// Only the `init` command (`main`) may use the guided-config module, so `serve` can never reach it.
 #[test]
 fn only_the_init_command_uses_the_init_module() {
@@ -478,8 +502,12 @@ fn only_the_models_commands_use_the_discovery_module() {
     let mut offenders = Vec::new();
     for path in rust_files(&src) {
         let module = module_of(path.strip_prefix(&src).unwrap());
-        // `init` fetches one provider's model list for the guided first config; it is also command-only.
-        if matches!(module.as_str(), "discover" | "init" | "main" | "lib") {
+        // `init` fetches one provider's model list for the guided first config; `retired` fetches each
+        // provider's list for `models check --retired`; both are command-only.
+        if matches!(
+            module.as_str(),
+            "discover" | "init" | "retired" | "main" | "lib"
+        ) {
             continue;
         }
         let code = production_code(&fs::read_to_string(&path).unwrap());
