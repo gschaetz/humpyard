@@ -74,6 +74,12 @@ cannot call inference or any other endpoint.
 | `humpyard_quota_snapshot_age_seconds` | gauge | `provider` |
 | `humpyard_build_info` | gauge | `version` |
 
+`humpyard_response_calls_observed_total` counts the answer calls whose [quality signals](routing.md#reading-a-bad-answer)
+were judged, and `humpyard_response_signals_total` counts those that carried each signal, so
+`sum(rate(humpyard_response_signals_total{signal="empty_output"}[1h])) by (target) / sum(rate(humpyard_response_calls_observed_total[1h])) by (target)`
+is the share of a target's answers that came back empty. A call that was not judged is in neither counter, and the
+two carry no `key` label.
+
 \* only with `key_labels = true`.
 
 Notes:

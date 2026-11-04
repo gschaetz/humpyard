@@ -37,8 +37,8 @@ Each [GitHub release](https://github.com/gschaetz/humpyard/releases) has tarball
 
 ```sh
 shasum -a 256 -c SHA256SUMS --ignore-missing      # sha256sum -c on Linux
-tar xzf humpyard-v0.21.0-aarch64-apple-darwin.tar.gz
-install -m 755 humpyard-v0.21.0-aarch64-apple-darwin/humpyard ~/.local/bin/
+tar xzf humpyard-v0.22.0-aarch64-apple-darwin.tar.gz
+install -m 755 humpyard-v0.22.0-aarch64-apple-darwin/humpyard ~/.local/bin/
 ```
 
 - The binaries are not signed. If macOS quarantines a downloaded one:
@@ -79,7 +79,7 @@ docker run -d --name humpyard -p 127.0.0.1:8080:8080 \
   -v "$PWD/config.toml:/etc/humpyard/config.toml:ro" \
   -v humpyard-data:/data \
   -e GROQ_API_KEY -e OPENROUTER_API_KEY \
-  ghcr.io/gschaetz/humpyard:0.21.0
+  ghcr.io/gschaetz/humpyard:0.22.0
 ```
 
 In the config, set `listen = "0.0.0.0:8080"` (inside the container the default loopback address is
@@ -152,7 +152,7 @@ endpoints that did not change, budget counters, and the session state of unchang
   `-wal` file, or stop the service first.
 - Upgrading: replace the binary (or pull the new tag) and restart. The ledger schema is created on
   open; before 1.0, read the release notes for schema changes. A schema step only adds columns and is not undone,
-  so before an upgrade that carries one (ledger v12 adds the repaired tool-call count), copy `ledger.db` together
+  so before an upgrade that carries one (ledger v12 adds the repaired tool-call count, v13 the four [response signals](routing.md#reading-a-bad-answer) on each usage row), copy `ledger.db` together
   with its `-wal` and `-shm` files while the gateway is stopped.
 
 ## Releases (maintainers)

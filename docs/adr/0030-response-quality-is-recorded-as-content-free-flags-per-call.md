@@ -1,6 +1,6 @@
 # 0030. Response quality is recorded as content-free flags per call
 
-- Status: proposed
+- Status: accepted
 - Date: 2026-10-27
 - Supersedes: none
 - Change: `openspec/changes/record-response-quality-signals`
