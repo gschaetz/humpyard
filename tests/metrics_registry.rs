@@ -551,3 +551,59 @@ fn response_signals_use_the_bounded_labels() {
     assert_eq!(s.1["route"], "other");
     assert_eq!(s.1["target"], "other");
 }
+
+fn attempt(target: &str, provider: &str, outcome: &str) -> Attempt {
+    Attempt {
+        target: target.into(),
+        provider: provider.into(),
+        model: "m".into(),
+        outcome: outcome.into(),
+        ms: 1,
+        class: None,
+        retry_after_ms: None,
+        message: None,
+    }
+}
+
+fn unavailable_series(
+    samples: &[(String, BTreeMap<String, String>, f64)],
+) -> Vec<(String, String, f64)> {
+    find(samples, "humpyard_endpoint_unavailable_total")
+        .into_iter()
+        .map(|s| (s.1["provider"].clone(), s.1["target"].clone(), s.2))
+        .collect()
+}
+
+#[test]
+fn only_unavailable_attempts_raise_the_endpoint_counter_and_once_each() {
+    let m = registry(Settings::default());
+    let mut d = decision(None);
+    d.attempts = vec![
+        attempt("fast", "groq", "unavailable"),
+        attempt("fast", "groq", "unavailable"),
+        attempt("fast", "groq", "rate_limit"),
+        attempt("fast", "groq", "timeout"),
+        attempt("fast", "groq", "server_error"),
+        attempt("fast", "groq", "ok"),
+    ];
+    m.observe_decision(&d);
+    let samples = parse(&m.render(vec![]));
+    assert_eq!(
+        unavailable_series(&samples),
+        vec![("groq".into(), "fast".into(), 2.0)]
+    );
+}
+
+#[test]
+fn unknown_provider_and_target_names_use_other_for_the_endpoint_counter() {
+    let m = registry(Settings::default());
+    let mut d = decision(None);
+    d.attempts = vec![attempt("evil-target", "evil-provider", "unavailable")];
+    m.observe_decision(&d);
+    let text = m.render(vec![]);
+    assert!(!text.contains("evil"), "{text}");
+    assert_eq!(
+        unavailable_series(&parse(&text)),
+        vec![("other".into(), "other".into(), 1.0)]
+    );
+}

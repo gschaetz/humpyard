@@ -49,6 +49,7 @@ cannot call inference or any other endpoint.
 | `humpyard_cost_micro_usd_total` | counter | `route`, `target`, `key`\* |
 | `humpyard_response_calls_observed_total` | counter | `route`, `target` |
 | `humpyard_response_signals_total` | counter | `route`, `target`, `signal` (`empty_output`, `truncated_output`, `bad_tool_call`, `cut_stream`) |
+| `humpyard_endpoint_unavailable_total` | counter | `provider`, `target` |
 | `humpyard_failovers_total` | counter | `route`, `from_target`, `to_target` |
 | `humpyard_refusals_total` | counter | `reason`, `key`\* |
 | `humpyard_fallback_blocked_total` | counter | `route` |
@@ -79,6 +80,16 @@ were judged, and `humpyard_response_signals_total` counts those that carried eac
 `sum(rate(humpyard_response_signals_total{signal="empty_output"}[1h])) by (target) / sum(rate(humpyard_response_calls_observed_total[1h])) by (target)`
 is the share of a target's answers that came back empty. A call that was not judged is in neither counter, and the
 two carry no `key` label.
+
+`humpyard_endpoint_unavailable_total` counts provider attempts that failed because the endpoint cannot serve at all
+(ADR 0023): a retired model (404 or 410, or a 400 naming a missing model), a rejected key (401) or no credit left (402).
+Each such attempt counts once, by the configured provider and target (a name the configuration does not define shows as
+`other`); no model name, status or error text is ever a label. Requests still fail over as before, so this is the signal
+that a model has gone while users see nothing. An alert that fires when any provider's endpoint reports it:
+
+```
+sum by (provider, target) (increase(humpyard_endpoint_unavailable_total[1h])) > 0
+```
 
 \* only with `key_labels = true`.
 

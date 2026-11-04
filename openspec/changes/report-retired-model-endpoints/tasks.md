@@ -2,8 +2,8 @@
 
 ## 1. Count unavailable endpoints
 
-- [ ] 1.1 Add `humpyard_endpoint_unavailable_total{provider,target}` to the registry and count each attempt whose class is `unavailable` once, from the same place the failed-attempt facts are recorded, with the bounded vocabulary for both labels; verify tests that a 410, a 404, a 401 and a model-gone 400 each raise the series once, a 429, a timeout and a 5xx do not, an unknown provider or target uses `other`, no error text reaches the exposition, and the exposition parses strictly
-- [ ] 1.2 Document the counter in `docs/metrics.md` with the classes it covers and an example alert expression; verify the strict docs build
+- [x] 1.1 Add `humpyard_endpoint_unavailable_total{provider,target}` to the registry and count each attempt whose class is `unavailable` once, from the same place the failed-attempt facts are recorded, with the bounded vocabulary for both labels; verify tests that a 410, a 404, a 401 and a model-gone 400 each raise the series once, a 429, a timeout and a 5xx do not, an unknown provider or target uses `other`, no error text reaches the exposition, and the exposition parses strictly
+- [x] 1.2 Document the counter in `docs/metrics.md` with the classes it covers and an example alert expression; verify the strict docs build
 
 ## 2. Report endpoints the provider no longer lists
 
