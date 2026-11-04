@@ -229,6 +229,23 @@ often each rule fires and what each pool costs and how long it takes: tune the t
 
 Responses carry `x-humpyard-target` (who served) and `x-humpyard-provider` (which endpoint).
 
+## Reading a bad answer
+
+A status code says whether the provider answered, not whether the answer was any good. For every answer call the
+gateway also records four facts, with no text kept (ADR 0030): `empty_output` (the call finished with no text and
+no tool call; reasoning alone is not an answer), `truncated_output` (the provider stopped at its output limit),
+`bad_tool_call` (a tool call with no name, or with arguments that are neither blank nor a JSON object) and
+`cut_stream` (the provider's stream ended or failed before its final chunk). A call can carry several.
+
+They change nothing about routing: they are for you to read. A decision lists the ones set on the call that served
+the request (`response_signals`; `humpyard ctl decisions` prints them under the table), `GET /v1/stats` reports per
+group how many calls were observed and how many carried each signal, and `/metrics` counts them
+(`humpyard_response_signals_total`, over `humpyard_response_calls_observed_total`). A rate is a count over
+`observed`: calls written before ledger schema v13 and the routing judge's own calls are in neither figure. For a buffered answer
+the gateway reads arguments after decoding, so a tool whose only parameter is a string named `raw` is judged by that
+string (a known trade-off, ADR 0030). Use the figures to see which pool member answers badly
+while still returning 200, and lower its `quality` or take it out of a pool by hand.
+
 ## Provider quota
 
 Capped plans (for example OpenCode Go: a monthly fee with usage limits in a 5-hour, a weekly and a

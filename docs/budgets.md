@@ -188,6 +188,9 @@ Per group: `requests`, `attempts`, `outcomes` (attempts by class: `ok`, `rate_li
 nearest rank, so slow timeouts show in the tail) and, from the usage rows, the `answered` count with
 `avg_cost_usd` and `avg_tokens` per answered request, plus the group's `tokens` (`input`, `cached_input`,
 `cache_creation`, `output`) and `cache_hit_ratio` (see [Cache use and sessions](#cache-use-and-sessions)).
+`response_signals` gives `observed`, the answer calls whose [quality signals](routing.md#reading-a-bad-answer) are
+known, and how many of them carried `empty_output`, `truncated_output`, `bad_tool_call` and `cut_stream`; divide by
+`observed` for a rate.
 `truncated` is true when the window held more
 than 50,000 decisions and only the newest were summarized. Small samples mislead: look at the counts
 before trusting a rate. `POST /v1/route/explain` adds the same recent numbers (last 24 hours: attempts,
