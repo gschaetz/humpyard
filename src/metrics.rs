@@ -338,6 +338,7 @@ pub struct Metrics {
     cost: Owned,
     response_calls: Owned,
     response_signals: Owned,
+    endpoint_unavailable: Owned,
     failovers: Owned,
     blocked: Owned,
     skips: Owned,
@@ -406,6 +407,13 @@ impl Metrics {
                 "Judged provider calls showing a quality signal: empty_output, truncated_output, bad_tool_call or cut_stream.",
                 Kind::Counter,
                 &["route", "target", "signal"],
+                false,
+            ),
+            endpoint_unavailable: Owned::new(
+                "endpoint_unavailable_total",
+                "Provider attempts that failed because the endpoint cannot serve at all: a retired model (404, 410), a rejected key (401), no credit (402), or a 400 naming a missing model.",
+                Kind::Counter,
+                &["provider", "target"],
                 false,
             ),
             failovers: Owned::new(
@@ -522,6 +530,7 @@ impl Metrics {
                 .observe_ms(&[route.clone(), target], d.latency_ms);
         }
         self.observe_failovers(&route, d);
+        self.observe_unavailable(d);
         self.observe_health_skips(&route, d);
         self.observe_retry_after(d);
         self.observe_capability_skips(&route, d);
@@ -589,6 +598,22 @@ impl Metrics {
         for target in &d.cold_targets {
             self.skips
                 .add(&[route.to_string(), pick(&vocab.targets, Some(target))], 1);
+        }
+    }
+
+    /// One count per attempt whose failure class is `unavailable`, by provider and target: the endpoint
+    /// said it cannot serve at all (ADR 0023). Both labels come from the configured names; no error text,
+    /// model name or key is ever a label.
+    fn observe_unavailable(&self, d: &Decision) {
+        let vocab = self.vocab.read();
+        for attempt in d.attempts.iter().filter(|a| a.outcome == "unavailable") {
+            self.endpoint_unavailable.add(
+                &[
+                    pick(&vocab.providers, Some(&attempt.provider)),
+                    pick(&vocab.targets, Some(&attempt.target)),
+                ],
+                1,
+            );
         }
     }
 
@@ -683,6 +708,7 @@ impl Metrics {
             &self.cost,
             &self.response_calls,
             &self.response_signals,
+            &self.endpoint_unavailable,
             &self.failovers,
             &self.blocked,
             &self.skips,
