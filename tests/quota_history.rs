@@ -186,6 +186,7 @@ fn call(ts_ms: i64, provider: &str, cost_micro_usd: u64) -> Entry {
         outcome: "ok".into(),
         usage_missing: false,
         request_id: None,
+        signals: None,
     }
 }
 

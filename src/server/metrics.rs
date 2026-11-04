@@ -100,6 +100,21 @@ fn scraped(state: &AppState, snap: &Snapshot) -> Vec<Family> {
             state.clock.now_ms(),
         ));
     }
+    if snap.config.admin.enabled() {
+        let now_ms = state.clock.now_ms();
+        let revoked = state
+            .overrides
+            .as_ref()
+            .map_or(0, |store| store.revocations(now_ms).len());
+        families.push(metrics::gauge(
+            "admin_revocations_active",
+            "Admin credential revocations in force; exported only while the admin API is on.",
+            vec![(
+                vec![],
+                Value::Int(u64::try_from(revoked).unwrap_or(u64::MAX)),
+            )],
+        ));
+    }
     families.extend(quota(state, snap));
     families.extend(discovery(snap));
     families

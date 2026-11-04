@@ -10,6 +10,13 @@ See the [example configs](examples.md); `humpyard check-config <file>` validates
   [Providers](providers.md#providers-that-reject-unknown-request-fields)). Optional
   `tool_call_extra_content = { ... }` is added as `extra_content` to every replayed assistant tool call sent to
   that provider (see [Providers](providers.md#gemini-3x-wants-a-thought-signature-on-replayed-tool-calls)).
+  `timeout_secs` (default 120) is how long the gateway waits for the provider, and it bounds three different
+  things: the **wait for a response to start**, retries included (a streamed answer has started when its first
+  event arrives); the **idle time** of a stream that has started, meaning nothing received for that long; and, for
+  an answer that is not streamed, the **whole call**. A stream that keeps sending is never ended because of its
+  length, so a slow model can answer at length without a long timeout, and a short timeout still fails over
+  quickly from a model that stalls. A timeout is a `timeout` failure in every case; its message says which limit
+  ran out.
 - `[targets.<name>]`: a model served by an ordered list of `{ provider, model }` endpoints.
   Clients may request a target by name; endpoints are tried in order, failing over on
   connection errors, timeouts, HTTP 429 and 5xx (not on other 4xx, and not once a stream has begun).
@@ -57,6 +64,28 @@ See the [example configs](examples.md); `humpyard check-config <file>` validates
 - `[metrics]` (optional, off by default): the Prometheus `/metrics` endpoint. `enabled`, `listen` (a
   separate address; recommended), `bearer_sha256` (the credential for serving it on the main
   listener), `key_labels` and `key_label_limit`. See [Metrics and alerts](metrics.md).
+- `[admin]` (optional): who may administer the gateway, as named credentials that open the
+  [`/admin/v1` API](api.md#the-admin-api) (ADR 0027).
+
+  ```toml
+  [admin]
+  listen = "127.0.0.1:9090"            # optional: serve the admin API only here, never on the main listener
+
+  [admin.credentials.gary]
+  sha256 = "sha256:<64 hex digits>"    # from `humpyard keygen gary --admin --scopes read,overrides,credentials`
+  scopes = ["read", "overrides", "credentials"]
+  expires = 2027-01-01T00:00:00Z       # optional; an unquoted TOML datetime with a date, time and offset
+  ```
+
+  Each credential has an id (1 to 64 letters, digits, `-`, `_` or `.`), which is how it appears in audit rows, a
+  hash, at least one **scope** (`read`, `overrides` or `credentials`, with no repeats) and an optional expiry. A
+  credential's hash must differ from every `[keys.*]` hash, the metrics credential and every other admin
+  credential, so a leaked client key can never open the admin API. `listen` needs at least one credential and
+  must differ from `listen` and `[metrics] listen`. `humpyard keygen <id> --admin --scopes read,overrides
+  [--expires 2027-01-01T00:00:00Z]` prints the secret once and this whole block, checked by the same loader the
+  gateway uses, so it never prints one the gateway would refuse. `GET /v1/config` shows only how many credentials exist;
+  `humpyard check-config` prints each one's id, scopes and expiry, never a hash. Without the section the admin
+  API is off.
 - `decision_retention_days` (top level, default 90): how long routing decisions and provider quota
   samples are kept; see [Keys, budgets and the ledger](budgets.md#the-decision-log).
 - `context_window`, `tools` and `vision` on an endpoint (all optional): what the model can take. A target

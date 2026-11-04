@@ -47,11 +47,13 @@ use crate::policy::{
 };
 use crate::pool::{self, PROVIDER_HEADER, TargetClient};
 use crate::routing::{Plan, Route, Routes};
+use crate::scrub;
 use crate::select::{Facts, Features, Selectors};
 
 const TARGET_HEADER: &str = "x-humpyard-target";
 const TOKEN_COUNT_HEADER: &str = "x-humpyard-token-count";
 /// Response headers naming the route that served a request and the selector rule that chose it.
+mod admin;
 mod config_view;
 mod decisions;
 mod explain;
@@ -198,6 +200,7 @@ pub async fn run(
     let poll = (poll_secs > 0).then(|| Duration::from_secs(poll_secs));
     let reloader = reload.map(|r| tokio::spawn(reload_loop(built.state.clone(), r, poll)));
     let metrics_listener = spawn_metrics_listener(&built.state).await?;
+    let admin_listener = spawn_admin_listener(&built.state).await?;
     let (drain_tx, drain_rx) = tokio::sync::oneshot::channel::<()>();
     let server = axum::serve(listener, built.router)
         .with_graceful_shutdown(async move {
@@ -229,6 +232,9 @@ pub async fn run(
         reloader.abort();
     }
     if let Some(task) = metrics_listener {
+        task.abort();
+    }
+    if let Some(task) = admin_listener {
         task.abort();
     }
     if cancelled {
@@ -412,6 +418,9 @@ fn restart_only_changes(old: &Config, new: &Config) -> Result<(), String> {
     }
     if old.decision_retention_days != new.decision_retention_days {
         return refuse("decision_retention_days");
+    }
+    if old.admin.listen != new.admin.listen {
+        return refuse("admin.listen");
     }
     if old.keys.is_empty() != new.keys.is_empty() {
         return refuse(
@@ -698,7 +707,7 @@ async fn build(config: Config, options: Options, fingerprint: String) -> Result<
     if metrics_main {
         app = app.route("/metrics", get(metrics::get_metrics));
     }
-    let app = app.with_state(state.clone());
+    let app = admin::mount(app, &state).with_state(state.clone());
     spawn_quota_poller(&state, clock);
     Ok(Built {
         router: app,
@@ -727,6 +736,26 @@ async fn spawn_metrics_listener(
     Ok(Some(tokio::spawn(async move {
         if let Err(error) = axum::serve(listener, app).await {
             tracing::error!(%error, "metrics listener stopped");
+        }
+    })))
+}
+
+/// Serves `/admin/v1` alone on its own address when `[admin] listen` is set, so it is unreachable from the
+/// public port by construction (ADR 0027). It is bound at start-up; changing the address needs a restart.
+async fn spawn_admin_listener(
+    state: &Arc<AppState>,
+) -> Result<Option<tokio::task::JoinHandle<()>>, String> {
+    let Some(addr) = state.snapshot().config.admin.listen else {
+        return Ok(None);
+    };
+    let listener = tokio::net::TcpListener::bind(addr)
+        .await
+        .map_err(|e| format!("cannot bind admin listener {addr}: {e}"))?;
+    tracing::info!(listen = %addr, "serving the admin API");
+    let app = admin::routes().with_state(state.clone());
+    Ok(Some(tokio::spawn(async move {
+        if let Err(error) = axum::serve(listener, app).await {
+            tracing::error!(%error, "admin listener stopped");
         }
     })))
 }
@@ -844,6 +873,12 @@ async fn endpoint_health(State(state): State<Arc<AppState>>, headers: HeaderMap)
     if let Err(error) = authenticate(&snap, &headers).await {
         return error.into_response_for(WireFormat::OpenAiChat);
     }
+    health_report(&state, &snap)
+}
+
+/// Which endpoints are being skipped, per-target latency, the loaded configuration and the last reload; the
+/// client endpoint and the admin API serve the same report.
+fn health_report(state: &AppState, snap: &Snapshot) -> Response {
     let mut targets: Vec<_> = snap.targets.iter().collect();
     targets.sort_by(|a, b| a.0.cmp(b.0));
     let report: Vec<_> = targets
@@ -1183,9 +1218,13 @@ async fn handle(
 ) -> Result<(String, Response), GatewayError> {
     let Decoded {
         body,
-        llm_request,
+        mut llm_request,
         model,
     } = decode(format, raw)?;
+    // A cut-off tool call in the history would be refused by every provider that checks arguments (ADR 0029).
+    // Repaired before anything reads the request, so a refusal below still records that it happened.
+    let repaired = crate::repair_request::tool_calls(&mut llm_request);
+    guard.decision.repaired_tool_arguments = (repaired > 0).then_some(repaired);
     let info = request_info(headers);
     let stream = body["stream"].as_bool().unwrap_or(false);
     let features = request_features(&llm_request, &snap.selectors, &snap.config, caller);
@@ -1956,11 +1995,17 @@ fn frame_stream(
             let event = match item {
                 Ok(value) => frame_event(format, &value),
                 Err(LlmStreamError::Upstream(value)) => {
+                    // The provider's own error event, passed on as it came. The log keeps the one-line,
+                    // bounded, key-redacted text the decision log uses for a failed attempt (ADR 0028).
+                    tracing::warn!(
+                        reason = %scrub::error_text(&value.to_string(), scrub::MESSAGE_LIMIT).unwrap_or_default(),
+                        "provider sent an error mid-stream"
+                    );
                     failed = true;
                     frame_event(format, &value)
                 }
                 Err(LlmStreamError::Client(error)) => {
-                    tracing::warn!("stream iteration failed");
+                    tracing::warn!(reason = %failure_reason(&error), "stream iteration failed");
                     failed = true;
                     error_event(format, &error.to_string())
                 }
@@ -1990,6 +2035,11 @@ fn frame_event(format: WireFormat, value: &Value) -> Event {
     }
 }
 
+/// Why a stream broke, as the one bounded, key-redacted line the decision log uses for a failed attempt (ADR 0028).
+fn failure_reason(error: &switchyard_protocol::LlmClientError) -> String {
+    scrub::line(&error.to_string(), scrub::MESSAGE_LIMIT)
+}
+
 fn error_event(format: WireFormat, message: &str) -> Event {
     let body = GatewayError::UpstreamUnreachable(message.to_string()).body(format);
     match format {
@@ -2005,6 +2055,28 @@ mod tests {
 
     fn raw(value: &Value) -> Vec<u8> {
         serde_json::to_vec(value).unwrap()
+    }
+
+    #[test]
+    fn a_stream_failure_reason_is_one_bounded_line_with_keys_redacted() {
+        let error = switchyard_protocol::LlmClientError::ResponseTranslation(format!(
+            "bad frame\nfrom upstream, key {}{} rejected {}",
+            "sk-",
+            "abcdefghijklmnopqrstuvwxyz1234",
+            "x".repeat(500)
+        ));
+        let reason = failure_reason(&error);
+        assert!(!reason.contains('\n'), "{reason}");
+        assert!(reason.contains("[redacted]"), "{reason}");
+        assert!(
+            !reason.contains(&format!("{}{}", "sk-", "abcdefghijkl")),
+            "{reason}"
+        );
+        assert!(reason.chars().count() <= scrub::MESSAGE_LIMIT, "{reason}");
+        assert!(
+            reason.starts_with("response translation") || reason.contains("bad frame"),
+            "{reason}"
+        );
     }
 
     #[test]

@@ -54,6 +54,14 @@ fn rules() -> BTreeMap<&'static str, Module> {
         ("latency", module(Core, &["clock", "num"])),
         // Reads a retry time out of an upstream error body; pure text parsing (ADR 0018, amended).
         ("retry_after", module(Core, &[])),
+        // Makes a provider's error text safe to keep in a decision: one bounded line, key-shaped values redacted (ADR 0028).
+        ("scrub", module(Core, &[])),
+        // Makes a tool call's arguments a JSON object, completing a cut-off one; pure text (ADR 0029).
+        ("repair", module(Core, &[])),
+        // Applies it to a request: the decoded tool calls and the preserved same-format bodies (ADR 0029).
+        ("repair_request", module(Engine, &["repair"])),
+        // Judges an answer for four facts (empty, cut by the length limit, a malformed tool call, a stream cut early); pure (ADR 0030).
+        ("signals", module(Core, &["repair"])),
         ("health", module(Core, &["clock", "config"])),
         ("select", module(Core, &["config"])),
         // Expiring runtime overrides: the store only; nothing here changes a plan yet (`add-runtime-overrides`).
@@ -61,11 +69,13 @@ fn rules() -> BTreeMap<&'static str, Module> {
         ("config", module(Core, &[])),
         ("policy", module(Core, &[])),
         ("auth", module(Core, &["config"])),
+        // Admin authentication: who a presented secret is on `/admin/v1`, separate from client keys (ADR 0027).
+        ("admin", module(Core, &["auth", "config"])),
         (
             "ledger",
             Module {
                 sqlx: true,
-                ..module(Core, &["num"])
+                ..module(Core, &["num", "scrub", "signals"])
             },
         ),
         (
@@ -95,6 +105,7 @@ fn rules() -> BTreeMap<&'static str, Module> {
                     "health",
                     "overrides",
                     "retry_after",
+                    "scrub",
                 ],
             ),
         ),
@@ -105,7 +116,7 @@ fn rules() -> BTreeMap<&'static str, Module> {
                 Engine,
                 &[
                     "budget", "clock", "config", "error", "estimate", "latency", "ledger",
-                    "metrics", "pool", "pricing",
+                    "metrics", "pool", "pricing", "signals",
                 ],
             ),
         ),
@@ -376,6 +387,43 @@ fn only_the_pool_and_the_server_read_overrides() {
     assert!(
         offenders.is_empty(),
         "these files read runtime overrides, which only the pool and the server may: {offenders:?}"
+    );
+}
+
+/// Admin credential revocations live in the overrides table but are not overrides: only the override store, the
+/// admin API and the metrics scrape may touch them, so nothing that plans a request, lists overrides for a client
+/// or serves any other endpoint can come to see, create or end one (`add-admin-api`, ADR 0027).
+#[test]
+fn only_the_override_store_the_admin_api_and_the_scrape_touch_revocations() {
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let allowed = ["overrides.rs", "server/admin.rs", "server/metrics.rs"];
+    let words = [
+        "revoke_admin_credential",
+        "revoke_principal",
+        "end_revocations",
+        "is_revoked",
+        ".revocations(",
+        "Revocation",
+    ];
+    let mut offenders = Vec::new();
+    for path in rust_files(&src) {
+        let relative = path
+            .strip_prefix(&src)
+            .unwrap()
+            .to_string_lossy()
+            .replace('\\', "/");
+        if allowed.contains(&relative.as_str()) {
+            continue;
+        }
+        let code = production_code(&fs::read_to_string(&path).unwrap());
+        if let Some(word) = words.iter().find(|word| code.contains(**word)) {
+            offenders.push(format!("{relative} uses `{word}`"));
+        }
+    }
+    assert!(
+        offenders.is_empty(),
+        "admin credential revocations may be touched only by the override store, `server/admin.rs` and \
+         `server/metrics.rs`: {offenders:?}"
     );
 }
 

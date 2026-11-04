@@ -8,7 +8,7 @@ use super::LedgerError;
 use crate::num::{from_i64, to_i64};
 
 /// Longest error text (and client-supplied model name) kept on a decision.
-pub const MESSAGE_LIMIT: usize = 200;
+pub const MESSAGE_LIMIT: usize = crate::scrub::MESSAGE_LIMIT;
 
 /// One upstream attempt made while serving a request, in the order they happened.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -25,6 +25,10 @@ pub struct Attempt {
     /// The retry time the endpoint stated for this failure, in milliseconds, when it was honored.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub retry_after_ms: Option<u64>,
+    /// Why a failed attempt failed, in the provider's own words: one scrubbed line of at most
+    /// `MESSAGE_LIMIT` characters (ADR 0028). Absent for a success and for an older row.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
 }
 
 /// The order a `fastest` route used for one request, and why its first target was first (ADR 0020).
@@ -104,6 +108,9 @@ pub struct Decision {
     pub prompt_tokens: Option<u64>,
     pub tools: bool,
     pub images: bool,
+    /// How many assistant tool calls had their arguments repaired before routing; `None` when none did
+    /// (ADR 0029). Only the count: nothing of the arguments is kept.
+    pub repaired_tool_arguments: Option<u32>,
     pub attempts: Vec<Attempt>,
     pub status: u16,
     /// `ok`, or why not: `unauthorized`, `forbidden`, `unknown_model`, `bad_request`,
@@ -133,10 +140,11 @@ impl Decision {
         Some(classes.iter().any(|c| *c != classes[0]))
     }
 
-    /// Truncates a text to 200 characters.
+    /// Makes a text fit a decision: one line of at most 200 characters with anything key-shaped redacted
+    /// (ADR 0028).
     #[must_use]
     pub fn clip(message: &str) -> String {
-        message.chars().take(MESSAGE_LIMIT).collect()
+        crate::scrub::line(message, MESSAGE_LIMIT)
     }
 }
 
@@ -180,6 +188,21 @@ pub(super) async fn migrate_v6(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     .await?;
     if has == 0 {
         sqlx::query("ALTER TABLE decisions ADD COLUMN incapable_targets TEXT")
+            .execute(pool)
+            .await?;
+    }
+    Ok(())
+}
+
+/// v12: how many tool calls had their arguments repaired before routing (ADR 0029). Old rows read as none.
+pub(super) async fn migrate_v12(pool: &SqlitePool) -> Result<(), sqlx::Error> {
+    let has: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM pragma_table_info('decisions') WHERE name = 'repaired_tool_arguments'",
+    )
+    .fetch_one(pool)
+    .await?;
+    if has == 0 {
+        sqlx::query("ALTER TABLE decisions ADD COLUMN repaired_tool_arguments INTEGER")
             .execute(pool)
             .await?;
     }
@@ -295,7 +318,8 @@ pub(super) async fn insert_batch(pool: &SqlitePool, batch: &[Decision]) -> Resul
             "INSERT INTO decisions (request_id, ts_ms, key_id, session_id, format, requested_model, \
              route, rule, source, skipped_rules, budget, eligible_targets, stream, prompt_tokens, \
              tools, images, attempts, status, outcome, message, served_target, served_provider, \
-             latency_ms, excluded_targets, cold_targets, incapable_targets, ranking, overrides, cost_ceiling) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23,?24,?25,?26,?27,?28,?29)",
+             latency_ms, excluded_targets, cold_targets, incapable_targets, ranking, overrides, cost_ceiling, \
+             repaired_tool_arguments) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23,?24,?25,?26,?27,?28,?29,?30)",
         )
         .bind(&d.request_id)
         .bind(d.ts_ms)
@@ -326,6 +350,7 @@ pub(super) async fn insert_batch(pool: &SqlitePool, batch: &[Decision]) -> Resul
         .bind(d.ranking.as_ref().and_then(|r| serde_json::to_string(r).ok()))
         .bind(json_list(&d.overrides))
         .bind(d.cost_ceiling.as_ref().and_then(|c| serde_json::to_string(c).ok()))
+        .bind(d.repaired_tool_arguments.map(i64::from))
         .execute(&mut *tx)
         .await?;
     }
@@ -382,6 +407,10 @@ pub(super) async fn query(
             prompt_tokens: row.get::<Option<i64>, _>("prompt_tokens").map(from_i64),
             tools: row.get("tools"),
             images: row.get("images"),
+            repaired_tool_arguments: row
+                .get::<Option<i64>, _>("repaired_tool_arguments")
+                .and_then(|n| u32::try_from(n).ok())
+                .filter(|n| *n > 0),
             attempts: serde_json::from_str(&row.get::<String, _>("attempts")).unwrap_or_default(),
             status: u16::try_from(row.get::<i64, _>("status")).unwrap_or(0),
             outcome: row.get("outcome"),
@@ -413,4 +442,47 @@ pub(super) async fn query(
                 .and_then(|json| serde_json::from_str(&json).ok()),
         })
         .collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_decision_text_is_one_bounded_line_with_keys_redacted() {
+        let key = format!("{}{}", "sk-", "abcdefghijkl1234");
+        assert_eq!(
+            Decision::clip(&format!("rejected\nbad key {key} here")),
+            "rejected bad key [redacted] here"
+        );
+        assert_eq!(
+            Decision::clip(&"x".repeat(500)).chars().count(),
+            MESSAGE_LIMIT
+        );
+        assert_eq!(Decision::clip("unknown model gpt-9"), "unknown model gpt-9");
+    }
+
+    #[test]
+    fn an_attempt_message_round_trips_and_an_older_row_reads_without_one() {
+        let attempt = Attempt {
+            target: "t".into(),
+            provider: "p".into(),
+            model: "m".into(),
+            outcome: "rejected".into(),
+            ms: 5,
+            class: None,
+            retry_after_ms: None,
+            message: Some("400: invalid argument".into()),
+        };
+        let stored = serde_json::to_string(&vec![attempt.clone()]).unwrap();
+        assert_eq!(
+            serde_json::from_str::<Vec<Attempt>>(&stored).unwrap(),
+            vec![attempt]
+        );
+        // A row written before the field existed has no `message`, and one without a message stores none.
+        let old = r#"[{"target":"t","provider":"p","model":"m","outcome":"ok","ms":5}]"#;
+        let read = serde_json::from_str::<Vec<Attempt>>(old).unwrap();
+        assert_eq!(read[0].message, None);
+        assert!(!serde_json::to_string(&read).unwrap().contains("message"));
+    }
 }

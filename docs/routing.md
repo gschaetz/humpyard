@@ -176,7 +176,12 @@ often each rule fires and what each pool costs and how long it takes: tune the t
 - **Within a target**, endpoints are tried in order. The gateway moves to the next endpoint on
   connection errors, timeouts, HTTP 408, 429 and 5xx. Other 4xx responses stop immediately
   (another endpoint would reject the same request). Nothing fails over once a stream has started.
-  `max_retries` on a provider sets extra attempts on that provider *before* failing over.
+  `max_retries` on a provider sets extra attempts on that provider *before* failing over. A provider's
+  `timeout_secs` limits how long the whole of that wait takes: retries included, until the response starts (for a
+  stream, its first event). Once a stream has started the same number only limits how long it may go quiet, so a
+  long answer that keeps arriving is never cut, and a stream that stalls ends with a `timeout`, which cannot fail
+  over because the client has already received part of the answer
+  ([configuration](configuration.md)).
 - **Skipping failing endpoints.** Failing over on every request would make a dead provider cost a
   full timeout each time, so each endpoint (provider + model) has a circuit breaker; see
   [Endpoint health](#endpoint-health).
@@ -188,7 +193,18 @@ often each rule fires and what each pool costs and how long it takes: tune the t
   rejected the same request it stops and the client gets the last rejection, because a request wrong on three
   providers is the request. Other client errors stop at once and reach the client, and on other routes a 400, 422,
   404 or 401 does too unless the route opts in with `fallback_on = ["unavailable"]` or `["rejected"]`. If no
-  target answers, the client gets the last error (a timeout is still reported as 504).
+  target answers, the client gets the last error (a timeout is still reported as 504). To see why each provider
+  refused a request, read its [decision](budgets.md#the-decision-log): every failed attempt carries the provider's
+  scrubbed `message`, and `humpyard ctl decisions` lists them under "failed attempts".
+- **A cut-off tool call in the history.** A model can end a turn with a tool call whose JSON arguments are cut off,
+  and the client replays it on every later turn. Providers that check arguments (NVIDIA, Google) then refuse the
+  whole conversation (`...function.arguments must be a valid JSON object string`) while lenient ones accept it. So
+  before routing, the gateway makes every assistant tool call's arguments a JSON object: a cut-off object is
+  completed (the open string and brackets closed, an unfinished escape or a key with no value dropped), and
+  arguments that are not JSON, empty, or not an object become `{}`. Arguments that already are an object are
+  never touched, and nothing else in the request changes. It is the same for chat and Responses requests and for
+  every provider. The decision shows `request.repaired_tool_arguments` (the number of calls repaired), so a
+  model that keeps cutting off its calls is visible; it does not stop the model from doing so.
 - **Choosing what falls through.** A route can limit this with `fallback_on`, a list of failure
   classes (`overflow`, `rate_limit`, `timeout`, `server_error`, `connection`, `forbidden`,
   `unavailable`, `rejected`). A failure outside the list ends the request and the client sees the original status and
@@ -585,6 +601,11 @@ curl -s -X DELETE -H "Authorization: Bearer $OPS_KEY" http://127.0.0.1:8080/v1/o
 - **Who and where.** Overrides need a `[ledger]` (without one, creating is refused with 409, because nothing would
   survive a restart) and live on this instance only: with several replicas, each has its own. A gateway with no
   `[keys]` allows anyone to manage them, like the rest of the admin surface.
+- **From the admin API.** An [admin credential](api.md#the-admin-api) with the `overrides` scope manages the same
+  overrides under `/admin/v1/overrides`, with the same rules, and the creator is recorded as `admin:<id>` (a client
+  key is recorded by its key id). Revoking an *admin credential* is a different thing that shares the same store:
+  it is never listed here, never counted in `humpyard_overrides_active`, never shown in decisions or `explain`,
+  and cannot be ended through `/v1/overrides`, so a key that manages overrides cannot restore a revoked admin.
 
 ## Routing policy
 

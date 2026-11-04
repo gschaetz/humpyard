@@ -412,7 +412,7 @@ pub fn render_decisions(v: &Value) -> String {
     if rows.is_empty() {
         return "no decisions match\n".into();
     }
-    table(
+    let mut out = table(
         &rows,
         &[
             ("REQUEST", "request_id"),
@@ -422,7 +422,70 @@ pub fn render_decisions(v: &Value) -> String {
             ("SOURCE", "source"),
             ("TS ms", "ts_ms"),
         ],
-    )
+    );
+    // Why each failed attempt failed, in the provider's words (ADR 0028); nothing is added when no decision has one.
+    let failed: Vec<String> = rows
+        .iter()
+        .flat_map(|row| {
+            let request = scalar(&row["request_id"]);
+            row["attempts"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter(|attempt| attempt["message"].is_string())
+                .map(move |attempt| {
+                    format!(
+                        "  {request}  {}  {}  {}\n",
+                        scalar(&attempt["target"]),
+                        scalar(&attempt["outcome"]),
+                        scalar(&attempt["message"])
+                    )
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    if !failed.is_empty() {
+        out.push_str("\nfailed attempts:\n");
+        out.extend(failed);
+    }
+    // Tool calls whose cut-off arguments were repaired before routing (ADR 0029); nothing when none were.
+    let repaired: Vec<String> = rows
+        .iter()
+        .filter(|row| {
+            row["request"]["repaired_tool_arguments"]
+                .as_u64()
+                .is_some_and(|n| n > 0)
+        })
+        .map(|row| {
+            format!(
+                "  {}  {}\n",
+                scalar(&row["request_id"]),
+                scalar(&row["request"]["repaired_tool_arguments"])
+            )
+        })
+        .collect();
+    if !repaired.is_empty() {
+        out.push_str("\nrepaired tool-call arguments (request, calls):\n");
+        out.extend(repaired);
+    }
+    // The facts set on the answer that served each request (ADR 0030); nothing when none were.
+    let signalled: Vec<String> = rows
+        .iter()
+        .filter_map(|row| {
+            let names: Vec<&str> = row["response_signals"]
+                .as_array()?
+                .iter()
+                .filter_map(Value::as_str)
+                .collect();
+            (!names.is_empty())
+                .then(|| format!("  {}  {}\n", scalar(&row["request_id"]), names.join(", ")))
+        })
+        .collect();
+    if !signalled.is_empty() {
+        out.push_str("\nresponse signals (request, signals):\n");
+        out.extend(signalled);
+    }
+    out
 }
 
 #[must_use]
@@ -688,6 +751,46 @@ async fn status(gateway: &Gateway, json_output: bool, out: &mut dyn Write) -> Re
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn decisions_list_why_each_failed_attempt_failed_and_add_nothing_when_none_did() {
+        let failed = json!({"data": [{
+        "request_id": "r1", "requested_model": "m", "route": "x", "rule": "default", "source": "route", "ts_ms": 1,
+        "attempts": [
+            {"target": "a", "outcome": "rejected", "message": "400: invalid argument"},
+            {"target": "b", "outcome": "ok"}
+        ]}]});
+        let out = render_decisions(&failed);
+        assert!(out.contains("failed attempts:"), "{out}");
+        assert!(
+            out.contains("r1  a  rejected  400: invalid argument"),
+            "{out}"
+        );
+        assert!(!out.contains("  b  ok"), "{out}");
+        // A decision with no messages renders exactly the table, as before.
+        let clean = json!({"data": [{
+            "request_id": "r2", "requested_model": "m", "route": "x", "rule": "default", "source": "route", "ts_ms": 2,
+            "attempts": [{"target": "b", "outcome": "ok"}]}]});
+        assert!(!render_decisions(&clean).contains("failed attempts"));
+    }
+
+    #[test]
+    fn decisions_list_repaired_tool_calls_only_when_there_were_any() {
+        let repaired = json!({"data": [
+            {"request_id": "r1", "requested_model": "m", "route": "x", "rule": "default", "source": "route", "ts_ms": 1,
+             "request": {"tools": true, "repaired_tool_arguments": 2}, "attempts": []},
+            {"request_id": "r2", "requested_model": "m", "route": "x", "rule": "default", "source": "route", "ts_ms": 2,
+             "request": {"tools": true}, "attempts": []}
+        ]});
+        let out = render_decisions(&repaired);
+        assert!(out.contains("repaired tool-call arguments"), "{out}");
+        assert!(out.contains("  r1  2\n"), "{out}");
+        assert!(!out.contains("  r2  "), "{out}");
+        let clean = json!({"data": [{
+            "request_id": "r3", "requested_model": "m", "route": "x", "rule": "default", "source": "route", "ts_ms": 3,
+            "request": {"tools": false}, "attempts": []}]});
+        assert!(!render_decisions(&clean).contains("repaired"));
+    }
+
     use super::*;
 
     fn settings(url: Option<&str>) -> Settings {

@@ -8,7 +8,7 @@ listen = "127.0.0.1:8080"
 [providers.groq]
 base_url = "https://api.groq.com/openai/v1"
 api_key_env = "GROQ_API_KEY"
-timeout_secs = 120
+timeout_secs = 120       # wait for a response to start (retries included); a started stream may go quiet this long
 max_retries = 1          # extra attempts on this provider before failing over
 # headers = { "x-app" = "humpyard" }   # optional static headers on every call
 

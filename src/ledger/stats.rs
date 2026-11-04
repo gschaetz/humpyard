@@ -57,6 +57,20 @@ pub struct GroupStats {
     /// Token totals of the group's answered calls that reported usage (calls marked as missing
     /// usage are left out, so they cannot pull the cache ratio down).
     pub tokens: TokenTotals,
+    /// How the group's answer calls fared on the four response signals (ADR 0030).
+    pub signals: SignalCounts,
+}
+
+/// How many answer calls were observed and how many carried each response signal. A call whose signals are
+/// unknown (written before schema v13, a judge call, not observed) is in neither figure, so a rate is a count
+/// over `observed` and old history does not look like perfect answers.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SignalCounts {
+    pub observed: u64,
+    pub empty_output: u64,
+    pub truncated_output: u64,
+    pub bad_tool_call: u64,
+    pub cut_stream: u64,
 }
 
 /// Token totals split the way providers bill them: a call's prompt is `input + cached_input +
@@ -205,6 +219,7 @@ pub(super) async fn compute(pool: &SqlitePool, q: &StatsQuery) -> Result<Stats, 
                 avg_cost_micro_usd: (answered > 0).then(|| ratio(cost, answered)),
                 avg_tokens: (answered > 0).then(|| ratio(tokens, answered)),
                 tokens: sums.totals,
+                signals: sums.signals,
                 group,
             }
         })
@@ -223,6 +238,10 @@ fn add_attempt(entry: &mut Accumulator, attempt: &Attempt) {
     entry.latencies.push(attempt.ms);
 }
 
+/// The calls whose four signals are all known (observed); the others are left out of every signal figure.
+const KNOWN: &str = "empty_output IS NOT NULL AND truncated_output IS NOT NULL \
+                     AND bad_tool_call IS NOT NULL AND cut_stream IS NOT NULL";
+
 /// What the usage rows say about one group.
 #[derive(Clone, Copy, Debug, Default)]
 struct UsageSums {
@@ -230,6 +249,7 @@ struct UsageSums {
     cost: u64,
     tokens: u64,
     totals: TokenTotals,
+    signals: SignalCounts,
 }
 
 /// Answered requests, total cost and total tokens per group, and the token split of the calls that
@@ -243,14 +263,19 @@ async fn cost_by_group(
         GroupBy::Target => "target",
         GroupBy::Endpoint => "provider || '/' || model",
     };
-    // `column` is one of three constants above, never client input.
+    // `column` is one of three constants above and `KNOWN` a constant, never client input.
     let sql = format!(
         "SELECT {column} AS g, COUNT(*) AS answered, SUM(cost_micro_usd) AS cost, \
          SUM(input_tokens + cached_input_tokens + cache_creation_tokens + output_tokens) AS tokens, \
          SUM(CASE WHEN usage_missing = 0 THEN input_tokens ELSE 0 END) AS fresh, \
          SUM(CASE WHEN usage_missing = 0 THEN cached_input_tokens ELSE 0 END) AS cached, \
          SUM(CASE WHEN usage_missing = 0 THEN cache_creation_tokens ELSE 0 END) AS creation, \
-         SUM(CASE WHEN usage_missing = 0 THEN output_tokens ELSE 0 END) AS produced \
+         SUM(CASE WHEN usage_missing = 0 THEN output_tokens ELSE 0 END) AS produced, \
+         SUM(CASE WHEN {KNOWN} THEN 1 ELSE 0 END) AS observed, \
+         SUM(CASE WHEN {KNOWN} THEN empty_output ELSE 0 END) AS empty, \
+         SUM(CASE WHEN {KNOWN} THEN truncated_output ELSE 0 END) AS truncated, \
+         SUM(CASE WHEN {KNOWN} THEN bad_tool_call ELSE 0 END) AS bad_call, \
+         SUM(CASE WHEN {KNOWN} THEN cut_stream ELSE 0 END) AS cut \
          FROM usage WHERE ts_ms >= ?1 AND kind = 'answer' AND (?2 IS NULL OR key_id = ?2) \
          AND (?3 IS NULL OR route = ?3) AND (?4 IS NULL OR target = ?4) GROUP BY g"
     );
@@ -275,6 +300,13 @@ async fn cost_by_group(
                         cached_input: from_i64(r.get::<i64, _>("cached")),
                         cache_creation: from_i64(r.get::<i64, _>("creation")),
                         output: from_i64(r.get::<i64, _>("produced")),
+                    },
+                    signals: SignalCounts {
+                        observed: from_i64(r.get::<i64, _>("observed")),
+                        empty_output: from_i64(r.get::<i64, _>("empty")),
+                        truncated_output: from_i64(r.get::<i64, _>("truncated")),
+                        bad_tool_call: from_i64(r.get::<i64, _>("bad_call")),
+                        cut_stream: from_i64(r.get::<i64, _>("cut")),
                     },
                 },
             )

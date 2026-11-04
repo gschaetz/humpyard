@@ -43,6 +43,9 @@ pub(super) struct RawConfig {
     /// The Prometheus `/metrics` endpoint (off by default).
     #[serde(default)]
     pub(super) metrics: RawMetrics,
+    /// The admin API's listener and credentials; absent means the admin API is off (ADR 0027).
+    #[serde(default)]
+    pub(super) admin: RawAdmin,
     /// Model discovery settings (ADR 0022): where the generated targets file is and its limits.
     #[serde(default)]
     pub(super) discovery: RawDiscovery,
@@ -118,6 +121,27 @@ pub struct DiscoverSpec {
     /// provider with no usable `/models`; the guide says this is weaker.
     #[serde(default = "default_true")]
     pub confirm: bool,
+}
+
+/// `[admin]`: the admin API's own listener and its named credentials (ADR 0027).
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct RawAdmin {
+    /// Serve `/admin/v1` on this address instead of the main listener.
+    pub(super) listen: Option<SocketAddr>,
+    #[serde(default)]
+    pub(super) credentials: BTreeMap<String, RawAdminCredential>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct RawAdminCredential {
+    /// `sha256:<64 hex>` of the secret, from `keygen`. Plaintext secrets are never accepted.
+    pub(super) sha256: String,
+    /// What the credential may do: `read`, `overrides`, `credentials`.
+    pub(super) scopes: Vec<String>,
+    /// When the credential stops working, as a TOML datetime such as `2027-01-01T00:00:00Z`.
+    pub(super) expires: Option<toml::value::Datetime>,
 }
 
 #[derive(Debug, Deserialize)]

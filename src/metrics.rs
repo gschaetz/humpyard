@@ -27,6 +27,9 @@ const BUCKETS_MS: [u64; 12] = [
 /// Why a target was removed for capability (ADR 0019).
 const CAPABILITY_REASONS: [&str; 3] = ["tools", "vision", "context"];
 
+/// How an admin API request ended.
+const ADMIN_RESULTS: [&str; 3] = ["ok", "unauthorized", "forbidden"];
+
 /// Client protocols a request can arrive on (the decision's `format`).
 const PROTOCOLS: [&str; 3] = ["openai_chat", "openai_responses", "anthropic_messages"];
 
@@ -333,12 +336,18 @@ pub struct Metrics {
     duration: Owned,
     tokens: Owned,
     cost: Owned,
+    response_calls: Owned,
+    response_signals: Owned,
     failovers: Owned,
     blocked: Owned,
     skips: Owned,
     retry_after: Owned,
     capability: Owned,
     cost_ceiling: Owned,
+    admin_requests: Owned,
+    /// Whether the serving configuration defines an admin credential; the admin metrics are exported only
+    /// then (changes with a reload).
+    admin_enabled: std::sync::atomic::AtomicBool,
     refusals: Owned,
     reloads: Owned,
 }
@@ -350,6 +359,8 @@ impl Default for Metrics {
 }
 
 impl Metrics {
+    // A flat list of metric definitions; splitting it would only scatter them.
+    #[allow(clippy::too_many_lines)]
     pub fn new(settings: Settings) -> Self {
         Self {
             settings,
@@ -382,6 +393,20 @@ impl Metrics {
                 Kind::Counter,
                 &["route", "target"],
                 true,
+            ),
+            response_calls: Owned::new(
+                "response_calls_observed_total",
+                "Provider calls whose answer was judged for quality signals; the denominator for response_signals_total.",
+                Kind::Counter,
+                &["route", "target"],
+                false,
+            ),
+            response_signals: Owned::new(
+                "response_signals_total",
+                "Judged provider calls showing a quality signal: empty_output, truncated_output, bad_tool_call or cut_stream.",
+                Kind::Counter,
+                &["route", "target", "signal"],
+                false,
             ),
             failovers: Owned::new(
                 "failovers_total",
@@ -425,6 +450,14 @@ impl Metrics {
                 &["outcome"],
                 true,
             ),
+            admin_requests: Owned::new(
+                "admin_requests_total",
+                "Requests to the admin API, by result (ok, unauthorized, forbidden). Exported only while an admin credential is configured.",
+                Kind::Counter,
+                &["result"],
+                false,
+            ),
+            admin_enabled: std::sync::atomic::AtomicBool::new(false),
             refusals: Owned::new(
                 "refusals_total",
                 "Requests the gateway refused before any upstream call, by reason.",
@@ -450,6 +483,14 @@ impl Metrics {
         vocab.targets = config.targets.keys().cloned().collect();
         vocab.providers = config.providers.keys().cloned().collect();
         vocab.keys = config.keys.keys().cloned().collect();
+        self.admin_enabled
+            .store(config.admin.enabled(), Ordering::Relaxed);
+    }
+
+    /// Counts one request to the admin API. The result is one of a fixed set, and no credential id or secret
+    /// is ever a label.
+    pub fn observe_admin_request(&self, result: &str) {
+        self.admin_requests.add(&[fixed(&ADMIN_RESULTS, result)], 1);
     }
 
     /// Records a finished request: the one place a request's route, serving target, status and
@@ -589,9 +630,17 @@ impl Metrics {
             labels.extend(key.clone());
             self.tokens.add(&labels, n);
         }
-        let mut labels = vec![route, target];
+        let mut labels = vec![route.clone(), target.clone()];
         labels.extend(key);
         self.cost.add(&labels, e.cost_micro_usd);
+        // A call the judge never saw (no signals) is not counted, so the ratio stays honest.
+        if let Some(signals) = e.signals {
+            self.response_calls.add(&[route.clone(), target.clone()], 1);
+            for signal in signals.names() {
+                self.response_signals
+                    .add(&[route.clone(), target.clone(), signal.to_string()], 1);
+            }
+        }
     }
 
     /// Records a configuration reload attempt.
@@ -632,6 +681,8 @@ impl Metrics {
             &self.duration,
             &self.tokens,
             &self.cost,
+            &self.response_calls,
+            &self.response_signals,
             &self.failovers,
             &self.blocked,
             &self.skips,
@@ -644,6 +695,9 @@ impl Metrics {
         .iter()
         .map(|m| m.snapshot(with_key))
         .collect();
+        if self.admin_enabled.load(Ordering::Relaxed) {
+            families.push(self.admin_requests.snapshot(with_key));
+        }
         families.extend(scraped);
         families
     }

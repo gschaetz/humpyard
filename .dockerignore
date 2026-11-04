@@ -3,7 +3,8 @@ local
 .git
 .github
 openspec
-docs
+docs/*
+!docs/openapi
 tests
 examples
 *.md

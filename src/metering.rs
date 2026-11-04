@@ -12,8 +12,8 @@ use http::{HeaderName, HeaderValue};
 use parking_lot::Mutex;
 use switchyard_llm_client::ClientRouter;
 use switchyard_protocol::{
-    LlmClientError, LlmResponse, LlmResponseChunk, LlmResponseStream, ModelId, Request, Response,
-    RoutedLlmClient, Usage,
+    AggLlmResponse, ContentBlock, LlmClientError, LlmResponse, LlmResponseChunk, LlmResponseStream,
+    ModelId, Request, Response, RoutedLlmClient, StopReason, Usage,
 };
 
 use crate::budget::BudgetTracker;
@@ -30,6 +30,7 @@ use crate::ledger::{Attempt, Entry, Kind, Ledger};
 use crate::metrics::Metrics;
 use crate::pool::{Served, TargetClient};
 use crate::pricing::cost_micro_usd;
+use crate::signals::{End, Observation, Signals};
 
 /// Internal response header carrying a call's id from the metered client back to the handler.
 /// It never reaches the client: the handler removes it.
@@ -185,6 +186,7 @@ impl CallContext {
             outcome: "ok".into(),
             usage_missing: true,
             request_id: Some(self.request_id.clone()),
+            signals: None,
         }
     }
 
@@ -223,6 +225,8 @@ impl CallContext {
             entry.kind = if Some(id) == answer_id {
                 Kind::Answer
             } else {
+                // Only the answer is judged (ADR 0030).
+                entry.signals = None;
                 Kind::Judge
             };
             self.accounting.complete(entry);
@@ -241,7 +245,8 @@ impl CallContext {
 
     /// The run failed: tokens already spent on judge calls still count.
     pub fn finish_err(&self) {
-        for (_, entry) in self.buffered.lock().drain(..) {
+        for (_, mut entry) in self.buffered.lock().drain(..) {
+            entry.signals = None;
             self.accounting.complete(entry);
         }
         for (_, mut template) in self.streams.lock().drain() {
@@ -259,6 +264,8 @@ impl CallContext {
             streamed_bytes: 0,
             terminal: false,
             failed: false,
+            finished_loop: false,
+            observation: Observation::new(),
             submitted: false,
         };
         Box::pin(async_stream::stream! {
@@ -270,6 +277,7 @@ impl CallContext {
                             recorder.streamed_bytes = recorder
                                 .streamed_bytes
                                 .saturating_add(generated_bytes(chunk));
+                            recorder.observe(chunk);
                             match chunk {
                                 LlmResponseChunk::Usage(usage) => recorder.usage = Some(usage.clone()),
                                 LlmResponseChunk::MessageStop { .. } => recorder.terminal = true,
@@ -287,6 +295,9 @@ impl CallContext {
                     break;
                 }
             }
+            // Reaching here means the provider's stream ended or failed; a client that disconnects drops
+            // the stream before this line and is not held against the model.
+            recorder.finished_loop = true;
             recorder.submit();
         })
     }
@@ -301,6 +312,8 @@ impl Drop for CallContext {
     }
 }
 
+// Independent facts about how one stream went (final chunk seen, failed, ran to its end, submitted).
+#[allow(clippy::struct_excessive_bools)]
 struct StreamRecorder {
     template: StreamTemplate,
     accounting: Arc<Accounting>,
@@ -309,15 +322,56 @@ struct StreamRecorder {
     streamed_bytes: usize,
     terminal: bool,
     failed: bool,
+    /// The provider's stream ran to its end or failed, as opposed to the tap being dropped (ADR 0030).
+    finished_loop: bool,
+    /// What the answer showed, for the four facts; nothing of it is kept past `submit()`.
+    observation: Observation,
     submitted: bool,
 }
 
 impl StreamRecorder {
+    /// Reads a chunk the tap already holds; never changes it.
+    fn observe(&mut self, chunk: &LlmResponseChunk) {
+        match chunk {
+            LlmResponseChunk::TextDelta { text, .. } => self.observation.text(text),
+            LlmResponseChunk::ToolCallDelta {
+                index,
+                name,
+                arguments_delta,
+                ..
+            } => self.observation.tool_call(
+                u64::try_from(*index).unwrap_or(u64::MAX),
+                name.as_deref(),
+                arguments_delta.as_deref().unwrap_or(""),
+            ),
+            LlmResponseChunk::MessageStop {
+                reason: Some(reason),
+            } => self.observation.stop_string(reason),
+            _ => {}
+        }
+    }
+
+    /// The four facts, or `None` (unknown) when the tap was dropped before the provider's stream ended and no
+    /// final chunk had arrived: the client left, so the answer was not seen whole.
+    fn signals(&self) -> Option<crate::signals::Signals> {
+        let end = if self.failed {
+            End::Failed
+        } else if self.terminal {
+            End::Finished
+        } else if self.finished_loop {
+            End::Ended
+        } else {
+            return None;
+        };
+        Some(self.observation.judge(end))
+    }
+
     fn submit(&mut self) {
         if std::mem::replace(&mut self.submitted, true) {
             return;
         }
         let mut entry = self.template.entry.clone();
+        entry.signals = self.signals();
         entry.outcome = if self.failed {
             "error"
         } else if self.terminal {
@@ -371,6 +425,43 @@ impl Drop for StreamRecorder {
     fn drop(&mut self) {
         self.submit();
     }
+}
+
+/// The four facts about a buffered answer. The decoder turns tool-call arguments it cannot parse into
+/// `{"raw": <text>}`, so a lone string `raw` is read back as the text the provider sent; a tool whose only
+/// parameter is a string named `raw` is therefore judged by that string (ADR 0030, accepted trade-off).
+fn judge_buffered(agg: &AggLlmResponse) -> Signals {
+    let mut observation = Observation::new();
+    let mut index = 0u64;
+    for output in &agg.outputs {
+        for block in &output.content {
+            match block {
+                ContentBlock::Text { text } => observation.text(text),
+                ContentBlock::Reasoning { .. } => {}
+                ContentBlock::ToolCall(call) => {
+                    match &call.arguments {
+                        serde_json::Value::Object(map) if map.len() == 1 => match map.get("raw") {
+                            Some(serde_json::Value::String(raw)) => {
+                                observation.tool_call(index, Some(&call.name), raw);
+                            }
+                            _ => observation.tool_call(index, Some(&call.name), "{}"),
+                        },
+                        serde_json::Value::Object(_) => {
+                            observation.tool_call(index, Some(&call.name), "{}");
+                        }
+                        // Valid JSON of another kind: not an object, so not a usable argument list.
+                        _ => observation.tool_call(index, Some(&call.name), "[]"),
+                    }
+                    index = index.saturating_add(1);
+                }
+                _ => observation.other_content(),
+            }
+        }
+        if output.stop_reason == Some(StopReason::MaxTokens) {
+            observation.length_stop();
+        }
+    }
+    observation.judge(End::Finished)
 }
 
 /// Bytes of generated content a chunk carries (text, reasoning and tool-call arguments).
@@ -438,6 +529,7 @@ impl RoutedLlmClient for Metered {
                         ms: a.ms,
                         class: None,
                         retry_after_ms: a.retry_after_ms,
+                        message: a.message,
                     });
                 },
             )
@@ -462,6 +554,9 @@ impl RoutedLlmClient for Metered {
             })?;
         let id = self.ctx.next_id.fetch_add(1, Ordering::Relaxed);
         let mut entry = self.ctx.base_entry(&self.target, &served);
+        if let LlmResponse::Agg(agg) = &response.llm_response {
+            entry.signals = Some(judge_buffered(agg));
+        }
         match &response.llm_response {
             LlmResponse::Agg(agg) if !usage_is_empty(&agg.usage) => {
                 fill_tokens(&mut entry, &agg.usage);

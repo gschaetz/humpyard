@@ -89,6 +89,8 @@ pub struct Config {
     pub health: HealthConfig,
     pub overrides: OverridesConfig,
     pub metrics: MetricsConfig,
+    /// The admin API's listener and credentials (ADR 0027).
+    pub admin: AdminConfig,
     /// Routing rules, first match wins.
     pub select: Vec<SelectorSpec>,
 }
@@ -131,6 +133,77 @@ impl From<&schema::RawOverrides> for OverridesConfig {
             default_secs: raw.default_secs,
             max_secs: raw.max_secs,
         }
+    }
+}
+
+/// What an admin credential may do on `/admin/v1` (ADR 0027). A closed set: a later scope adds a name.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum AdminScope {
+    /// Read configuration, health, quota, decisions and statistics across all keys.
+    Read,
+    /// Create and remove runtime overrides.
+    Overrides,
+    /// Revoke other admin credentials.
+    Credentials,
+}
+
+impl AdminScope {
+    /// Every scope, in the order they are documented.
+    pub const ALL: [AdminScope; 3] = [Self::Read, Self::Overrides, Self::Credentials];
+
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Read => "read",
+            Self::Overrides => "overrides",
+            Self::Credentials => "credentials",
+        }
+    }
+
+    #[must_use]
+    pub fn parse(text: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|scope| scope.as_str() == text)
+    }
+}
+
+/// A named admin credential: the hash of its secret, what it may do, and when it stops working.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AdminCredential {
+    pub sha256: [u8; 32],
+    pub scopes: std::collections::BTreeSet<AdminScope>,
+    /// Unix milliseconds after which the credential is refused; `None` never expires.
+    pub expires_ms: Option<i64>,
+}
+
+impl AdminCredential {
+    /// The expiry as `YYYY-MM-DDTHH:MM:SSZ` (UTC), or `None` when the credential never expires.
+    #[must_use]
+    pub fn expires_utc(&self) -> Option<String> {
+        let nanos = i128::from(self.expires_ms?).saturating_mul(1_000_000);
+        let at = time::OffsetDateTime::from_unix_timestamp_nanos(nanos).ok()?;
+        Some(format!(
+            "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
+            at.year(),
+            u8::from(at.month()),
+            at.day(),
+            at.hour(),
+            at.minute(),
+            at.second()
+        ))
+    }
+}
+
+/// The `[admin]` section. With no credentials the admin API is off.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct AdminConfig {
+    pub listen: Option<SocketAddr>,
+    pub credentials: BTreeMap<String, AdminCredential>,
+}
+
+impl AdminConfig {
+    #[must_use]
+    pub fn enabled(&self) -> bool {
+        !self.credentials.is_empty()
     }
 }
 
@@ -322,6 +395,7 @@ impl Config {
 
         let providers = build_providers(raw.providers, env)?;
         let metrics = validate::metrics(&raw.metrics, raw.listen, &raw.keys)?;
+        let admin = validate::admin(&raw.admin, raw.listen, &metrics, &raw.keys)?;
         Ok(Self {
             listen: raw.listen,
             shutdown_grace_secs: raw.shutdown_grace_secs,
@@ -389,6 +463,7 @@ impl Config {
                 .collect::<Result<_, ConfigError>>()?,
             overrides: OverridesConfig::from(&raw.overrides),
             metrics,
+            admin,
             ledger: raw.ledger.map(|l| l.path),
             select: raw.select,
             health: HealthConfig::from(&raw.health),

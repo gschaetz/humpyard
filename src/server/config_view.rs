@@ -118,6 +118,13 @@ pub(super) fn view(
         "routes": routes,
         "selectors": config.select,
         "keys": keys,
+        // Only a count: who may administer the gateway is for administrators to see, not for every key that
+        // may read the configuration (ADR 0027).
+        "admin": {
+            "enabled": config.admin.enabled(),
+            "listen": config.admin.listen.map(|addr| addr.to_string()),
+            "credentials": config.admin.credentials.len(),
+        },
     })
 }
 
@@ -159,12 +166,21 @@ pub(super) async fn get_config(State(state): State<Arc<AppState>>, headers: Head
         )
             .into_response();
     }
+    config_report(&state, &snap).await
+}
+
+/// The effective configuration as JSON; the client endpoint and the admin API serve the same view.
+pub(super) async fn config_report(state: &AppState, snap: &super::Snapshot) -> Response {
+    Json(config_value(state, snap).await).into_response()
+}
+
+/// The effective configuration as a JSON value, for the admin API to add to.
+pub(super) async fn config_value(state: &AppState, snap: &super::Snapshot) -> Value {
     let overrides = state.active_overrides().await;
-    Json(view(
+    view(
         &snap.config,
         &snap.fingerprint,
         snap.loaded_at_ms,
         &overrides,
-    ))
-    .into_response()
+    )
 }

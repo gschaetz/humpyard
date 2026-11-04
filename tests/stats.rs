@@ -322,6 +322,7 @@ fn attempt(target: &str, outcome: &str, ms: u64) -> Attempt {
         ms,
         class: None,
         retry_after_ms: None,
+        message: None,
     }
 }
 

@@ -47,6 +47,8 @@ cannot call inference or any other endpoint.
 | `humpyard_request_duration_seconds` | histogram | `route`, `target` |
 | `humpyard_tokens_total` | counter | `route`, `target`, `direction` (`input`, `output`, `cached_input`, `cache_creation`), `key`\* |
 | `humpyard_cost_micro_usd_total` | counter | `route`, `target`, `key`\* |
+| `humpyard_response_calls_observed_total` | counter | `route`, `target` |
+| `humpyard_response_signals_total` | counter | `route`, `target`, `signal` (`empty_output`, `truncated_output`, `bad_tool_call`, `cut_stream`) |
 | `humpyard_failovers_total` | counter | `route`, `from_target`, `to_target` |
 | `humpyard_refusals_total` | counter | `reason`, `key`\* |
 | `humpyard_fallback_blocked_total` | counter | `route` |
@@ -54,6 +56,8 @@ cannot call inference or any other endpoint.
 | `humpyard_retry_after_honored_total` | counter | `provider`, `source` (`body` today) |
 | `humpyard_capability_skips_total` | counter | `route`, `target`, `reason` |
 | `humpyard_cost_ceiling_total` | counter | `outcome` (`removed`, `refused`), `key`\* |
+| `humpyard_admin_requests_total` | counter | `result` (`ok`, `unauthorized`, `forbidden`); exported only while an [admin credential](configuration.md) is configured |
+| `humpyard_admin_revocations_active` | gauge | none; admin credential revocations in force, exported only while an admin credential is configured |
 | `humpyard_target_latency_seconds` | gauge | `target` |
 | `humpyard_discovery_targets` | gauge | (none; only when `[discovery] file` is set) |
 | `humpyard_discovery_file_state` | gauge | `state` (`missing`, `empty`, `loaded`, `ignored`; 1 for the current state) |
@@ -90,6 +94,13 @@ Notes:
 - **Cost ceiling** counts requests in which a key's [`max_request_usd`](budgets.md#a-ceiling-on-one-request)
   removed a target (`outcome="removed"`) or left none and refused the request (`outcome="refused"`; those
   are also in `refusals_total` as `request_cost_ceiling`). It stays at 0 for keys without a ceiling.
+- **Admin requests** counts calls to the [admin API](api.md#the-admin-api) by `result`: `ok`, `unauthorized` (no
+  credential, an unknown or expired one, or a client key) and `forbidden` (a valid credential without the scope).
+  It never carries a credential id or secret, and it is not exported at all while no admin credential is
+  configured.
+- **Admin revocations** is the number of [admin credential revocations](api.md#overrides-and-revoking-a-credential)
+  in force. They are not counted in `humpyard_overrides_active`. The shipped alert rules include
+  `HumpyardAdminRevoked`, which fires when one has lasted over 30 minutes.
 - **A request that matched no route** is counted under `route="none"`.
 - **Refusal reasons** are `unauthorized`, `forbidden`, `budget_exhausted`, `no_eligible_target`,
   `unknown_model`, `bad_request`, `no_capable_target` and `request_cost_ceiling`. Upstream failures show up in `status_class` and in failovers.
@@ -138,5 +149,5 @@ your dashboard.
 
 ## Not here yet
 
-A read-only status page for people who do not run Prometheus is planned. It will read the same
-registry, so it can never disagree with these numbers; see the [roadmap](roadmap.md).
+A page for people who do not run Prometheus is planned as part of the admin GUI, a separate client of the
+[admin API](api.md#the-admin-api); see the [roadmap](roadmap.md).

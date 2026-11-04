@@ -38,11 +38,15 @@ Decisions SHALL be written by the asynchronous ledger writer; a full queue or fa
 - **THEN** each sees only its own decisions
 
 ### Requirement: Metadata only, with retention
-Decisions SHALL NOT contain prompts or responses, SHALL truncate error text, and SHALL be deleted after `decision_retention_days` (default 90; 0 keeps them).
+Decisions SHALL NOT contain prompts or responses, SHALL keep error text only as scrubbed, truncated messages (a decision's own message and each failed attempt's provider message), and SHALL be deleted after `decision_retention_days` (default 90; 0 keeps them). The messages SHALL be removed with their decision.
 
 #### Scenario: Old rows pruned
 - **WHEN** a decision is older than the retention window
-- **THEN** it is removed by the writer's periodic pruning
+- **THEN** it is removed by the writer's periodic pruning, with its attempts and their messages
+
+#### Scenario: No request content is kept
+- **WHEN** a request fails at a provider
+- **THEN** no part of the request body is stored, only the provider's scrubbed, truncated error text
 
 ### Requirement: Decisions and explain show the overrides that applied
 Each decision SHALL list the overrides that applied to it (id, kind and subject), and `explain` SHALL show a target removed by an override with the override's id as the reason. The effective configuration view SHALL label a target disabled by an active override with the source `override`.
@@ -50,3 +54,49 @@ Each decision SHALL list the overrides that applied to it (id, kind and subject)
 #### Scenario: An override is visible
 - **WHEN** a request is planned while a target is disabled
 - **THEN** its decision lists the override and `explain` names it as the reason the target was removed
+
+### Requirement: A failed attempt records why the provider refused it
+Each failed upstream attempt on a decision SHALL carry the provider's own error message, scrubbed and bounded, so the reason for every attempt in a failover chain is visible and not only the last one's. `GET /v1/decisions`, `GET /admin/v1/decisions` and `humpyard ctl decisions` SHALL show it with the attempt. A successful attempt, or one whose provider gave no usable text, SHALL carry none.
+
+#### Scenario: Every rejection in a chain is explained
+- **WHEN** three providers reject a request in turn
+- **THEN** the decision lists the three attempts, each with its own provider's message
+
+#### Scenario: A secret in an error is not stored
+- **WHEN** a provider's error text contains a bearer token or a key-shaped string
+- **THEN** the stored message has it removed and the rest of the text is kept
+
+#### Scenario: Control characters and line breaks are removed
+- **WHEN** a provider's error text spans several lines or holds control characters
+- **THEN** the stored message is one line without them
+
+#### Scenario: The message is bounded
+- **WHEN** a provider returns a very long error body
+- **THEN** the stored message is cut to the same limit decisions apply to error text
+
+#### Scenario: A success has no message
+- **WHEN** an attempt succeeds
+- **THEN** it carries no message
+
+#### Scenario: Older rows still read
+- **WHEN** a decision written before this change is read
+- **THEN** its attempts are returned as before, with no message, and nothing fails
+
+### Requirement: A decision counts the tool calls whose arguments were repaired
+A decision SHALL record how many assistant tool calls in the request had their arguments repaired before it was routed, and `GET /v1/decisions`, `GET /admin/v1/decisions` and `humpyard ctl decisions` SHALL show the count when it is more than zero. A request that needed no repair SHALL show nothing. The decision SHALL keep only the count: no part of the arguments, original or repaired, SHALL be stored. A decision written before this requirement existed SHALL read as before, with no count.
+
+#### Scenario: A repair is counted
+- **WHEN** a request with two cut-off tool calls in its history is routed
+- **THEN** its decision shows a count of 2 and holds no text from either call's arguments
+
+#### Scenario: No repair, no field
+- **WHEN** every tool call in a request has valid arguments, or the request has none
+- **THEN** its decision shows no count
+
+#### Scenario: A refused request still records it
+- **WHEN** a request that needed repair is refused (for example by a key's budget) before any provider is tried
+- **THEN** its decision still shows the count
+
+#### Scenario: Older rows still read
+- **WHEN** a decision written before this change is read
+- **THEN** it is returned as before, with no count, and nothing fails

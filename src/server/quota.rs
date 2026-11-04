@@ -30,6 +30,12 @@ pub(super) async fn get_quota(State(state): State<Arc<AppState>>, headers: Heade
     if let Err(error) = authenticate(&snap, &headers).await {
         return error.into_response_for(WireFormat::OpenAiChat);
     }
+    quota_report(&state, &snap)
+}
+
+/// The latest usage windows of every provider that names a quota source; the client endpoint and the admin API
+/// serve the same report.
+pub(super) fn quota_report(state: &AppState, snap: &super::Snapshot) -> Response {
     let config = &snap.config;
     let now = state.clock.now_ms();
     let stale_ms = i64::try_from(config.quota_stale_secs.saturating_mul(1000)).unwrap_or(i64::MAX);

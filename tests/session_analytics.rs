@@ -47,6 +47,7 @@ fn call(
         outcome: "ok".into(),
         usage_missing: false,
         request_id: None,
+        signals: None,
     }
 }
 
@@ -70,6 +71,7 @@ fn decision(key: &str, target: &str, provider: &str, model: &str, age_s: i64) ->
             ms: 10,
             class: None,
             retry_after_ms: None,
+            message: None,
         }],
         ..Decision::default()
     }

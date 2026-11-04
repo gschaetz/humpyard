@@ -1,5 +1,6 @@
 //! Unified LLM gateway: protocol translation in front of Switchyard-routed providers.
 
+pub mod admin;
 pub mod auth;
 pub mod budget;
 pub mod clock;
@@ -22,7 +23,11 @@ pub mod pool;
 pub mod prices;
 pub mod pricing;
 pub mod quota;
+pub mod repair;
+pub mod repair_request;
 pub mod retry_after;
 pub mod routing;
+pub mod scrub;
 pub mod select;
 pub mod server;
+pub mod signals;
