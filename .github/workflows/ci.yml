@@ -8,6 +8,11 @@ permissions:
 jobs:
   check:
     runs-on: ubuntu-latest
+    env:
+      # Full debug info for every test binary fills the runner's disk (about 14 GB free); line tables keep
+      # backtraces and cost a fraction of the space. A failed link with "Bus error" or a build with "No space left
+      # on device" is this, not the code.
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
@@ -18,6 +23,9 @@ jobs:
       - run: cargo fmt --check
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test
+      - name: Disk left
+        if: always()
+        run: df -h /
 
   # Every commit in a pull request must carry a DCO `Signed-off-by` line (CONTRIBUTING.md).
   # Merge commits are exempt: they are created by GitHub or by `git merge`, not authored.
@@ -81,6 +89,9 @@ jobs:
 
   coverage:
     runs-on: ubuntu-latest
+    env:
+      # Instrumented test binaries are the largest build of the pipeline; see the note on the check job.
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
@@ -93,6 +104,9 @@ jobs:
       # It only ratchets up: raise it when coverage rises, never lower it to make a change pass.
       - name: Line coverage (floor 92%)
         run: cargo llvm-cov --summary-only --fail-under-lines 92
+      - name: Disk left
+        if: always()
+        run: df -h /
 
   # The container image must keep building (it is published by the release workflow).
   image:
