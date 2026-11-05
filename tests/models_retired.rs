@@ -52,11 +52,9 @@ async fn models(State(b): State<Arc<Mutex<Behavior>>>) -> axum::response::Respon
 
 async fn provider(behavior: Behavior) -> String {
     if matches!(behavior, Behavior::Closed) {
-        // A port that was free a moment ago and has no listener now: the connection is refused.
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let addr = listener.local_addr().unwrap();
-        drop(listener);
-        return format!("http://{addr}");
+        // Nothing listens on port 1, so the connection is refused (the same stand-in model_discovery.rs uses). A
+        // port that was free "a moment ago" is not safe: a parallel test's server can take it.
+        return "http://127.0.0.1:1".to_string();
     }
     let app = Router::new()
         .route("/models", get(models))
