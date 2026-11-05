@@ -151,53 +151,103 @@ pub fn parse_provider_list(body: &str) -> Result<BTreeSet<String>, DiscoverError
         .collect())
 }
 
+/// Why a provider's own model list could not be read, told apart because they mean different things to the
+/// operator: the provider has no list, the check could not reach it, or it answered with something unusable.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ListFailure {
+    /// `/models` answers 404, 405 or 501: there is no model list to compare with.
+    NoList(String),
+    /// The connection failed or timed out, or the answer is 502, 503 or 504 (a proxy or mesh saying the upstream
+    /// is dead): the check could not ask.
+    Unreachable(String),
+    /// The provider answered but the answer cannot be used (a rejected key, another error status, a body that
+    /// is not a model list, an oversized body).
+    Unusable(String),
+}
+
+impl ListFailure {
+    /// What went wrong, in words.
+    #[must_use]
+    pub fn message(&self) -> &str {
+        match self {
+            Self::NoList(m) | Self::Unreachable(m) | Self::Unusable(m) => m,
+        }
+    }
+}
+
+impl std::fmt::Display for ListFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.message())
+    }
+}
+
+/// Which kind of failure an error status is.
+fn failure_for_status(url: &str, status: reqwest::StatusCode) -> ListFailure {
+    let message = format!("{url} answered {status}");
+    match status.as_u16() {
+        404 | 405 | 501 => ListFailure::NoList(message),
+        502..=504 => ListFailure::Unreachable(message),
+        _ => ListFailure::Unusable(message),
+    }
+}
+
 /// A provider's own model list, fetched with its key and only from its own base URL. Redirects are not
 /// followed, so the key cannot be carried to another host.
 pub async fn fetch_provider_models(
     base_url: &str,
     api_key: &str,
 ) -> Result<BTreeSet<String>, DiscoverError> {
+    fetch_provider_models_within(base_url, api_key, FETCH_TIMEOUT)
+        .await
+        .map_err(|failure| DiscoverError::Source(failure.to_string()))
+}
+
+/// [`fetch_provider_models`] with the kind of failure kept (for `models check --retired`).
+pub async fn fetch_provider_list(
+    base_url: &str,
+    api_key: &str,
+) -> Result<BTreeSet<String>, ListFailure> {
     fetch_provider_models_within(base_url, api_key, FETCH_TIMEOUT).await
 }
 
-/// [`fetch_provider_models`] with the time limit given (a test uses a short one).
+/// [`fetch_provider_models`] with the time limit given (a test uses a short one), and the kind of failure kept.
 pub async fn fetch_provider_models_within(
     base_url: &str,
     api_key: &str,
     timeout: Duration,
-) -> Result<BTreeSet<String>, DiscoverError> {
+) -> Result<BTreeSet<String>, ListFailure> {
     let url = format!("{}/models", base_url.trim_end_matches('/'));
     let client = reqwest::Client::builder()
         .timeout(timeout)
         .redirect(reqwest::redirect::Policy::none())
         .build()
-        .map_err(|e| DiscoverError::Source(e.to_string()))?;
+        .map_err(|e| ListFailure::Unusable(e.to_string()))?;
     let mut response = client
         .get(&url)
         .bearer_auth(api_key)
         .send()
         .await
-        .map_err(|e| DiscoverError::Source(format!("cannot reach {url}: {e}")))?;
+        .map_err(|e| ListFailure::Unreachable(format!("cannot reach {url}: {e}")))?;
     if !response.status().is_success() {
-        return Err(DiscoverError::Source(format!(
-            "{url} answered {}",
-            response.status()
-        )));
+        return Err(failure_for_status(&url, response.status()));
     }
     let mut body = Vec::new();
-    while let Some(chunk) = response
-        .chunk()
-        .await
-        .map_err(|e| DiscoverError::Source(format!("reading {url}: {e}")))?
-    {
+    while let Some(chunk) = response.chunk().await.map_err(|e| {
+        let message = format!("reading {url}: {e}");
+        if e.is_timeout() {
+            ListFailure::Unreachable(message)
+        } else {
+            ListFailure::Unusable(message)
+        }
+    })? {
         if body.len() + chunk.len() > MAX_BODY_BYTES {
-            return Err(DiscoverError::Source(format!("{url} is larger than 16 MB")));
+            return Err(ListFailure::Unusable(format!("{url} is larger than 16 MB")));
         }
         body.extend_from_slice(&chunk);
     }
     let text = String::from_utf8(body)
-        .map_err(|_| DiscoverError::Source(format!("{url} is not UTF-8 text")))?;
-    parse_provider_list(&text)
+        .map_err(|_| ListFailure::Unusable(format!("{url} is not UTF-8 text")))?;
+    parse_provider_list(&text).map_err(|e| ListFailure::Unusable(e.to_string()))
 }
 
 /// One generated target, as it is written to the file.

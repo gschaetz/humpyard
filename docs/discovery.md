@@ -80,10 +80,22 @@ retired:    pf3 uses opencode/mimo-v2.5, which the provider no longer lists
 
 It needs no `discover` and no `price_source`, sends each provider's key only to that provider's own host (redirects
 are not followed, and the response is size- and time-limited), never writes a file and never changes the
-configuration. `--provider NAME` checks one provider and `--json` prints the report. It exits **0** when nothing is
-reported, **1** when an endpoint is, and **2** when a provider's list could not be used (a rejected key, a timeout, a
-body that is not a model list); that provider is reported as `unusable` and the others are still checked, so run it
-from a scheduler that alerts on a non-zero exit. A provider with no key is skipped and listed as `skipped`.
+configuration. `--provider NAME` checks one provider and `--json` prints the report.
+
+A provider whose list is missing is one of three things, and the check says which:
+
+- **No list** (`/models` answers 404, 405 or 501): the provider has nothing to compare with. Reported as `no list`.
+- **Unreachable** (the connection fails or times out, or the answer is 502, 503 or 504): the check could not ask,
+  for example a laptop that is asleep. Reported as `unreachable`.
+- **Unusable** (a rejected key, any other error status, a body that is not a model list, an empty list): the
+  provider answered but the check cannot use it. Reported as `unusable`.
+
+It exits **0** when no endpoint is reported, **1** when an endpoint is, and **2** when a provider is unusable. A
+provider with no list or one that is unreachable is in the report but does not change the exit code, so a scheduled
+job that alerts on a non-zero exit stays quiet until something needs a person; whether a provider is up is the job
+of the health metrics and `humpyard_endpoint_unavailable_total`. In every case the other providers are still
+checked. A provider with no key is skipped and listed as `skipped`. The JSON report has `no_list`, `unreachable`,
+`unusable` and `skipped` beside `checked` and `retired`.
 
 A report is evidence, not proof. A provider can serve a model it does not list (an alias, a preview or hidden
 model), and a local provider lists only what is pulled, so look before you remove a target. To be told sooner, watch

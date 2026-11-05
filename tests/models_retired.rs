@@ -17,7 +17,7 @@ use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::IntoResponse;
 use axum::routing::get;
 use common::serve;
-use humpyard::discover::fetch_provider_models_within;
+use humpyard::discover::{ListFailure, fetch_provider_models_within};
 use serde_json::{Value, json};
 
 const KEY: &str = "provider-secret-key";
@@ -29,6 +29,8 @@ enum Behavior {
     Status(u16),
     Body(String),
     Sleep(Duration),
+    /// Nothing listens: the connection is refused.
+    Closed,
 }
 
 async fn models(State(b): State<Arc<Mutex<Behavior>>>) -> axum::response::Response {
@@ -44,10 +46,16 @@ async fn models(State(b): State<Arc<Mutex<Behavior>>>) -> axum::response::Respon
             tokio::time::sleep(d).await;
             "late".into_response()
         }
+        Behavior::Closed => unreachable!("a closed provider has no server"),
     }
 }
 
 async fn provider(behavior: Behavior) -> String {
+    if matches!(behavior, Behavior::Closed) {
+        // Nothing listens on port 1, so the connection is refused (the same stand-in model_discovery.rs uses). A
+        // port that was free "a moment ago" is not safe: a parallel test's server can take it.
+        return "http://127.0.0.1:1".to_string();
+    }
     let app = Router::new()
         .route("/models", get(models))
         .with_state(Arc::new(Mutex::new(behavior)));
@@ -245,6 +253,80 @@ async fn it_cannot_be_combined_with_the_paid_report() {
     assert_eq!(out.code, 2, "{}{}", out.stdout, out.stderr);
 }
 
+#[tokio::test]
+async fn a_provider_without_a_model_list_is_reported_and_does_not_change_the_exit_code() {
+    let listed = rig(listing(&["alpha", "mimo-v2.5"]), Behavior::Status(404)).await;
+    let out = check(&listed, &[]).await;
+    assert_eq!(out.code, 0, "{}{}", out.stdout, out.stderr);
+    assert!(
+        out.stdout.contains("no list:    two has no model list"),
+        "{}",
+        out.stdout
+    );
+    assert!(out.stdout.contains("nothing to review"), "{}", out.stdout);
+    assert!(
+        !out.stdout.contains("gone-two"),
+        "its endpoints are not compared:\n{}",
+        out.stdout
+    );
+
+    // A retired endpoint on a provider that does have a list is still reported.
+    let elsewhere = rig(listing(&["alpha"]), Behavior::Status(404)).await;
+    let out = check(&elsewhere, &[]).await;
+    assert_eq!(out.code, 1, "{}{}", out.stdout, out.stderr);
+    assert!(
+        out.stdout.contains("gone-one uses one/mimo-v2.5"),
+        "{}",
+        out.stdout
+    );
+}
+
+#[tokio::test]
+async fn a_provider_that_cannot_be_reached_is_reported_and_does_not_change_the_exit_code() {
+    for dead in [Behavior::Closed, Behavior::Status(503)] {
+        let listed = rig(listing(&["alpha", "mimo-v2.5"]), dead.clone()).await;
+        let out = check(&listed, &[]).await;
+        assert_eq!(out.code, 0, "{}{}", out.stdout, out.stderr);
+        assert!(
+            out.stdout.contains("unreachable: two could not be asked"),
+            "{}",
+            out.stdout
+        );
+        assert!(!out.stdout.contains("unusable:"), "{}", out.stdout);
+
+        // It does not hide a retired endpoint on a provider that did answer.
+        let elsewhere = rig(listing(&["alpha"]), dead).await;
+        let out = check(&elsewhere, &[]).await;
+        assert_eq!(out.code, 1, "{}{}", out.stdout, out.stderr);
+        assert!(
+            out.stdout.contains("gone-one uses one/mimo-v2.5"),
+            "{}",
+            out.stdout
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_rejected_key_is_still_unusable_and_exits_two() {
+    let rig = rig(listing(&["alpha", "mimo-v2.5"]), Behavior::Status(401)).await;
+    let out = check(&rig, &[]).await;
+    assert_eq!(out.code, 2, "{}{}", out.stdout, out.stderr);
+    assert!(out.stdout.contains("unusable:   two"), "{}", out.stdout);
+}
+
+#[tokio::test]
+async fn the_json_report_carries_no_list_and_unreachable() {
+    let rig = rig(Behavior::Status(404), Behavior::Closed).await;
+    let out = check(&rig, &["--json"]).await;
+    assert_eq!(out.code, 0, "{}{}", out.stdout, out.stderr);
+    let report: Value = serde_json::from_str(out.stdout.trim()).unwrap();
+    assert_eq!(report["no_list"][0]["provider"], "one");
+    assert_eq!(report["unreachable"][0]["provider"], "two");
+    assert_eq!(report["retired"], json!([]));
+    assert_eq!(report["unusable"], json!([]));
+    assert_eq!(report["checked"], 0);
+}
+
 // ---- how the list is fetched (task 2.1) ----
 
 #[tokio::test]
@@ -256,19 +338,54 @@ async fn a_valid_list_is_read() {
     assert_eq!(got.into_iter().collect::<Vec<_>>(), ["a", "b"]);
 }
 
+async fn failure(behavior: Behavior) -> ListFailure {
+    let url = provider(behavior).await;
+    fetch_provider_models_within(&url, KEY, Duration::from_secs(5))
+        .await
+        .unwrap_err()
+}
+
 #[tokio::test]
-async fn a_body_that_is_not_a_list_a_rejected_key_and_a_slow_provider_are_errors() {
-    for behavior in [
-        Behavior::Body("{\"nope\": 1}".into()),
-        Behavior::Status(401),
-    ] {
-        let url = provider(behavior).await;
+async fn a_failed_list_is_told_apart_as_no_list_unreachable_or_unusable() {
+    for status in [404, 405, 501] {
         assert!(
-            fetch_provider_models_within(&url, KEY, Duration::from_secs(5))
-                .await
-                .is_err()
+            matches!(
+                failure(Behavior::Status(status)).await,
+                ListFailure::NoList(_)
+            ),
+            "{status} means the provider has no model list"
         );
     }
+    for status in [502, 503, 504] {
+        assert!(
+            matches!(
+                failure(Behavior::Status(status)).await,
+                ListFailure::Unreachable(_)
+            ),
+            "{status} means the upstream could not be reached"
+        );
+    }
+    for status in [400, 401, 403, 500] {
+        assert!(
+            matches!(
+                failure(Behavior::Status(status)).await,
+                ListFailure::Unusable(_)
+            ),
+            "{status} is an answer the check cannot use"
+        );
+    }
+    assert!(matches!(
+        failure(Behavior::Body("{\"nope\": 1}".into())).await,
+        ListFailure::Unusable(_)
+    ));
+    assert!(matches!(
+        failure(Behavior::Body("<html></html>".into())).await,
+        ListFailure::Unusable(_)
+    ));
+    assert!(
+        matches!(failure(Behavior::Closed).await, ListFailure::Unreachable(_)),
+        "a refused connection is unreachable"
+    );
     let slow = provider(Behavior::Sleep(Duration::from_secs(3))).await;
     let started = std::time::Instant::now();
     let err = fetch_provider_models_within(&slow, KEY, Duration::from_millis(300))
@@ -277,6 +394,10 @@ async fn a_body_that_is_not_a_list_a_rejected_key_and_a_slow_provider_are_errors
     assert!(
         started.elapsed() < Duration::from_secs(2),
         "the time limit applies: {err}"
+    );
+    assert!(
+        matches!(err, ListFailure::Unreachable(_)),
+        "a timeout is unreachable: {err}"
     );
 }
 
