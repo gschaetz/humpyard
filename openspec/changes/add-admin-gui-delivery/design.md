@@ -45,6 +45,34 @@ In-force ADRs read: 0004 and 0013 (no content stored), 0016 (metrics registry), 
 
 **11. First delivery is the mechanism plus the models view.** The skeleton, the typed client, sign-in, the version check, and one screen: per target, the figures people ask for (requests, failure and fallback rates, response-signal rates over observed calls, tokens, cost, latency, endpoint health) from `/admin/v1/stats` and `/admin/v1/health` only. Decisions and overrides follow as separate changes.
 
+**12. A per-run access token when the command holds the credential.** With `--credential-env`, `humpyard ui` acts with the admin credential for whoever can reach its port, and on a shared machine that includes other local users and processes, which the Host and Origin rules do not stop. So in that mode the command generates a random token at start, prints it once, and requires it: the page asks for it, the command exchanges it for an `HttpOnly`, `SameSite=Strict` cookie, and requests without that cookie are answered 401. The token never appears in a URL. In the browser-held-credential mode nothing is injected, so no token is needed.
+
+**13. The upstream must not leak the credential.** The credential is only ever sent to the host named by `--url`, which the command prints at start. When the credential is injected and the upstream is not loopback, `--url` must be `https`, unless `--allow-insecure-upstream` is given, so a typo or a network attacker cannot receive it or alter what the GUI shows.
+
+## Threat model
+
+Assets: the admin credential (it can create overrides and revoke credentials); the admin API's data (decisions and statistics name client key ids, models, session ids and provider errors); the embedded GUI files; the operator's browser session. Actors: the operator; any other website open in the operator's browser; other users and processes on the host running `humpyard ui`; a network attacker between `humpyard ui` and the gateway; a holder of a client key (who chooses strings that decisions record); the maintainers of npm dependencies. Trust boundaries: browser to `humpyard ui`; `humpyard ui` to the gateway; the build (npm and CI) to the shipped binary. The gateway's own boundaries are unchanged by this change.
+
+| # | Threat | Category | Mitigation | Proof |
+|---|---|---|---|---|
+| 1 | A website rebinds its DNS name to loopback and talks to `humpyard ui` as same-origin | Spoofing | `Host` accepted only when loopback or `--allow-host`; refusal to start publicly without one | cli spec, task 2.3 test |
+| 2 | Another local user or process uses the port while the credential is injected | Spoofing, Elevation | Per-run access token and cookie (decision 12); loopback default; documented that a shared host should use the browser-held mode | task 2.3 test |
+| 3 | `--url` is mistyped or intercepted and the credential is sent to the wrong party | Spoofing, Disclosure | Credential only to `--url`'s host, printed at start; `https` required for a non-loopback upstream when injecting (decision 13) | task 2.3 test |
+| 4 | A path trick makes `humpyard ui` forward to something other than `/admin/v1` | Tampering | Normalise before matching; forward only a path still under the prefix | cli spec, task 2.2 test |
+| 5 | Cleartext between `humpyard ui` and the gateway lets an attacker alter what the GUI shows or read the credential | Tampering, Disclosure | `https` requirement of decision 13; documentation | task 2.3 test |
+| 6 | A malicious dependency or build step puts code in the GUI | Tampering | Few pinned dependencies, committed lockfile, `npm ci --ignore-scripts`, `npm audit`, lockfile diffs reviewed, release smoke test | tasks 1.3 and 3.1 |
+| 7 | A cross-site request makes the injected credential act (CSRF) | Elevation | `Sec-Fetch-Site` and `Origin` rules; `SameSite=Strict` cookie in credential mode; the admin API uses a bearer header, not ambient cookies | cli spec, task 2.3 test |
+| 8 | Script injection through a string a client key chose (a model name, a session id, provider error text) | Elevation, Disclosure | Text-only rendering, lint ban on raw HTML, strict CSP with no inline scripts | admin-gui spec, task 1.2 test |
+| 9 | The credential is stolen from the browser | Disclosure | Session-only storage, CSP, no third-party scripts, and the credential-injecting mode keeps it out of the browser entirely | admin-gui spec |
+| 10 | The credential leaks through the command line, logs or a response | Disclosure | Read from an environment variable (not an argument), never logged, never in a response, never in a URL | task 2.3 test |
+| 11 | The GUI is framed by another site (clickjacking) | Elevation | `frame-ancestors 'none'` | admin-gui spec |
+| 12 | A read-only credential tries to act | Elevation | Authorised by the admin API by scope on every call; the GUI hides controls but does not enforce | admin API tests (ADR 0027) |
+| 13 | A flood or an oversized response exhausts `humpyard ui` | Denial of service | Time and size bounds on forwarded requests; the admin API already caps windows and result sizes; a local tool, accepted | task 2.2 test |
+| 14 | A release ships without the GUI, or with a stale one | Tampering | The `ui` feature fails the build without the files; the release smoke test rejects the placeholder | release-packaging spec, task 3.1 |
+| 15 | GUI actions are not attributable to a person | Repudiation | The admin API audits `admin:<id>`; with a shared injected credential all GUI users share one id, so a multi-admin deployment should use one credential per person in the browser-held mode | documented |
+
+Residual risks, accepted: malware running as the same user can read the environment and the browser regardless; the browser-held credential is a long-lived secret typed into a form with no second factor (an identity-provider login is the real fix, ADR 0027); the admin credential crosses the network in a header, so a non-loopback admin API needs TLS (documented).
+
 ## Risks / Trade-offs
 
 - **`humpyard ui` is a small forward proxy and a security-sensitive one.** Mitigated by exact-prefix forwarding after normalisation, no redirects, the Host and Origin rules, loopback by default, and tests for each.

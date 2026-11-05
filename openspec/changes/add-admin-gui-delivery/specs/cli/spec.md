@@ -59,3 +59,30 @@ With `--credential-env NAME`, `humpyard ui` SHALL read the admin credential from
 #### Scenario: A public address with no allowed host
 - **WHEN** `--listen 0.0.0.0:8787` is given with no `--allow-host`
 - **THEN** the command exits with an error that explains why
+
+### Requirement: humpyard ui requires an access token when it holds the credential
+With `--credential-env`, `humpyard ui` SHALL generate a random access token at start, print it once, and answer 401 to any request for the GUI's data path that does not carry the cookie issued in exchange for that token. The exchange SHALL be a request body, never a URL, and the cookie SHALL be `HttpOnly` and `SameSite=Strict`. Without `--credential-env` no token SHALL be required.
+
+#### Scenario: No token
+- **WHEN** `--credential-env` is used and a request for `/admin/v1/health` carries no session cookie
+- **THEN** the answer is 401 and nothing is forwarded
+
+#### Scenario: The token is exchanged
+- **WHEN** the printed token is sent to the exchange endpoint in a request body
+- **THEN** the answer sets an `HttpOnly`, `SameSite=Strict` cookie and later requests carrying it are forwarded
+
+#### Scenario: Without a held credential
+- **WHEN** `--credential-env` is not used
+- **THEN** no token is required and the browser supplies its own credential
+
+### Requirement: humpyard ui sends the credential only to the upstream it names
+The injected credential SHALL be sent only to the host named by `--url`, which the command SHALL print at start. When the credential is injected and the upstream host is not a loopback address, the command SHALL refuse a `--url` that is not `https` unless `--allow-insecure-upstream` is given.
+
+#### Scenario: A cleartext public upstream
+- **WHEN** `--credential-env` is used with `--url http://gateway.example`
+- **THEN** the command exits with an error that explains why
+
+#### Scenario: A cleartext loopback upstream
+- **WHEN** `--credential-env` is used with `--url http://127.0.0.1:8080`
+- **THEN** the command starts and prints the upstream it will send the credential to
+
