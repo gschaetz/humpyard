@@ -97,6 +97,7 @@ nav:
       - Roadmap: roadmap.md
       - Architecture: architecture.md
       - Invariants: invariants.md
+      - Threat model: threat-model.md
       - Background: background.md
       - Decision records:
           - Index: adr/README.md

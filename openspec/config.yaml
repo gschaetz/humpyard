@@ -9,8 +9,11 @@ context: |
   Cost tracking must stay off the streaming critical path (mpsc -> async writer -> SQLite).
   Accept OpenAI and Anthropic protocols inbound; OpenAI-compatible outbound.
 rules:
+  design:
+    - When a change touches authentication, a network listener, secrets, the admin surface, or the parsing of untrusted data (from a client, a provider or an external source), design.md must include a "Threat model" section covering the assets and actors involved, the trust boundaries it crosses, and a table of threats, each with its mitigation and the test or invariant that proves it. Name any threat that has no mitigation as a gap instead of leaving it out. See docs/threat-model.md.
   tasks:
     - When a change alters structure, request flow or component status, include a task to update docs/architecture.md and verify its Mermaid diagrams still match the code
+    - When a design has a threat model, include a task to check it against what was built (each row still true, each proof exists), and update docs/threat-model.md when a trust boundary or a gap changed
 # Project context (optional)
 # Add only constraints that should guide OpenSpec artifacts and workflows.
 # Include constraints an agent cannot infer by reading the code.
