@@ -11,8 +11,8 @@
 
 ## Outcome
 
-One durable decision qualifies: the admin GUI may be delivered inside the binary, off by default, and also as a separate command, from one set of files. It refines ADR 0025 (which left hosting open and called the GUI a separate client) without superseding it: the GUI still has no state of its own and still uses only the published admin API; only the way it is delivered changes.
+One durable decision qualifies: the admin GUI runs as its own process from the same binary (`humpyard ui`), and the gateway serves no GUI. It refines ADR 0025 (which left hosting open and called the GUI a separate client) without superseding it: the GUI still has no state of its own and still uses only the published admin API; this settles where it runs and what protects it.
 
 ## New ADRs
 
-- [ADR-0032 The admin GUI is one set of files, served by the gateway when enabled and by a separate command otherwise](../../../docs/adr/0032-the-admin-gui-is-one-set-of-files-served-by-the-gateway-when-enabled-and-by-a-separate-command-otherwise.md) (refines ADR-0025)
+- [ADR-0032 The admin GUI runs as its own process from the same binary](../../../docs/adr/0032-the-admin-gui-runs-as-its-own-process-from-the-same-binary.md) (refines ADR-0025)
