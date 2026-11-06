@@ -39,6 +39,7 @@ use crate::error::GatewayError;
 use crate::estimate::estimate_tokens;
 use crate::latency::Latency;
 use crate::ledger::{AppliedOverride, CeilingRemoved, CostCeiling, Decision, Incapable, Ledger};
+use crate::limiter::{Limiters, Refusal};
 use crate::metering::{Accounting, CALL_ID_HEADER, CallContext, StreamTemplate};
 use crate::num::f64_from_u64;
 use crate::overrides::{Drains, LedgerOverrides, NoDrains, Override, OverrideStore, StoreDrains};
@@ -77,6 +78,8 @@ struct Snapshot {
     selectors: Selectors,
     policy: Arc<dyn RoutingPolicy>,
     keys: Arc<dyn KeyStore>,
+    /// Per-key request-rate limits (`add-key-rate-limits`).
+    limiters: Limiters,
     /// Short hash of the config file this snapshot came from, for `GET /v1/health`.
     fingerprint: String,
     loaded_at_ms: i64,
@@ -458,6 +461,7 @@ impl Snapshot {
         Ok(Self {
             selectors: Selectors::new(&config.select),
             keys: Arc::new(ConfigKeyStore::new(&config.keys)),
+            limiters: Limiters::new(clock.clone(), &config.keys),
             loaded_at_ms: clock.now_ms(),
             config,
             targets,
@@ -1242,18 +1246,8 @@ async fn handle(
         &selector_headers(headers),
         &info,
     )?;
-    guard.decision.route = Some(selection.name.clone());
-    guard.decision.rule = Some(selection.rule.clone());
-    guard.decision.source = Some(
-        if selection.rule == "default" {
-            "requested_model"
-        } else {
-            "selector"
-        }
-        .to_string(),
-    );
-    guard.decision.skipped_rules.clone_from(&selection.skipped);
-    guard.decision.excluded_targets = excluded_targets(snap, &selection.name);
+    record_selection(guard, snap, &selection);
+    check_rate_limit(snap, caller)?;
     let budget = check_budget(state, caller)?;
     guard.decision.budget = budget.map(|b| budget_label(b).to_string());
     let overrides = state.active_overrides().await;
@@ -1412,6 +1406,22 @@ struct Selection<'a> {
     skipped: Vec<String>,
 }
 
+/// Puts the chosen route, the rule that chose it and what was skipped on the request's decision.
+fn record_selection(guard: &mut DecisionGuard, snap: &Snapshot, selection: &Selection<'_>) {
+    guard.decision.route = Some(selection.name.clone());
+    guard.decision.rule = Some(selection.rule.clone());
+    guard.decision.source = Some(
+        if selection.rule == "default" {
+            "requested_model"
+        } else {
+            "selector"
+        }
+        .to_string(),
+    );
+    guard.decision.skipped_rules.clone_from(&selection.skipped);
+    guard.decision.excluded_targets = excluded_targets(snap, &selection.name);
+}
+
 /// Request headers rules may match: names lower-cased, credential headers left out.
 fn selector_headers(headers: &HeaderMap) -> HashMap<String, String> {
     headers
@@ -1520,6 +1530,32 @@ fn request_info(headers: &HeaderMap) -> RequestInfo {
 
 /// Stage 3: refuse a key that has used up its budget (unless it may continue on free targets).
 /// Returns the key's budget state, or `None` for open-mode requests.
+/// Refuses a request over its key's request-rate limit, after the route is allowed and before the budget is
+/// looked at, so a refusal here costs no provider quota and no allowance. An open gateway has no keys, so no
+/// limits.
+fn check_rate_limit(snap: &Snapshot, caller: Option<&KeyRecord>) -> Result<(), GatewayError> {
+    let Some(caller) = caller else {
+        return Ok(());
+    };
+    snap.limiters
+        .admit_rate(&caller.id)
+        .map_err(|refusal| match refusal {
+            Refusal::Rate {
+                limit,
+                retry_after_secs,
+            } => GatewayError::RateLimited {
+                message: format!(
+                    "this key may make at most {limit} requests per minute; try again in {retry_after_secs}s"
+                ),
+                retry_after_secs,
+            },
+            Refusal::Concurrent { limit } => GatewayError::RateLimited {
+                message: format!("this key may have at most {limit} requests in flight"),
+                retry_after_secs: refusal.retry_after_secs(),
+            },
+        })
+}
+
 fn check_budget(
     state: &AppState,
     caller: Option<&KeyRecord>,

@@ -175,16 +175,30 @@ impl Limiters {
             Some(in_flight) => Some(take(in_flight)?),
             None => None,
         };
-        if let Some(rate) = &entry.rate {
-            let mut window = rate.lock();
-            window
-                .admit(self.clock.now_ms())
-                .map_err(|retry_after_secs| Refusal::Rate {
-                    limit: window.limit,
-                    retry_after_secs,
-                })?;
-        }
+        self.admit_in_window(entry)?;
         Ok(permit)
+    }
+
+    /// Admits one request of `key` against its request-rate limit only. A key without one, and a key
+    /// this gateway does not know, are admitted.
+    pub fn admit_rate(&self, key: &str) -> Result<(), Refusal> {
+        match self.by_key.get(key) {
+            Some(entry) => self.admit_in_window(entry),
+            None => Ok(()),
+        }
+    }
+
+    fn admit_in_window(&self, entry: &Entry) -> Result<(), Refusal> {
+        let Some(rate) = &entry.rate else {
+            return Ok(());
+        };
+        let mut window = rate.lock();
+        window
+            .admit(self.clock.now_ms())
+            .map_err(|retry_after_secs| Refusal::Rate {
+                limit: window.limit,
+                retry_after_secs,
+            })
     }
 
     /// Requests of `key` in flight now; zero for a key without a concurrency limit.

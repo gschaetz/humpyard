@@ -34,13 +34,14 @@ const ADMIN_RESULTS: [&str; 3] = ["ok", "unauthorized", "forbidden"];
 const PROTOCOLS: [&str; 3] = ["openai_chat", "openai_responses", "anthropic_messages"];
 
 /// Outcomes that mean the gateway refused the request before any upstream call.
-const REFUSALS: [&str; 9] = [
+const REFUSALS: [&str; 10] = [
     "no_capable_target",
     "request_cost_ceiling",
     "override_no_target",
     "unauthorized",
     "forbidden",
     "budget_exhausted",
+    "rate_limited",
     "no_eligible_target",
     "unknown_model",
     "bad_request",
