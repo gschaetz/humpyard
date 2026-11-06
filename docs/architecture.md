@@ -125,7 +125,7 @@ plans a request can see it.
 
 ```mermaid
 flowchart TD
-    OP[Operator or GUI<br/>admin credential] --> ADM[/admin/v1<br/>own listener when configured]
+    OP[Operator or GUI<br/>admin credential] --> ADM["/admin/v1<br/>own listener when configured"]
     ADM --> AUTHN[Admin authentication<br/>configured credentials, expiry,<br/>revocation, scope]
     AUTHN --> READ[Reads across every key<br/>config, health, quota, decisions, stats]
     AUTHN --> OVR[Overrides and revocation<br/>recorded as admin:id]
