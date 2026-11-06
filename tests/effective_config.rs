@@ -51,7 +51,7 @@ endpoints = [{ provider = "free", model = "alpha", context_window = 32000, price
     let (metrics_key, metrics_hash) = humpyard::auth::generate_key().unwrap();
     let keys = if with_keys {
         format!(
-            "[keys.ops]\nsha256 = \"{ops_hash}\"\nread_config = true\n[keys.app]\nsha256 = \"{app_hash}\"\n"
+            "[keys.ops]\nsha256 = \"{ops_hash}\"\nread_config = true\nmax_requests_per_minute = 60\nmax_concurrent = 4\n[keys.app]\nsha256 = \"{app_hash}\"\n"
         )
     } else {
         String::new()
@@ -127,6 +127,18 @@ async fn each_target_says_where_it_came_from_and_pools_show_what_they_resolved_t
             .as_str()
             .is_some_and(|s| !s.is_empty())
     );
+}
+
+#[tokio::test]
+async fn a_keys_rate_and_concurrency_limits_are_shown_and_absent_ones_are_null() {
+    let f = fixture("key-limits", true).await;
+    let (status, body) = get(&f.url, "/v1/config", Some(&f.ops_key)).await;
+    assert_eq!(status, 200, "{body}");
+    let v: Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(v["keys"]["ops"]["max_requests_per_minute"], 60);
+    assert_eq!(v["keys"]["ops"]["max_concurrent"], 4);
+    assert!(v["keys"]["app"]["max_requests_per_minute"].is_null());
+    assert!(v["keys"]["app"]["max_concurrent"].is_null());
 }
 
 #[tokio::test]

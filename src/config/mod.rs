@@ -215,6 +215,10 @@ pub struct KeyConfig {
     pub limits: Limits,
     /// The most one request may cost in US dollars; targets certain to exceed it are removed.
     pub max_request_usd: Option<f64>,
+    /// Requests admitted in any 60 seconds; `None` means no limit.
+    pub max_requests_per_minute: Option<u32>,
+    /// Requests in flight at once; `None` means no limit.
+    pub max_concurrent: Option<u32>,
     /// May read the effective configuration (`GET /v1/config`).
     pub read_config: bool,
     /// May create and remove runtime overrides (`/v1/overrides`).
@@ -441,24 +445,8 @@ impl Config {
                 .keys
                 .into_iter()
                 .map(|(id, key)| {
-                    let sha256 = validate::parse_hash(&id, &key.sha256)?;
-                    Ok((
-                        id,
-                        KeyConfig {
-                            sha256,
-                            allowed_routes: key.allowed_routes,
-                            over_budget: key.over_budget,
-                            max_request_usd: key.max_request_usd,
-                            read_config: key.read_config,
-                            manage_overrides: key.manage_overrides,
-                            limits: Limits {
-                                daily_usd: key.daily_usd,
-                                monthly_usd: key.monthly_usd,
-                                daily_tokens: key.daily_tokens,
-                                monthly_tokens: key.monthly_tokens,
-                            },
-                        },
-                    ))
+                    let key = validate::key(&id, key)?;
+                    Ok((id, key))
                 })
                 .collect::<Result<_, ConfigError>>()?,
             overrides: OverridesConfig::from(&raw.overrides),

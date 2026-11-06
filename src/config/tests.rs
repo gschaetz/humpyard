@@ -339,6 +339,48 @@ fn a_non_positive_request_cost_ceiling_is_rejected() {
     }
 }
 
+fn key_with(settings: &str) -> String {
+    format!("{VALID}\n[keys.alice]\nsha256 = \"{HASH_A}\"\n{settings}\n")
+}
+
+#[test]
+fn a_key_loads_with_a_request_rate_and_a_concurrency_limit() {
+    let config = Config::from_toml(
+        &key_with("max_requests_per_minute = 60\nmax_concurrent = 4"),
+        env,
+    )
+    .unwrap();
+    assert_eq!(config.keys["alice"].max_requests_per_minute, Some(60));
+    assert_eq!(config.keys["alice"].max_concurrent, Some(4));
+    let none = Config::from_toml(&key_with(""), env).unwrap();
+    assert_eq!(none.keys["alice"].max_requests_per_minute, None);
+    assert_eq!(none.keys["alice"].max_concurrent, None);
+}
+
+#[test]
+fn the_request_rate_may_be_at_most_one_hundred_thousand() {
+    let top = Config::from_toml(&key_with("max_requests_per_minute = 100000"), env).unwrap();
+    assert_eq!(top.keys["alice"].max_requests_per_minute, Some(100_000));
+    let message = err(&key_with("max_requests_per_minute = 100001"));
+    assert!(
+        message.contains("keys.alice.max_requests_per_minute"),
+        "{message}"
+    );
+}
+
+#[test]
+fn a_zero_negative_or_non_integer_limit_names_the_key_and_the_setting() {
+    for setting in ["max_requests_per_minute", "max_concurrent"] {
+        for value in ["0", "-1", "4294967296", "1.5", "\"4\""] {
+            let message = err(&key_with(&format!("{setting} = {value}")));
+            assert!(
+                message.contains(setting) && message.contains("alice"),
+                "{setting} = {value}: {message}"
+            );
+        }
+    }
+}
+
 #[test]
 fn invalid_limits_and_fractions_are_rejected() {
     let negative = budgeted(&format!(

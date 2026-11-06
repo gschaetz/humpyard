@@ -5,7 +5,9 @@ use std::collections::BTreeMap;
 use std::net::SocketAddr;
 
 use super::schema::{RawAdmin, RawConfig, RawKey, RawMetrics, RawProvider, RouteSpec, TailSpec};
-use super::{AdminConfig, AdminCredential, AdminScope, ConfigError, MetricsConfig};
+use super::{
+    AdminConfig, AdminCredential, AdminScope, ConfigError, KeyConfig, Limits, MetricsConfig,
+};
 
 /// Parses `sha256:<64 hex>` (the prefix is optional).
 pub(super) fn parse_hash(id: &str, text: &str) -> Result<[u8; 32], ConfigError> {
@@ -68,6 +70,58 @@ pub(super) fn metrics(
         key_labels: raw.key_labels,
         key_label_limit: raw.key_label_limit,
     })
+}
+
+/// Builds a key from its raw settings, checking the hash and the rate and concurrency limits.
+pub(super) fn key(id: &str, key: RawKey) -> Result<KeyConfig, ConfigError> {
+    Ok(KeyConfig {
+        sha256: parse_hash(id, &key.sha256)?,
+        allowed_routes: key.allowed_routes,
+        over_budget: key.over_budget,
+        max_request_usd: key.max_request_usd,
+        max_requests_per_minute: key_limit(
+            id,
+            "max_requests_per_minute",
+            key.max_requests_per_minute.as_ref(),
+            MAX_REQUESTS_PER_MINUTE,
+        )?,
+        max_concurrent: key_limit(
+            id,
+            "max_concurrent",
+            key.max_concurrent.as_ref(),
+            u32::MAX.into(),
+        )?,
+        read_config: key.read_config,
+        manage_overrides: key.manage_overrides,
+        limits: Limits {
+            daily_usd: key.daily_usd,
+            monthly_usd: key.monthly_usd,
+            daily_tokens: key.daily_tokens,
+            monthly_tokens: key.monthly_tokens,
+        },
+    })
+}
+
+/// The most a key may be admitted per minute; the limiter keeps one timestamp per admission.
+pub(super) const MAX_REQUESTS_PER_MINUTE: i64 = 100_000;
+
+/// Checks a key's optional rate or concurrency limit: a positive integer, at most `max`.
+pub(super) fn key_limit(
+    id: &str,
+    field: &str,
+    value: Option<&toml::Value>,
+    max: i64,
+) -> Result<Option<u32>, ConfigError> {
+    let Some(v) = value else { return Ok(None) };
+    v.as_integer()
+        .and_then(|n| u32::try_from(n).ok())
+        .filter(|n| (1..=max).contains(&i64::from(*n)))
+        .map(Some)
+        .ok_or_else(|| {
+            invalid(format!(
+                "keys.{id}.{field} must be a whole number from 1 to {max}"
+            ))
+        })
 }
 
 /// The longest admin credential id; ids appear in audit rows and in URLs.

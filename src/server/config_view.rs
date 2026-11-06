@@ -14,8 +14,24 @@ use serde_json::{Value, json};
 use switchyard_protocol::WireFormat;
 
 use super::{AppState, authenticate};
-use crate::config::{Config, Endpoint};
+use crate::config::{Config, Endpoint, KeyConfig};
 use crate::overrides::Override;
+
+/// One key as the view shows it: its limits and flags, never its hash.
+fn key_view(k: &KeyConfig) -> Value {
+    json!({
+        "allowed_routes": k.allowed_routes,
+        "over_budget": format!("{:?}", k.over_budget).to_lowercase(),
+        "daily_usd": k.limits.daily_usd,
+        "monthly_usd": k.limits.monthly_usd,
+        "daily_tokens": k.limits.daily_tokens,
+        "monthly_tokens": k.limits.monthly_tokens,
+        "max_requests_per_minute": k.max_requests_per_minute,
+        "max_concurrent": k.max_concurrent,
+        "read_config": k.read_config,
+        "source": "file",
+    })
+}
 
 /// The effective configuration of `config` as JSON, labelled with its fingerprint and load time.
 pub(super) fn view(
@@ -82,21 +98,7 @@ pub(super) fn view(
     let keys: serde_json::Map<String, Value> = config
         .keys
         .iter()
-        .map(|(id, k)| {
-            (
-                id.clone(),
-                json!({
-                    "allowed_routes": k.allowed_routes,
-                    "over_budget": format!("{:?}", k.over_budget).to_lowercase(),
-                    "daily_usd": k.limits.daily_usd,
-                    "monthly_usd": k.limits.monthly_usd,
-                    "daily_tokens": k.limits.daily_tokens,
-                    "monthly_tokens": k.limits.monthly_tokens,
-                    "read_config": k.read_config,
-                    "source": "file",
-                }),
-            )
-        })
+        .map(|(id, k)| (id.clone(), key_view(k)))
         .collect();
     json!({
         "object": "config",
