@@ -1,48 +1,43 @@
 # Security policy
 
-humpyard sits between your tools and your providers, so it handles API keys and the traffic that
-carries them. Security reports are welcome and taken seriously.
-
 ## Reporting a vulnerability
 
-Please **do not open a public issue** for a security problem.
+Please report it privately, not in a public issue or discussion.
 
-Use GitHub's private reporting: on the repository, open **Security**, then **Report a
-vulnerability**. Include what you found, how to reproduce it, and the version
-(`humpyard --version`). If private reporting is not available to you, ask for a private channel in
-the [Discord](https://discord.gg/qfTGr7KTfq) without describing the problem in public.
+Use GitHub's private vulnerability reporting: open the repository's **Security** tab and choose **Report a
+vulnerability**. Include what you found, how to reproduce it (a request, a configuration, a version), and what you
+think the impact is. If you are not sure whether something is a vulnerability, report it anyway.
 
-You can expect an acknowledgement within a few days. This is a small, pre-alpha project maintained
-on a best-effort basis, so fixes follow severity, not a fixed schedule. Reporters are credited in
-the release notes unless they prefer not to be.
+What to expect, from a small project run by one maintainer: an acknowledgement within 7 days, an assessment and a
+plan within 30, and a fix released as soon as it is ready. I will credit you in the release notes unless you prefer
+not to be named. I ask for up to 90 days to fix and release before details are made public, and sooner if a fix ships
+earlier; if a vulnerability is already being exploited, tell me and we will move faster.
 
 ## Supported versions
 
-Only the latest release receives fixes. humpyard is pre-alpha: upgrade rather than expecting
-patches to older versions.
+Only the latest release receives security fixes. Upgrading is a drop-in replacement of the binary or the image; read
+the release notes for anything that changes.
 
-## What counts
+## What is in scope
 
-Reports we care most about:
+Things that let someone do what they should not be able to do, for example: using the gateway without a valid key or
+beyond a key's route and budget limits; reaching the admin API without an admin credential or with too few scopes;
+reading a provider key, a client key or an admin credential; making the gateway send a key to a host other than the
+provider it belongs to; reading or altering another party's data; code execution; and crashing or exhausting the
+gateway with a small request.
 
-- a way to **read or leak a key**: a provider key in a log, response, error or decision row, or a
-  virtual key stored or compared in a way that exposes it;
-- **authentication or authorization bypass**: using a route, budget or endpoint a key should not
-  reach, or a client widening what its key allows;
-- **budget bypass** that spends beyond a configured limit;
-- **server-side request forgery** or credentials sent to an unintended host, including through
-  provider URLs, the quota poller or the price importer;
-- crashes or unbounded resource use triggered by a crafted request or upstream response.
+## What is not
 
-How keys are meant to be handled is written down in
-[docs/invariants.md](docs/invariants.md): virtual keys are stored only as hashes, provider keys come
-from the environment and never appear in logs or responses, and the decision log keeps routing
-metadata, never prompts or responses.
+A person who already has the configuration file, the environment or the host; a deployment that exposes the gateway
+or the admin API over plain HTTP on an untrusted network (put TLS in front of it); the behaviour of a provider or a
+model; and findings that need a misconfiguration the documentation warns against. Reports about these are still
+welcome as ordinary issues.
 
-## Not in scope
+## Research
 
-- Problems that need an attacker to already control your config file, your environment or your
-  host.
-- The behavior of a provider or model you route to.
-- Missing hardening in a deployment you wrote around humpyard (for example exposing the port to the
-  internet with no auth in front of it): see [Deployment](docs/deployment.md).
+Testing your own deployment is always fine. Please do not test against other people's deployments or degrade the
+service for anyone, and do not access or keep data beyond what is needed to show the problem. Acting in good faith
+within this policy, I will not pursue action against you. There is no bounty.
+
+How the project thinks about its threats, and which ones have no answer yet, is in the
+[threat model](https://github.com/gschaetz/humpyard/blob/main/docs/threat-model.md).
