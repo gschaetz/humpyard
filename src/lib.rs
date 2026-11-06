@@ -13,6 +13,7 @@ pub mod health;
 pub mod init;
 pub mod latency;
 pub mod ledger;
+pub mod limiter;
 pub mod metering;
 pub mod metrics;
 pub mod migrate;

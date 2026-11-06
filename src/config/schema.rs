@@ -269,6 +269,11 @@ pub(super) struct RawKey {
     /// The most one request may cost, in US dollars. Targets the request is certain to cost more on
     /// are removed from it.
     pub(super) max_request_usd: Option<f64>,
+    /// Requests admitted in any 60 seconds. Read untyped so that a zero, negative, fractional or
+    /// non-numeric value is refused naming the key and the setting, not with a parser message.
+    pub(super) max_requests_per_minute: Option<toml::Value>,
+    /// Requests in flight at once, a streamed answer counting until it ends. Read untyped like the rate.
+    pub(super) max_concurrent: Option<toml::Value>,
     /// May read the effective configuration (`GET /v1/config`); off by default.
     #[serde(default)]
     pub(super) read_config: bool,

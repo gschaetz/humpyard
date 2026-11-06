@@ -184,6 +184,8 @@ mod tests {
                 allowed_routes: None,
                 over_budget: OverBudget::Block,
                 max_request_usd: None,
+                max_requests_per_minute: None,
+                max_concurrent: None,
                 limits: Limits::default(),
                 read_config: false,
                 manage_overrides: false,

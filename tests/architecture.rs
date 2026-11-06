@@ -54,6 +54,8 @@ fn rules() -> BTreeMap<&'static str, Module> {
         ("latency", module(Core, &["clock", "num"])),
         // Reads a retry time out of an upstream error body; pure text parsing (ADR 0018, amended).
         ("retry_after", module(Core, &[])),
+        // Per-key request-rate and concurrency limits: exact sliding window, permit released on drop (`add-key-rate-limits`).
+        ("limiter", module(Core, &["clock", "config"])),
         // Makes a provider's error text safe to keep in a decision: one bounded line, key-shaped values redacted (ADR 0028).
         ("scrub", module(Core, &[])),
         // Makes a tool call's arguments a JSON object, completing a cut-off one; pure text (ADR 0029).
