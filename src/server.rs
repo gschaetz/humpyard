@@ -7,13 +7,14 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use axum::Router;
-use axum::body::Bytes;
+use axum::body::{Body, Bytes};
 use axum::extract::State;
 use axum::http::{HeaderMap, HeaderName, HeaderValue, StatusCode};
 use axum::response::sse::{Event, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use futures::{Stream, StreamExt};
+use http_body_util::BodyExt;
 use parking_lot::{Mutex, RwLock};
 use serde_json::{Value, json};
 use std::time::Duration;
@@ -39,7 +40,7 @@ use crate::error::GatewayError;
 use crate::estimate::estimate_tokens;
 use crate::latency::Latency;
 use crate::ledger::{AppliedOverride, CeilingRemoved, CostCeiling, Decision, Incapable, Ledger};
-use crate::limiter::{Limiters, Refusal};
+use crate::limiter::{Limiters, Permit, Refusal};
 use crate::metering::{Accounting, CALL_ID_HEADER, CallContext, StreamTemplate};
 use crate::num::f64_from_u64;
 use crate::overrides::{Drains, LedgerOverrides, NoDrains, Override, OverrideStore, StoreDrains};
@@ -1247,7 +1248,7 @@ async fn handle(
         &info,
     )?;
     record_selection(guard, snap, &selection);
-    check_rate_limit(snap, caller)?;
+    let permit = admit_key(snap, caller)?;
     let budget = check_budget(state, caller)?;
     guard.decision.budget = budget.map(|b| budget_label(b).to_string());
     let overrides = state.active_overrides().await;
@@ -1309,7 +1310,7 @@ async fn handle(
     let (target, mut response) = encode(format, state.hard_stop.clone(), executed, &extensions)?;
     set_header(&mut response, ROUTE_HEADER, &selection.name);
     set_header(&mut response, RULE_HEADER, &selection.rule);
-    Ok((target, response))
+    Ok((target, hold_permit(response, permit)))
 }
 
 /// Stage 1: parse the body and translate it into Switchyard's neutral form.
@@ -1530,15 +1531,16 @@ fn request_info(headers: &HeaderMap) -> RequestInfo {
 
 /// Stage 3: refuse a key that has used up its budget (unless it may continue on free targets).
 /// Returns the key's budget state, or `None` for open-mode requests.
-/// Refuses a request over its key's request-rate limit, after the route is allowed and before the budget is
-/// looked at, so a refusal here costs no provider quota and no allowance. An open gateway has no keys, so no
-/// limits.
-fn check_rate_limit(snap: &Snapshot, caller: Option<&KeyRecord>) -> Result<(), GatewayError> {
+/// Admits a request under its key's rate and concurrency limits, after the route is allowed and before the
+/// budget is looked at, so a refusal here costs no provider quota and no allowance. The permit, if the key has
+/// a concurrency limit, must be held until the response has ended (see [`hold_permit`]). An open gateway has no
+/// keys, so no limits.
+fn admit_key(snap: &Snapshot, caller: Option<&KeyRecord>) -> Result<Option<Permit>, GatewayError> {
     let Some(caller) = caller else {
-        return Ok(());
+        return Ok(None);
     };
     snap.limiters
-        .admit_rate(&caller.id)
+        .admit(&caller.id)
         .map_err(|refusal| match refusal {
             Refusal::Rate {
                 limit,
@@ -1554,6 +1556,21 @@ fn check_rate_limit(snap: &Snapshot, caller: Option<&KeyRecord>) -> Result<(), G
                 retry_after_secs: refusal.retry_after_secs(),
             },
         })
+}
+
+/// Makes the response own the permit, so it is returned when the body is dropped: after a buffered answer is
+/// sent, when a stream ends or fails, and when the client goes away (the server drops the body). The decision
+/// guard cannot hold it, because the guard is gone once the headers of a streamed answer are sent.
+fn hold_permit(response: Response, permit: Option<Permit>) -> Response {
+    match permit {
+        None => response,
+        Some(permit) => response.map(|body| {
+            Body::new(body.map_frame(move |frame| {
+                let _held = &permit;
+                frame
+            }))
+        }),
+    }
 }
 
 fn check_budget(
