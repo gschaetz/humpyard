@@ -33,6 +33,13 @@ pub enum GatewayError {
     /// request is too big, not the allowance used up.
     #[error("{0}")]
     CostCeiling(String),
+    /// The key is over its request-rate or concurrency limit (`add-key-rate-limits`), known before any
+    /// upstream call. Distinct from an upstream's own 429, which passes through as `Upstream`.
+    #[error("{message}")]
+    RateLimited {
+        message: String,
+        retry_after_secs: u64,
+    },
     #[error("{0}")]
     Unavailable(String),
     /// No target of the route can serve the request (tools, images or context size), known before
@@ -58,6 +65,7 @@ impl GatewayError {
             Self::Unauthorized(_) => StatusCode::UNAUTHORIZED,
             Self::Forbidden(_) => StatusCode::FORBIDDEN,
             Self::BudgetExceeded(_) | Self::CostCeiling(_) => StatusCode::PAYMENT_REQUIRED,
+            Self::RateLimited { .. } => StatusCode::TOO_MANY_REQUESTS,
             Self::Unavailable(_) | Self::OverrideNoTarget(_) => StatusCode::SERVICE_UNAVAILABLE,
             Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
@@ -76,6 +84,7 @@ impl GatewayError {
             Self::Forbidden(_) => "forbidden",
             Self::BudgetExceeded(_) => "budget_exhausted",
             Self::CostCeiling(_) => "request_cost_ceiling",
+            Self::RateLimited { .. } => "rate_limited",
             Self::Unavailable(_) => "no_eligible_target",
             Self::NoCapableTarget(_) => "no_capable_target",
             Self::OverrideNoTarget(_) => "override_no_target",
@@ -88,6 +97,7 @@ impl GatewayError {
     fn code(&self) -> Option<&'static str> {
         match self {
             Self::CostCeiling(_) => Some("request_cost_ceiling"),
+            Self::RateLimited { .. } => Some("rate_limit_exceeded"),
             _ => None,
         }
     }
@@ -119,7 +129,19 @@ impl GatewayError {
     }
 
     pub fn into_response_for(self, format: WireFormat) -> Response {
-        (self.status(), Json(self.body(format))).into_response()
+        let retry_after = match &self {
+            Self::RateLimited {
+                retry_after_secs, ..
+            } => Some(*retry_after_secs),
+            _ => None,
+        };
+        let mut response = (self.status(), Json(self.body(format))).into_response();
+        if let Some(secs) = retry_after {
+            response
+                .headers_mut()
+                .insert(axum::http::header::RETRY_AFTER, secs.into());
+        }
+        response
     }
 }
 

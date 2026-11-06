@@ -120,7 +120,8 @@ Notes:
   `HumpyardAdminRevoked`, which fires when one has lasted over 30 minutes.
 - **A request that matched no route** is counted under `route="none"`.
 - **Refusal reasons** are `unauthorized`, `forbidden`, `budget_exhausted`, `no_eligible_target`,
-  `unknown_model`, `bad_request`, `no_capable_target` and `request_cost_ceiling`. Upstream failures show up in `status_class` and in failovers.
+  `unknown_model`, `bad_request`, `no_capable_target`, `request_cost_ceiling` and `rate_limited` (a key over its
+  request-rate limit). Upstream failures show up in `status_class` and in failovers.
 
 ## What labels can contain
 
