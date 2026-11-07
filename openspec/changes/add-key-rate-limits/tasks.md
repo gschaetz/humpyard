@@ -14,8 +14,8 @@
 ## 3. Docs and wrap-up
 
 - [x] 3.1 Document the limits in `docs/configuration.md` and `docs/api.md` (the 429, its body and `Retry-After`), `docs/deployment.md` (one limiter per replica, reset on restart, and that a weak operator-chosen secret is the operator's to avoid: use `keygen`), update invariant 5 in `docs/invariants.md`, and close the rate-limit gap in `docs/threat-model.md`; verify the strict docs build
-- [ ] 3.2 Update `docs/architecture.md` (the module table, the status table, the "Last updated" line, the request-flow diagram's order of checks) and verify its Mermaid diagrams still match the code
-- [ ] 3.3 Check the threat model in `design.md` against what was built (each row still true, each proof exists) and record the result in the pull request
+- [x] 3.2 Update `docs/architecture.md` (the module table, the status table, the "Last updated" line, the request-flow diagram's order of checks) and verify its Mermaid diagrams still match the code
+- [x] 3.3 Check the threat model in `design.md` against what was built (each row still true, each proof exists) and record the result in the pull request
 - [ ] 3.4 Run fmt, clippy `-D warnings`, `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features --document-private-items` and the full test suite, then archive this change with `openspec archive add-key-rate-limits --yes`; verify all gates pass and the spec deltas merge
 
 ## Workflow follow-up
