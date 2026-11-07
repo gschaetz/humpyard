@@ -59,7 +59,8 @@ sufficient answer today; they are collected at the end.
 | Spend or use without a valid key | Bearer keys, stored only as SHA-256 hashes; authentication, route allow-list and budget are checked before any upstream call | Invariants 5 and 8; `tests/auth.rs`, `tests/budget.rs` |
 | A key leaks through logs or the ledger | Logs name the key id and never the key or its hash; the ledger holds key ids, never hashes | Invariants 8 and 10; `tests/auth.rs` (`logs_name_the_key_id_but_never_the_key_or_its_hash`) |
 | Guessing a key | Keys are random 256-bit values from `keygen`; a lookup is by the hash of the presented key, so timing reveals nothing usable about the key | `tests/cli.rs` (`keygen`) |
-| Many failed attempts, or one key hammering the gateway | None beyond budgets | **Gap:** no rate limit or concurrency cap on failed authentication or per key ([ADR 0025](adr/0025-the-ui-has-no-state-of-its-own.md) lists it for database-managed keys) |
+| One key hammering the gateway, or holding many slow streams open | Optional per-key `max_requests_per_minute` and `max_concurrent`, checked after authentication and before the budget and any upstream call; the concurrency permit is released by `Drop` however the response ends | Invariant 5; `tests/key_rate_limit.rs`, `tests/key_concurrency.rs`, `tests/key_limits_reload.rs`. Residual: counters are per process (reset on restart, multiplied by replicas) and a holder of several keys has several allowances |
+| Many failed authentication attempts | None | **Gap:** failed authentication is not throttled (a limit keyed by source address is inert behind a proxy and would lock out everyone); keys from `keygen` are 256 random bits, so guessing is not feasible, and a weak hand-chosen secret is the operator's error ([ADR 0025](adr/0025-the-ui-has-no-state-of-its-own.md) lists limits for database-managed keys) |
 | An oversized request exhausts memory | A request body above 2 MB is refused with 413 | **Gap:** this is the web framework's default, not a setting or a tested invariant; it also refuses large multimodal requests, which may not be wanted |
 | A client routes around a strict (private-only) route | The policy narrows targets by class before any algorithm runs | Invariant 6; `tests/policy.rs`; [ADR 0017](adr/0017-strict-routes-exclude-disallowed-classes-before-routing.md)
 | One key overspends | Per-key and per-request budgets, integer micro-USD accounting | Invariant 9; `tests/budget.rs` |
@@ -122,7 +123,7 @@ sufficient answer today; they are collected at the end.
 ## Gaps, in the order I would close them
 
 1. **Report channel.** A security policy and private reporting ([SECURITY.md](https://github.com/gschaetz/humpyard/blob/main/SECURITY.md)). Done with this page.
-2. **Failed-authentication and per-key rate limits**, for clients and for the admin API.
+2. **Failed-authentication limits**, for clients and for the admin API. (Per-key rate and concurrency limits are done.)
 3. **An explicit, configurable request-body limit** with a test, replacing the framework default.
 4. **Say plainly that the gateway speaks HTTP** and that TLS, in front of it, is required wherever a bearer key or an admin credential crosses a network.
 5. **Release provenance and repository hygiene:** artifact attestations and an SBOM for the binaries and the image; pin CI actions by commit; automated dependency updates for cargo, npm and the actions; secret scanning with push protection on the repository (the pre-commit check is not in CI).

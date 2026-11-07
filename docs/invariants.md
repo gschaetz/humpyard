@@ -40,9 +40,12 @@ in an ADR (`docs/adr/`) in the same change.
 
 ## Request path
 
-5. **Order of checks.** A request is authenticated, checked against the key's route allowlist, and
-   checked against its budget *before* any upstream call is made. *Enforced by* `tests/auth.rs`
-   (401/403 make no upstream call) and `tests/budget.rs` (402 makes no upstream call).
+5. **Order of checks.** A request is authenticated, checked against the key's route allowlist, checked
+   against the key's rate and concurrency limits, and then against its budget *before* any upstream call is
+   made. A limit is the authenticated key's, so a failed authentication changes no counter, and a request it
+   refuses spends no budget. *Enforced by* `tests/auth.rs` (401/403 make no upstream call), `tests/budget.rs`
+   (402 makes no upstream call), and `tests/key_rate_limit.rs` and `tests/key_concurrency.rs` (429 makes no
+   upstream call, comes before the budget, and a permit comes back however the request ends).
 6. **Routing never sees ineligible targets.** The policy narrows targets before any algorithm
    runs. *Enforced by* `tests/policy.rs`.
 7. **Ledger writes never block a response, and are flushed before a graceful exit.** Entries go

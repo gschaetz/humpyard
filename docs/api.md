@@ -17,6 +17,21 @@ curl localhost:8080/v1/responses -H 'content-type: application/json' \
   -d '{"model":"fast","input":"hi"}'
 ```
 
+## When a key is over its rate limit
+
+A key with `max_requests_per_minute` or `max_concurrent` ([Limiting a key's speed](budgets.md#limiting-a-keys-speed))
+that is over either gets HTTP 429 before any upstream call is made, with a `Retry-After` header in whole seconds
+(the time until the oldest request leaves the window, at least 1; always 1 for the concurrency limit) and the
+code `rate_limit_exceeded`:
+
+```json
+{"error": {"message": "key `agent` is limited to at most 60 requests per minute", "type": "rate_limit_error", "code": "rate_limit_exceeded"}}
+```
+
+On `/v1/messages` the body has the Anthropic shape (`{"type": "error", "error": {"type": "rate_limit_error", ...}}`).
+The code tells it apart from a 429 that a provider sent and the gateway passed through. A client should wait
+`Retry-After` seconds and try again; the refused request used no allowance.
+
 ## Everything else
 
 | Endpoint | What it does |

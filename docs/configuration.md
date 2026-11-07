@@ -61,6 +61,9 @@ See the [example configs](examples.md); `humpyard check-config <file>` validates
   default 60, 1 to 3600) and `quota_stale_secs` (default 300, at least the poll interval): the
   gateway reads that provider's published usage windows while serving; see
   [Provider quota](routing.md#provider-quota).
+- `max_requests_per_minute` and `max_concurrent` on a key (optional, off by default): the most requests the key
+  may make in 60 seconds (1 to 100000) and the most it may have in flight; the request after the limit gets a
+  429 with `Retry-After`. See [Limiting a key's speed](budgets.md#limiting-a-keys-speed).
 - `[metrics]` (optional, off by default): the Prometheus `/metrics` endpoint. `enabled`, `listen` (a
   separate address; recommended), `bearer_sha256` (the credential for serving it on the main
   listener), `key_labels` and `key_label_limit`. See [Metrics and alerts](metrics.md).
