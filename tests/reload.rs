@@ -242,6 +242,54 @@ async fn an_edited_rule_takes_effect_without_a_restart() {
 }
 
 #[tokio::test]
+async fn a_reload_adds_changes_and_removes_aliases_for_new_requests() {
+    let (_a, a_url) = upstream("A").await;
+    let (_b, b_url) = upstream("B").await;
+    let g = start(&config_text("", &a_url, &b_url, ""), None).await;
+    assert_eq!(g.ask("claude-x", &[]).await.0, 404, "no alias yet");
+
+    g.write(&config_text(
+        "",
+        &a_url,
+        &b_url,
+        "[aliases.claude-x]\nmodel = \"r1\"\n",
+    ));
+    g.reload_now().await;
+    g.after_reload(0).await;
+    assert_eq!(g.ask("claude-x", &[]).await, (200, "A".into()));
+
+    g.write(&config_text(
+        "",
+        &a_url,
+        &b_url,
+        "[aliases.claude-x]\nmodel = \"r2\"\n",
+    ));
+    g.reload_now().await;
+    g.after_reload(1).await;
+    assert_eq!(
+        g.ask("claude-x", &[]).await,
+        (200, "B".into()),
+        "retargeted"
+    );
+
+    g.write(&config_text(
+        "model_aliases = false",
+        &a_url,
+        &b_url,
+        "[aliases.claude-x]\nmodel = \"r2\"\n",
+    ));
+    g.reload_now().await;
+    g.after_reload(2).await;
+    assert_eq!(g.ask("claude-x", &[]).await.0, 404, "switched off");
+
+    g.write(&config_text("", &a_url, &b_url, ""));
+    g.reload_now().await;
+    g.after_reload(3).await;
+    assert_eq!(g.ask("claude-x", &[]).await.0, 404, "removed");
+    g.shut_down().await;
+}
+
+#[tokio::test]
 async fn a_bad_file_never_takes_effect_and_a_fixed_one_does() {
     let (_a, a_url) = upstream("A").await;
     let (_b, b_url) = upstream("B").await;

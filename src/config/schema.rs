@@ -52,6 +52,29 @@ pub(super) struct RawConfig {
     /// Ordered rules choosing the route from request facts (`[[select]]`).
     #[serde(default)]
     pub(super) select: Vec<SelectorSpec>,
+    /// Extra names clients may request, and `/v1/models` lists, for a route or target (ADR 0033).
+    #[serde(default)]
+    pub(super) aliases: BTreeMap<String, ModelAlias>,
+    /// Whether aliases are resolved and listed; they are validated either way.
+    #[serde(default = "default_model_aliases")]
+    pub(super) model_aliases: bool,
+}
+
+fn default_model_aliases() -> bool {
+    true
+}
+
+/// One `[aliases.<id>]` table: another name for a route or target, with optional labels that
+/// `/v1/models` shows to clients that build a model picker.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ModelAlias {
+    /// The route or target this name stands for.
+    pub model: String,
+    #[serde(default)]
+    pub display_name: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

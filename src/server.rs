@@ -814,8 +814,26 @@ async fn list_models(State(state): State<Arc<AppState>>, headers: HeaderMap) -> 
         .into_iter()
         .filter(|id| caller.as_ref().is_none_or(|key| key.may_use(id)))
         .map(|id| json!({"id": id, "object": "model", "created": 0, "owned_by": "humpyard"}))
+        .chain(
+            snap.config
+                .listed_aliases()
+                .filter(|(_, alias)| caller.as_ref().is_none_or(|key| key.may_use(&alias.model)))
+                .map(|(id, alias)| alias_entry(id, alias)),
+        )
         .collect();
     axum::Json(json!({"object": "list", "data": data})).into_response()
+}
+
+/// One `/v1/models` entry for an alias: the usual fields plus its labels when configured.
+fn alias_entry(id: &str, alias: &crate::config::ModelAlias) -> Value {
+    let mut entry = json!({"id": id, "object": "model", "created": 0, "owned_by": "humpyard"});
+    if let Some(name) = &alias.display_name {
+        entry["display_name"] = json!(name);
+    }
+    if let Some(text) = &alias.description {
+        entry["description"] = json!(text);
+    }
+    entry
 }
 
 /// Token counting for the Anthropic (`count_tokens`) and Responses (`input_tokens`) protocols,
@@ -833,12 +851,13 @@ async fn count_tokens(
     let counted = async {
         let caller = authenticate(&snap, &headers).await?;
         let decoded = decode(format, &body)?;
+        let model = snap.config.resolve_model(&decoded.model).to_string();
         let info = request_info(&headers);
         let stream = decoded.body["stream"].as_bool().unwrap_or(false);
         select_route(
             &snap,
             caller.as_ref(),
-            &decoded.model,
+            &model,
             stream,
             request_features(
                 &decoded.llm_request,
@@ -851,7 +870,7 @@ async fn count_tokens(
         )?;
         let upstream_form = encode_request(&decoded.llm_request, WireFormat::OpenAiChat)
             .map_err(|e| GatewayError::BadRequest(format!("cannot translate request: {e}")))?;
-        Ok::<_, GatewayError>((decoded.model, estimate_tokens(&upstream_form)))
+        Ok::<_, GatewayError>((model, estimate_tokens(&upstream_form)))
     }
     .await;
     match counted {
@@ -1229,6 +1248,9 @@ async fn handle(
         mut llm_request,
         model,
     } = decode(format, raw)?;
+    // An alias stands for a real name from here on: authorization, selectors, policy, the decision
+    // log and the ledger never see it (ADR 0033).
+    let model = snap.config.resolve_model(&model).to_string();
     // A cut-off tool call in the history would be refused by every provider that checks arguments (ADR 0029).
     // Repaired before anything reads the request, so a refusal below still records that it happened.
     let repaired = crate::repair_request::tool_calls(&mut llm_request);

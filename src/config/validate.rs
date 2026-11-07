@@ -389,6 +389,59 @@ pub(super) fn validate(raw: &RawConfig) -> Result<(), ConfigError> {
         validate_route(id, route)?;
         validate_strict(id, route, raw)?;
     }
+    validate_aliases(raw)
+}
+
+/// An alias id: 1 to 64 lowercase letters, digits, `.`, `_` or `-`.
+fn valid_alias_id(id: &str) -> bool {
+    (1..=64).contains(&id.len())
+        && id.bytes().all(|b| {
+            b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b'.' | b'_' | b'-')
+        })
+}
+
+/// `[aliases.<id>]` (ADR 0033): a well-formed id that collides with nothing, naming a route or
+/// target (never another alias), with bounded labels. Checked whether or not `model_aliases` is on,
+/// so switching it on later cannot fail a reload.
+fn validate_aliases(raw: &RawConfig) -> Result<(), ConfigError> {
+    for (id, alias) in &raw.aliases {
+        if !valid_alias_id(id) {
+            return Err(invalid(format!(
+                "aliases.{id}: an alias id is 1 to 64 lowercase letters, digits, `.`, `_` or `-`"
+            )));
+        }
+        if raw.routes.contains_key(id) || raw.targets.contains_key(id) {
+            return Err(invalid(format!(
+                "aliases.{id}: `{id}` is already a route or target name"
+            )));
+        }
+        if !raw.routes.contains_key(&alias.model) && !raw.targets.contains_key(&alias.model) {
+            let mut known: Vec<&str> = raw
+                .routes
+                .keys()
+                .chain(raw.targets.keys())
+                .map(String::as_str)
+                .collect();
+            known.sort_unstable();
+            return Err(invalid(format!(
+                "aliases.{id}.model names unknown route or target `{}`; the names that exist are {}",
+                alias.model,
+                known.join(", ")
+            )));
+        }
+        for (field, text, max) in [
+            ("display_name", &alias.display_name, 64),
+            ("description", &alias.description, 256),
+        ] {
+            if let Some(text) = text
+                && (text.chars().count() > max || text.chars().any(char::is_control))
+            {
+                return Err(invalid(format!(
+                    "aliases.{id}.{field} must be at most {max} characters with no control characters"
+                )));
+            }
+        }
+    }
     Ok(())
 }
 
