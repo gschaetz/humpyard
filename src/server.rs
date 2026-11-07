@@ -462,7 +462,10 @@ impl Snapshot {
         Ok(Self {
             selectors: Selectors::new(&config.select),
             keys: Arc::new(ConfigKeyStore::new(&config.keys)),
-            limiters: Limiters::new(clock.clone(), &config.keys),
+            limiters: match previous {
+                Some(p) => p.limiters.reloaded(&config.keys),
+                None => Limiters::new(clock.clone(), &config.keys),
+            },
             loaded_at_ms: clock.now_ms(),
             config,
             targets,
