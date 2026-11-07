@@ -7,8 +7,10 @@
 //! unwinding) gives the permit back.
 //!
 //! State is one entry per configured key, built from the configuration; nothing is keyed by what a caller
-//! sends, so it cannot grow with traffic. Counters live in memory, per process: a restart clears them
-//! and each replica enforces its own limit. The check is the caller's to place after authentication,
+//! sends, so it cannot grow with traffic. A reload keeps the counters of keys that stay limited (and the
+//! permits in flight), applies changed limits from the next request and drops the rest. Counters live in
+//! memory, per process: a restart clears them and each replica
+//! enforces its own limit. The check is the caller's to place after authentication,
 //! so only a key's holder can spend its allowance.
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
@@ -48,7 +50,8 @@ impl Refusal {
 /// Requests of one key in flight. Shared with every [`Permit`] it has handed out.
 #[derive(Debug)]
 struct InFlight {
-    limit: u32,
+    /// Changed in place by a reload, so the permits already handed out keep counting against it.
+    limit: AtomicU32,
     count: AtomicU32,
 }
 
@@ -123,7 +126,7 @@ impl Window {
 
 #[derive(Debug)]
 struct Entry {
-    rate: Option<Mutex<Window>>,
+    rate: Option<Arc<Mutex<Window>>>,
     concurrent: Option<Arc<InFlight>>,
 }
 
@@ -135,26 +138,37 @@ pub struct Limiters {
 
 impl Limiters {
     pub fn new(clock: Arc<dyn Clock>, keys: &BTreeMap<String, KeyConfig>) -> Self {
+        Self::build(clock, keys, None)
+    }
+
+    /// The limiters for a reloaded configuration. A key that is still limited keeps its counters, so a
+    /// reload neither resets a window nor loses a request in flight, and takes its new limits from now
+    /// on; a key that is gone, or no longer limited, is dropped. Permits already handed out still return
+    /// to the counter they came from.
+    #[must_use]
+    pub fn reloaded(&self, keys: &BTreeMap<String, KeyConfig>) -> Self {
+        Self::build(self.clock.clone(), keys, Some(self))
+    }
+
+    fn build(
+        clock: Arc<dyn Clock>,
+        keys: &BTreeMap<String, KeyConfig>,
+        previous: Option<&Self>,
+    ) -> Self {
         let by_key = keys
             .iter()
             .filter(|(_, key)| {
                 key.max_requests_per_minute.is_some() || key.max_concurrent.is_some()
             })
             .map(|(id, key)| {
+                let before = previous.and_then(|p| p.by_key.get(id));
                 let entry = Entry {
-                    rate: key.max_requests_per_minute.map(|limit| {
-                        Mutex::new(Window {
-                            limit,
-                            admitted: VecDeque::new(),
-                            latest_ms: i64::MIN,
-                        })
-                    }),
-                    concurrent: key.max_concurrent.map(|limit| {
-                        Arc::new(InFlight {
-                            limit,
-                            count: AtomicU32::new(0),
-                        })
-                    }),
+                    rate: key
+                        .max_requests_per_minute
+                        .map(|limit| carry_window(before, limit)),
+                    concurrent: key
+                        .max_concurrent
+                        .map(|limit| carry_in_flight(before, limit)),
                 };
                 (id.clone(), entry)
             })
@@ -201,18 +215,42 @@ impl Limiters {
     }
 }
 
+/// The key's window from before a reload at its new limit, or a fresh one.
+fn carry_window(before: Option<&Entry>, limit: u32) -> Arc<Mutex<Window>> {
+    if let Some(window) = before.and_then(|e| e.rate.as_ref()) {
+        window.lock().limit = limit;
+        return Arc::clone(window);
+    }
+    Arc::new(Mutex::new(Window {
+        limit,
+        admitted: VecDeque::new(),
+        latest_ms: i64::MIN,
+    }))
+}
+
+/// The key's in-flight counter from before a reload at its new limit, or a fresh one.
+fn carry_in_flight(before: Option<&Entry>, limit: u32) -> Arc<InFlight> {
+    if let Some(in_flight) = before.and_then(|e| e.concurrent.as_ref()) {
+        in_flight.limit.store(limit, Ordering::Release);
+        return Arc::clone(in_flight);
+    }
+    Arc::new(InFlight {
+        limit: AtomicU32::new(limit),
+        count: AtomicU32::new(0),
+    })
+}
+
 /// Takes a place under the limit, refusing when none is left.
 fn take(in_flight: &Arc<InFlight>) -> Result<Permit, Refusal> {
+    let limit = in_flight.limit.load(Ordering::Acquire);
     if adjust(&in_flight.count, |n| {
-        (n < in_flight.limit).then(|| n.saturating_add(1))
+        (n < limit).then(|| n.saturating_add(1))
     }) {
         Ok(Permit {
             in_flight: Arc::clone(in_flight),
         })
     } else {
-        Err(Refusal::Concurrent {
-            limit: in_flight.limit,
-        })
+        Err(Refusal::Concurrent { limit })
     }
 }
 
@@ -441,5 +479,50 @@ mod tests {
             .admitted
             .len();
         assert!(held <= 5, "{held} timestamps kept for a limit of 5");
+    }
+
+    #[test]
+    fn a_reload_keeps_counters_applies_new_limits_and_drops_removed_keys() {
+        let clock = TestClock::at(1_000_000);
+        let before = limiters(&clock, &[("a", Some(2), Some(1)), ("gone", Some(1), None)]);
+        let held = before.admit("a").unwrap();
+        assert!(held.is_some());
+        assert!(before.admit("gone").is_ok());
+        assert!(before.admit("gone").is_err());
+        let keys = [
+            ("a".to_string(), key(Some(5), Some(3))),
+            ("new".to_string(), key(Some(1), None)),
+        ]
+        .into_iter()
+        .collect();
+        let after = before.reloaded(&keys);
+        // The window and the in-flight count came across, under the raised limits.
+        assert_eq!(after.in_flight("a"), 1);
+        let second = after.admit("a").unwrap();
+        assert_eq!(after.in_flight("a"), 2);
+        // A removed key has no state; a new key starts empty.
+        assert!(!after.by_key.contains_key("gone"));
+        assert!(after.admit("new").is_ok());
+        // The permit taken before the reload returns to the counter the new limiters read.
+        drop(held);
+        assert_eq!(after.in_flight("a"), 1);
+        drop(second);
+        assert_eq!(after.in_flight("a"), 0);
+    }
+
+    #[test]
+    fn a_lowered_limit_applies_from_the_next_request() {
+        let clock = TestClock::at(1_000_000);
+        let before = limiters(&clock, &[("a", Some(3), Some(3))]);
+        let _p = before.admit("a").unwrap();
+        let _q = before.admit("a").unwrap();
+        let keys = [("a".to_string(), key(Some(2), Some(1)))]
+            .into_iter()
+            .collect();
+        let after = before.reloaded(&keys);
+        assert!(matches!(
+            after.admit("a"),
+            Err(Refusal::Concurrent { limit: 1 })
+        ));
     }
 }
