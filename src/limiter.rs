@@ -179,15 +179,6 @@ impl Limiters {
         Ok(permit)
     }
 
-    /// Admits one request of `key` against its request-rate limit only. A key without one, and a key
-    /// this gateway does not know, are admitted.
-    pub fn admit_rate(&self, key: &str) -> Result<(), Refusal> {
-        match self.by_key.get(key) {
-            Some(entry) => self.admit_in_window(entry),
-            None => Ok(()),
-        }
-    }
-
     fn admit_in_window(&self, entry: &Entry) -> Result<(), Refusal> {
         let Some(rate) = &entry.rate else {
             return Ok(());
