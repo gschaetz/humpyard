@@ -143,6 +143,16 @@ from) a keyless gateway. Provider API keys come from the process environment, wh
 process cannot change, so rotating one needs a restart. Carried over by a reload: the health of
 endpoints that did not change, budget counters, and the session state of unchanged routes.
 
+## Per-key limits
+
+`max_requests_per_minute` and `max_concurrent` ([Keys](budgets.md#limiting-a-keys-speed)) are counted in the memory
+of one process. **Each replica enforces its own limit, so N replicas allow N times the setting**, and **a restart
+clears the counters**. A reload keeps them. Size a limit for one replica and divide it if you run several.
+
+A limit protects against a leaked or runaway key, not against guessing one: failed authentication is not
+throttled. Generate keys with `humpyard keygen` (256 random bits); a weak, hand-chosen secret is a
+configuration error the gateway cannot make up for.
+
 ## Operating notes
 
 - `GET /healthz` answers 200 while the process is up; `GET /v1/health` (with a key when the

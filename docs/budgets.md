@@ -297,6 +297,41 @@ The decision records a `cost_ceiling` (the ceiling and the targets removed, each
 micro-USD), `POST /v1/route/explain` reports the same (and accepts `max_output_tokens` for the hypothetical
 request), and `humpyard_cost_ceiling_total{outcome}` counts requests where it removed targets or refused.
 
+### Limiting a key's speed
+
+A key may also be limited in how fast it can ask, which budgets do not do: they bound what a key spends, not
+how quickly. Both settings are optional and off by default, so an existing configuration is unaffected.
+
+```toml
+[keys.agent]
+sha256 = "sha256:..."
+max_requests_per_minute = 60   # 1 to 100000
+max_concurrent = 4             # requests in flight at once
+```
+
+- `max_requests_per_minute` admits at most that many requests in any 60 seconds (an exact sliding window, not a
+  per-minute bucket that resets on the clock).
+- `max_concurrent` admits at most that many requests at once. A request holds its place until its answer has
+  ended: a buffered answer when it has been sent, a stream when it finishes, fails or the client disconnects.
+
+A value that is zero, negative, not a whole number or over the maximum is refused at load, naming the key and the
+setting. The request after the limit is refused before any upstream call with HTTP 429, the code
+`rate_limit_exceeded` and a `Retry-After` header (see [the API](api.md#when-a-key-is-over-its-rate-limit)). It
+costs no provider quota, spends nothing from the budget, and cannot start a failover.
+
+The limits are the authenticated key's: they are checked after the key and its route have been accepted, so a
+caller with a wrong key changes no counter and cannot use up anyone's allowance. Only the endpoints that reach a
+provider count; reading statistics, `/v1/key/info` and `/v1/models` are never limited. The effective
+configuration (`GET /v1/config`) shows both settings, `null` when unset.
+
+A reload applies a changed limit from the next request, keeps the counters of keys that stay limited (and the
+requests in flight), and drops the state of a key that is removed or no longer limited. Counters are in memory:
+**each gateway process enforces its own limit, and a restart clears it.** With several replicas the effective
+limit is the setting times the replicas, and a holder of several keys has each key's allowance.
+
+The refusal is a decision with the outcome `rate_limited` and is counted in
+`humpyard_refusals_total{reason="rate_limited"}`.
+
 ## Notes
 
 - Switchyard falls back across *all* of a route's targets when the answer candidates fail, so a
