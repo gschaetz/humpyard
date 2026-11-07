@@ -36,7 +36,7 @@ The code tells it apart from a 429 that a provider sent and the gateway passed t
 
 | Endpoint | What it does |
 |---|---|
-| `GET /v1/models` | the routes and targets a key may use |
+| `GET /v1/models` | the routes and targets a key may use, plus the [aliases](configuration.md) for them (an `[aliases.<id>]` entry carries its `display_name` and `description` when set). A request may name an alias as its `model`; it is served, authorized and recorded as the real route or target. `model_aliases = false` removes aliases from both |
 | `GET /healthz` | liveness |
 | `GET /v1/key/info` | a key's limits, spend and budget state |
 | `GET /v1/health` | which provider endpoints are being skipped, and which config version is loaded |

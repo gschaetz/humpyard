@@ -21,6 +21,23 @@ See the [example configs](examples.md); `humpyard check-config <file>` validates
   Clients may request a target by name; endpoints are tried in order, failing over on
   connection errors, timeouts, HTTP 429 and 5xx (not on other 4xx, and not once a stream has begun).
   Responses carry `x-humpyard-target` and `x-humpyard-provider` headers.
+- `[aliases.<id>]` (optional): another name clients may request, and `GET /v1/models` lists, for a route or
+  target: `model` (required, the route or target), `display_name` (up to 64 characters) and `description` (up to
+  256), both optional. The id is 1 to 64 lowercase letters, digits, `.`, `_` or `-` and must not equal a route,
+  target or other alias; `model` cannot name another alias. A request for an alias is served as the
+  real name, so key allowlists, selector rules, the ledger and the decision log all see the route or target.
+  A key's `allowed_routes` lists real names only (an alias is usable when its target is), and naming an alias
+  there is a load error. The top-level `model_aliases = false` stops resolving and listing aliases (default
+  `true`); the tables are still validated, so turning it back on cannot fail a reload. This is how a client that
+  only shows names containing `claude`, such as Claude Code's `/model` picker, can offer your pools:
+
+  ```toml
+  [aliases.claude-deep]
+  model = "deep-thinker-public"
+  display_name = "Deep thinker (public)"
+  description = "Public pool, best for planning and review"
+  ```
+
 - `[routes.<name>]`: a built-in Switchyard algorithm over targets, requested by clients as the
   `model`: `passthrough`, `random` (weights, seed), `pool = { strength, min_context_window }` in place of `targets` on `passthrough`, `fastest` and `random` (every
   target with that [strength](routing.md#pools-and-strengths), resolved at load), `fastest` (eligible targets ordered by observed speed, with

@@ -16,9 +16,9 @@ pub use discovered::DiscoveryState;
 pub use pools::{LeftOut, PoolReport};
 use schema::RawConfig;
 pub use schema::{
-    ClassifierMode, ClassifyTrigger, DiscoverSpec, Endpoint, FallbackClass, FallbackOn, OverBudget,
-    PickerMode, PoolSpec, Price, PriceTier, Rates, RouteSpec, SelectorSpec, TailSpec, TokenRange,
-    When,
+    ClassifierMode, ClassifyTrigger, DiscoverSpec, Endpoint, FallbackClass, FallbackOn, ModelAlias,
+    OverBudget, PickerMode, PoolSpec, Price, PriceTier, Rates, RouteSpec, SelectorSpec, TailSpec,
+    TokenRange, When,
 };
 use validate::invalid;
 pub use validate::{CREDENTIAL_HEADERS, QUOTA_SOURCES, parse_price_source};
@@ -93,6 +93,10 @@ pub struct Config {
     pub admin: AdminConfig,
     /// Routing rules, first match wins.
     pub select: Vec<SelectorSpec>,
+    /// `[aliases.<id>]`: other names for a route or target (ADR 0033), validated even when off.
+    pub aliases: BTreeMap<String, ModelAlias>,
+    /// Whether aliases are resolved and listed (`model_aliases`, on by default).
+    pub model_aliases: bool,
 }
 
 /// Endpoint circuit-breaker settings. A `failure_threshold` of 0 disables health tracking.
@@ -454,6 +458,8 @@ impl Config {
             admin,
             ledger: raw.ledger.map(|l| l.path),
             select: raw.select,
+            aliases: raw.aliases,
+            model_aliases: raw.model_aliases,
             health: HealthConfig::from(&raw.health),
             budget: BudgetConfig {
                 restricted_at: raw.budget.restricted_at,
@@ -469,6 +475,26 @@ impl Config {
             .values()
             .flatten()
             .any(|endpoint| endpoint.context_window.is_some())
+    }
+
+    /// The real route or target a requested name stands for: an alias resolves to its target and
+    /// anything else comes back unchanged. With `model_aliases` off every name comes back unchanged
+    /// (ADR 0033).
+    pub fn resolve_model<'a>(&'a self, requested: &'a str) -> &'a str {
+        if !self.model_aliases {
+            return requested;
+        }
+        self.aliases
+            .get(requested)
+            .map_or(requested, |alias| alias.model.as_str())
+    }
+
+    /// The aliases clients may request and `/v1/models` lists (none when `model_aliases` is off).
+    pub fn listed_aliases(&self) -> impl Iterator<Item = (&str, &ModelAlias)> {
+        self.aliases
+            .iter()
+            .filter(|_| self.model_aliases)
+            .map(|(id, alias)| (id.as_str(), alias))
     }
 
     /// Route and target names clients may request, routes first.

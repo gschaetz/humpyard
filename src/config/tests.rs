@@ -811,3 +811,112 @@ fn an_expiry_reads_back_as_a_utc_timestamp() {
     );
     assert_eq!(config.admin.credentials["sam"].expires_utc(), None);
 }
+
+fn with_aliases(extra: &str) -> String {
+    format!("{VALID}\n{extra}")
+}
+
+#[test]
+fn aliases_are_optional_and_on_by_default() {
+    let plain = Config::from_toml(VALID, env).unwrap();
+    assert!(plain.aliases.is_empty());
+    assert!(plain.model_aliases);
+    assert_eq!(plain.resolve_model("auto"), "auto");
+
+    let config = Config::from_toml(
+        &with_aliases(
+            "[aliases.claude-fast]\nmodel = \"fast\"\ndisplay_name = \"Fast\"\ndescription = \"Small and quick\"\n[aliases.claude-auto]\nmodel = \"auto\"\n",
+        ),
+        env,
+    )
+    .unwrap();
+    assert_eq!(config.resolve_model("claude-fast"), "fast");
+    assert_eq!(config.resolve_model("claude-auto"), "auto");
+    assert_eq!(config.resolve_model("fast"), "fast");
+    assert_eq!(config.resolve_model("nope"), "nope");
+    let alias = &config.aliases["claude-fast"];
+    assert_eq!(alias.display_name.as_deref(), Some("Fast"));
+    assert_eq!(alias.description.as_deref(), Some("Small and quick"));
+}
+
+#[test]
+fn an_alias_must_not_collide_with_a_name() {
+    let route = with_aliases("[aliases.auto]\nmodel = \"fast\"\n");
+    assert!(err(&route).contains("aliases.auto") && err(&route).contains("route or target"));
+    let target = with_aliases("[aliases.smart]\nmodel = \"fast\"\n");
+    assert!(err(&target).contains("aliases.smart"));
+}
+
+#[test]
+fn an_alias_names_a_route_or_target_and_never_another_alias() {
+    let ghost = with_aliases("[aliases.claude-x]\nmodel = \"ghost\"\n");
+    let message = err(&ghost);
+    assert!(message.contains("aliases.claude-x.model") && message.contains("`ghost`"));
+    assert!(message.contains("auto, fast, smart"));
+    let chain = with_aliases(
+        "[aliases.claude-a]\nmodel = \"fast\"\n[aliases.claude-b]\nmodel = \"claude-a\"\n",
+    );
+    assert!(err(&chain).contains("aliases.claude-b.model"));
+}
+
+#[test]
+fn alias_ids_and_labels_are_bounded() {
+    for id in ["Claude", "has space", &"a".repeat(65)] {
+        let text = with_aliases(&format!("[aliases.\"{id}\"]\nmodel = \"fast\"\n"));
+        assert!(err(&text).contains("an alias id is 1 to 64"), "{id}");
+    }
+    let long_name = with_aliases(&format!(
+        "[aliases.claude-x]\nmodel = \"fast\"\ndisplay_name = \"{}\"\n",
+        "n".repeat(65)
+    ));
+    assert!(err(&long_name).contains("aliases.claude-x.display_name"));
+    let long_description = with_aliases(&format!(
+        "[aliases.claude-x]\nmodel = \"fast\"\ndescription = \"{}\"\n",
+        "d".repeat(257)
+    ));
+    assert!(err(&long_description).contains("aliases.claude-x.description"));
+    let control = with_aliases("[aliases.claude-x]\nmodel = \"fast\"\ndescription = \"a\\nb\"\n");
+    assert!(err(&control).contains("no control characters"));
+    let edge = with_aliases(&format!(
+        "[aliases.claude-x]\nmodel = \"fast\"\ndisplay_name = \"{}\"\ndescription = \"{}\"\n",
+        "n".repeat(64),
+        "d".repeat(256)
+    ));
+    assert!(Config::from_toml(&edge, env).is_ok());
+}
+
+#[test]
+fn the_switch_turns_resolution_off_but_not_validation() {
+    let off = format!(
+        "model_aliases = false\n{}",
+        with_aliases("[aliases.claude-fast]\nmodel = \"fast\"\n")
+    );
+    let config = Config::from_toml(&off, env).unwrap();
+    assert!(!config.model_aliases);
+    assert_eq!(config.resolve_model("claude-fast"), "claude-fast");
+
+    let on = format!(
+        "model_aliases = true\n{}",
+        with_aliases("[aliases.claude-fast]\nmodel = \"fast\"\n")
+    );
+    assert_eq!(
+        Config::from_toml(&on, env)
+            .unwrap()
+            .resolve_model("claude-fast"),
+        "fast"
+    );
+
+    let bad = format!(
+        "model_aliases = false\n{}",
+        with_aliases("[aliases.auto]\nmodel = \"fast\"\n")
+    );
+    assert!(err(&bad).contains("aliases.auto"));
+}
+
+#[test]
+fn a_key_cannot_grant_an_alias() {
+    let text = format!(
+        "{VALID}\n[aliases.claude-fast]\nmodel = \"fast\"\n[keys.alice]\nsha256 = \"{HASH_A}\"\nallowed_routes = [\"claude-fast\"]\n[ledger]\npath = \"x.db\"\n"
+    );
+    assert!(err(&text).contains("unknown route or target `claude-fast`"));
+}
