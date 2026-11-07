@@ -62,6 +62,22 @@ Notes from the verified run (a read-only agent in a scratch directory, `claude -
 
 - **Don't name a route `auto`.** Claude Code has its own "auto mode"; the name triggered a client
   message about it. `agent` (or anything else) is fine.
+- **Letting `/model` list your routes (verified 2026-11-07, Claude Code 2.1.311).** Claude Code can fill
+  its model picker from `GET /v1/models` when `CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1` and
+  `ANTHROPIC_BASE_URL` points at a gateway, but it keeps only ids that contain `claude` or `anthropic`. Give
+  each route an [alias](configuration.md) that does, with the labels you want the picker to show:
+
+  ```toml
+  [aliases.claude-deep]
+  model = "deep"
+  display_name = "Deep thinker"
+  description = "Stronger models, slower"
+  ```
+
+  Against a gateway with two such aliases, a Claude Code run cached exactly those two models, with their
+  labels, in its `gateway-models.json` and left the real names out. A request for an alias is served as the
+  route, and the key's allow-list, the ledger and the decision log all use the route's name. I checked the
+  cache and the request path, not the interactive picker itself.
 - **The `unrecognized_model` notice** Claude Code prints for non-Claude model names is cosmetic.
 - **Routing in action.** The stage router started on the efficient model, moved to the capable one
   after the first tool errors, and every call, with its cached-prompt tokens, was recorded in the
