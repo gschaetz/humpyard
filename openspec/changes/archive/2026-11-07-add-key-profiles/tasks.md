@@ -11,7 +11,7 @@
 
 - [x] 2.1 Document key profiles in `docs/budgets.md` (the section on keys) and `docs/configuration.md`, including that a key profile is unrelated to the `x-humpyard-profile` header; verify the strict docs build
 - [x] 2.2 Update `docs/architecture.md` (status table, "Last updated", the config row in the module table if it changed) and verify its Mermaid diagrams still match the code; check the design's threat model against what was built (each row true, each proof present), record it in the pull request, and update `docs/threat-model.md` for the new gap row
-- [ ] 2.3 Run fmt, clippy `-D warnings`, `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features --document-private-items` and the full test suite, then archive with `openspec archive add-key-profiles --yes`; verify all gates pass and the spec deltas merge
+- [x] 2.3 Run fmt, clippy `-D warnings`, `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features --document-private-items` and the full test suite, then archive with `openspec archive add-key-profiles --yes`; verify all gates pass and the spec deltas merge
 
 ## Workflow follow-up
 
