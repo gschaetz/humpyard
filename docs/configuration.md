@@ -101,7 +101,8 @@ See the [example configs](examples.md); `humpyard check-config <file>` validates
   ```
 
   Each credential has an id (1 to 64 letters, digits, `-`, `_` or `.`), which is how it appears in audit rows, a
-  hash, at least one **scope** (`read`, `overrides` or `credentials`, with no repeats) and an optional expiry. A
+  hash, at least one **scope** (`read`, `overrides`, `credentials` or `config`, with no repeats; none implies another)
+  and an optional expiry. A
   credential's hash must differ from every `[keys.*]` hash, the metrics credential and every other admin
   credential, so a leaked client key can never open the admin API. `listen` needs at least one credential and
   must differ from `listen` and `[metrics] listen`. `humpyard keygen <id> --admin --scopes read,overrides

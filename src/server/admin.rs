@@ -802,7 +802,7 @@ scopes = ["credentials"]
             if let Some(scope) = route.scope {
                 let other = match scope {
                     AdminScope::Read => &operator,
-                    AdminScope::Overrides | AdminScope::Credentials => &reader,
+                    AdminScope::Overrides | AdminScope::Credentials | AdminScope::Config => &reader,
                 };
                 let (status, body) = call(&app, route, Some(other)).await;
                 assert_eq!(
