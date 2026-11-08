@@ -152,11 +152,13 @@ pub enum AdminScope {
     Overrides,
     /// Revoke other admin credentials.
     Credentials,
+    /// Ask for a patch to the configuration file (`add-config-patch`, ADR 0034). Independent of `Read`.
+    Config,
 }
 
 impl AdminScope {
     /// Every scope, in the order they are documented.
-    pub const ALL: [AdminScope; 3] = [Self::Read, Self::Overrides, Self::Credentials];
+    pub const ALL: [AdminScope; 4] = [Self::Read, Self::Overrides, Self::Credentials, Self::Config];
 
     #[must_use]
     pub fn as_str(self) -> &'static str {
@@ -164,6 +166,7 @@ impl AdminScope {
             Self::Read => "read",
             Self::Overrides => "overrides",
             Self::Credentials => "credentials",
+            Self::Config => "config",
         }
     }
 

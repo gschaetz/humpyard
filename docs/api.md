@@ -64,8 +64,10 @@ or any other client endpoint. Send it as `Authorization: Bearer <secret>`.
 - **One refusal.** A missing, unknown or expired credential, and a client key, all get the same 401 with the
   code `admin_credential_invalid` and `WWW-Authenticate: Bearer`, so the answer says nothing about which
   credentials exist.
-- **Scopes.** An endpoint needs a scope (`read`, `overrides` or `credentials`); a valid credential without it gets
-  403 with the code `admin_scope_required` and the missing scope in `scope`.
+- **Scopes.** An endpoint needs a scope (`read`, `overrides`, `credentials` or `config`); a valid credential without
+  it gets 403 with the code `admin_scope_required` and the missing scope in `scope`. No scope implies another:
+  `config`, which lets a credential ask for a patch to the configuration file, does not include `read`, so an
+  editor holds both.
 - **Reload.** Credentials are part of the configuration snapshot: a reload applies additions, removals and
   changed scopes or expiry at once, and a rejected reload leaves the old set in force. Moving `[admin] listen`
   needs a restart.

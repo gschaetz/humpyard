@@ -194,6 +194,31 @@ fn keygen_admin_prints_a_block_that_loads_and_authenticates() {
 }
 
 #[test]
+fn keygen_admin_accepts_the_config_scope() {
+    let (ok, text, err) = keygen(&["editor", "--admin", "--scopes", "read,config"]);
+    assert!(ok, "{err}");
+    let secret = text
+        .split_whitespace()
+        .find(|w| w.starts_with("sk-humpyard-"))
+        .expect("secret printed");
+    let block = &text[text
+        .find("[admin.credentials.editor]")
+        .expect("block printed")..];
+    let config = humpyard::config::Config::from_toml(
+        &format!(
+            "listen = \"127.0.0.1:0\"\n[providers.p]\nbase_url = \"http://127.0.0.1:1\"\napi_key_env = \"PATH\"\n\
+             [targets.t]\nendpoints = [{{ provider = \"p\", model = \"m\" }}]\n{block}"
+        ),
+        |name| std::env::var(name).ok(),
+    )
+    .unwrap();
+    let principal = humpyard::admin::authenticate(&config.admin, Some(secret), 0).unwrap();
+    assert!(principal.may(humpyard::config::AdminScope::Config));
+    assert!(principal.may(humpyard::config::AdminScope::Read));
+    assert!(!principal.may(humpyard::config::AdminScope::Overrides));
+}
+
+#[test]
 fn keygen_admin_refuses_what_the_gateway_would_refuse() {
     // No scopes, an unknown scope, a bad id, an expiry without an offset, and admin-only flags without `--admin`.
     for args in [

@@ -677,6 +677,29 @@ fn an_admin_section_with_credentials_loads() {
 }
 
 #[test]
+fn the_config_scope_loads_alone_and_is_not_implied_by_another() {
+    let text = admin_config(&format!(
+        "[admin]\n[admin.credentials.editor]\nsha256 = \"{HASH_A}\"\nscopes = [\"config\"]\n\
+         [admin.credentials.owner]\nsha256 = \"{HASH_B}\"\nscopes = [\"read\", \"overrides\", \"credentials\"]\n"
+    ));
+    let config = Config::from_toml(&text, env).unwrap();
+    let editor = &config.admin.credentials["editor"];
+    assert_eq!(
+        editor.scopes.iter().collect::<Vec<_>>(),
+        [&AdminScope::Config]
+    );
+    // Holding every other scope grants nothing here, and `config` grants nothing else.
+    assert!(
+        !config.admin.credentials["owner"]
+            .scopes
+            .contains(&AdminScope::Config)
+    );
+    assert!(!editor.scopes.contains(&AdminScope::Read));
+    assert_eq!(AdminScope::parse("config"), Some(AdminScope::Config));
+    assert_eq!(AdminScope::Config.as_str(), "config");
+}
+
+#[test]
 fn no_admin_section_leaves_the_admin_api_off() {
     let config = Config::from_toml(VALID, env).unwrap();
     assert!(!config.admin.enabled());

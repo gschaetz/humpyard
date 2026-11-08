@@ -2,8 +2,8 @@
 
 ## 1. The scope and the dependencies
 
-- [ ] 1.1 Add `toml_edit` and `similar` to `Cargo.toml` and add `AdminScope::Config` (in `ALL`, parsed, displayed, accepted by `humpyard keygen --admin --scopes`, shown by `check-config`); verify `cargo deny check` passes, config tests for a credential listing `config` and for an unknown scope still being refused, and a keygen test that the printed block loads
-- [ ] 1.2 Document the scope in `docs/configuration.md` (the `[admin]` bullet) and `docs/api.md` (the admin scopes table); verify the strict docs build
+- [x] 1.1 Add `toml_edit` and `similar` to `Cargo.toml` and add `AdminScope::Config` (in `ALL`, parsed, displayed, accepted by `humpyard keygen --admin --scopes`, shown by `check-config`); verify `cargo deny check` passes, config tests for a credential listing `config` and for an unknown scope still being refused, and a keygen test that the printed block loads
+- [x] 1.2 Document the scope in `docs/configuration.md` (the `[admin]` bullet) and `docs/api.md` (the admin scopes table); verify the strict docs build
 
 ## 2. Editing and checking
 
