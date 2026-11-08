@@ -3,6 +3,7 @@
 
 mod discovered;
 mod pools;
+mod profiles;
 mod schema;
 #[cfg(test)]
 mod tests;
@@ -227,6 +228,8 @@ pub struct KeyConfig {
     pub read_config: bool,
     /// May create and remove runtime overrides (`/v1/overrides`).
     pub manage_overrides: bool,
+    /// The profile the settings above were resolved against, if the key names one.
+    pub profile: Option<String>,
 }
 
 /// Per-period limits; `None` means unlimited.
@@ -399,6 +402,7 @@ impl Config {
             None => (std::collections::BTreeSet::new(), DiscoveryState::Off),
         };
         let pools = pools::resolve(&mut raw)?;
+        profiles::resolve(&mut raw)?;
         validate::validate(&raw)?;
 
         let providers = build_providers(raw.providers, env)?;

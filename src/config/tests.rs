@@ -920,3 +920,195 @@ fn a_key_cannot_grant_an_alias() {
     );
     assert!(err(&text).contains("unknown route or target `claude-fast`"));
 }
+
+// Key profiles (`add-key-profiles`): a key inherits its profile's settings and may only narrow them.
+
+/// VALID, priced and with a ledger, a profile `trial` with `profile_settings`, and key `alice` on it with
+/// `key_settings`.
+fn profiled(profile_settings: &str, key_settings: &str) -> String {
+    budgeted(&format!(
+        "[profiles.trial]\n{profile_settings}\n[keys.alice]\nsha256 = \"{HASH_A}\"\nprofile = \"trial\"\n{key_settings}\n"
+    ))
+}
+
+#[test]
+fn a_profile_with_budgets_and_a_limit_loads_and_is_inherited() {
+    let config = Config::from_toml(
+        &profiled(
+            "daily_usd = 5.0\nmax_requests_per_minute = 60\nmax_concurrent = 4\nallowed_routes = [\"auto\"]\nover_budget = \"free_only\"",
+            "",
+        ),
+        env,
+    )
+    .unwrap();
+    let key = &config.keys["alice"];
+    assert_eq!(key.limits.daily_usd, Some(5.0));
+    assert_eq!(key.max_requests_per_minute, Some(60));
+    assert_eq!(key.max_concurrent, Some(4));
+    assert_eq!(key.allowed_routes, Some(vec!["auto".to_string()]));
+    assert_eq!(key.over_budget, OverBudget::FreeOnly);
+    assert_eq!(key.profile.as_deref(), Some("trial"));
+}
+
+#[test]
+fn a_key_without_a_profile_is_unchanged() {
+    let config = Config::from_toml(&key_with("daily_usd = 1.0"), env);
+    assert!(config.is_err(), "a budget still needs a ledger");
+    let config = Config::from_toml(&key_with("max_concurrent = 2"), env).unwrap();
+    assert_eq!(config.keys["alice"].profile, None);
+    assert_eq!(config.keys["alice"].max_concurrent, Some(2));
+    assert_eq!(config.keys["alice"].over_budget, OverBudget::Block);
+}
+
+#[test]
+fn a_profile_cannot_grant_a_privilege() {
+    for setting in [
+        "read_config = true",
+        "manage_overrides = true",
+        "sha256 = \"x\"",
+    ] {
+        let message = err(&profiled(setting, ""));
+        assert!(
+            message.contains(setting.split(' ').next().unwrap()),
+            "{message}"
+        );
+    }
+}
+
+#[test]
+fn an_invalid_profile_value_names_the_profile_and_the_setting() {
+    for (setting, field) in [
+        ("max_concurrent = 0", "max_concurrent"),
+        (
+            "max_requests_per_minute = 100001",
+            "max_requests_per_minute",
+        ),
+        ("max_requests_per_minute = 1.5", "max_requests_per_minute"),
+        ("daily_usd = -1.0", "daily_usd"),
+        ("max_request_usd = 0.0", "max_request_usd"),
+        ("allowed_routes = [\"ghost\"]", "allowed_routes"),
+    ] {
+        let message = err(&profiled(setting, ""));
+        assert!(
+            message.contains(&format!("profiles.trial.{field}")),
+            "{setting}: {message}"
+        );
+    }
+}
+
+#[test]
+fn a_key_naming_an_unknown_profile_is_refused() {
+    let message = err(&budgeted(&format!(
+        "[keys.alice]\nsha256 = \"{HASH_A}\"\nprofile = \"ghost\"\n"
+    )));
+    assert!(
+        message.contains("keys.alice.profile") && message.contains("ghost"),
+        "{message}"
+    );
+}
+
+#[test]
+fn a_profile_no_key_uses_is_allowed() {
+    let text = budgeted("[profiles.spare]\ndaily_usd = 1.0\n");
+    assert!(Config::from_toml(&text, env).is_ok());
+}
+
+#[test]
+fn a_key_may_set_something_narrower_than_its_profile() {
+    let config = Config::from_toml(
+        &profiled(
+            "daily_usd = 5.0\nmonthly_tokens = 1000\nmax_request_usd = 1.0\nmax_requests_per_minute = 60\nmax_concurrent = 4\nover_budget = \"free_only\"",
+            "daily_usd = 2.0\nmonthly_tokens = 1000\nmax_request_usd = 0.5\nmax_requests_per_minute = 10\nmax_concurrent = 1\nover_budget = \"block\"",
+        ),
+        env,
+    )
+    .unwrap();
+    let key = &config.keys["alice"];
+    assert_eq!(key.limits.daily_usd, Some(2.0));
+    assert_eq!(key.limits.monthly_tokens, Some(1000));
+    assert_eq!(key.max_request_usd, Some(0.5));
+    assert_eq!(key.max_requests_per_minute, Some(10));
+    assert_eq!(key.max_concurrent, Some(1));
+    assert_eq!(key.over_budget, OverBudget::Block);
+}
+
+#[test]
+fn a_key_wider_than_its_profile_is_refused_naming_key_profile_and_setting() {
+    for (profile, key, field) in [
+        ("daily_usd = 5.0", "daily_usd = 10.0", "daily_usd"),
+        ("monthly_usd = 5.0", "monthly_usd = 5.5", "monthly_usd"),
+        ("daily_tokens = 100", "daily_tokens = 101", "daily_tokens"),
+        (
+            "monthly_tokens = 100",
+            "monthly_tokens = 101",
+            "monthly_tokens",
+        ),
+        (
+            "max_request_usd = 1.0",
+            "max_request_usd = 2.0",
+            "max_request_usd",
+        ),
+        (
+            "max_requests_per_minute = 60",
+            "max_requests_per_minute = 61",
+            "max_requests_per_minute",
+        ),
+        ("max_concurrent = 4", "max_concurrent = 5", "max_concurrent"),
+        (
+            "allowed_routes = [\"auto\"]",
+            "allowed_routes = [\"auto\", \"fast\"]",
+            "allowed_routes",
+        ),
+        (
+            "over_budget = \"block\"",
+            "over_budget = \"free_only\"",
+            "over_budget",
+        ),
+    ] {
+        let message = err(&profiled(profile, key));
+        assert!(
+            message.contains(&format!("keys.alice.{field}")) && message.contains("`trial`"),
+            "{key}: {message}"
+        );
+    }
+}
+
+#[test]
+fn a_key_may_use_a_subset_of_its_profiles_routes() {
+    let config = Config::from_toml(
+        &profiled(
+            "allowed_routes = [\"auto\", \"fast\"]",
+            "allowed_routes = [\"fast\"]",
+        ),
+        env,
+    )
+    .unwrap();
+    assert_eq!(
+        config.keys["alice"].allowed_routes,
+        Some(vec!["fast".to_string()])
+    );
+}
+
+#[test]
+fn a_profile_that_leaves_a_setting_unset_bounds_nothing() {
+    let config = Config::from_toml(
+        &profiled(
+            "daily_usd = 5.0",
+            "monthly_usd = 1000.0\nmax_concurrent = 9\nallowed_routes = [\"fast\"]",
+        ),
+        env,
+    )
+    .unwrap();
+    let key = &config.keys["alice"];
+    assert_eq!(key.limits.monthly_usd, Some(1000.0));
+    assert_eq!(key.max_concurrent, Some(9));
+    assert_eq!(key.allowed_routes, Some(vec!["fast".to_string()]));
+}
+
+#[test]
+fn an_inherited_budget_needs_a_ledger_like_a_budget_set_on_the_key() {
+    let text = format!(
+        "{VALID}\n[profiles.trial]\ndaily_tokens = 100\n[keys.alice]\nsha256 = \"{HASH_A}\"\nprofile = \"trial\"\n"
+    );
+    assert!(err(&text).contains("ledger"));
+}
