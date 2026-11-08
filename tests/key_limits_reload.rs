@@ -53,7 +53,13 @@ struct Gateway {
     _dir: tempfile::TempDir,
 }
 
-fn config_text(base: &str, hash: &str, limits: &str, ledger: &std::path::Path) -> String {
+fn config_text(
+    base: &str,
+    hash: &str,
+    limits: &str,
+    extra: &str,
+    ledger: &std::path::Path,
+) -> String {
     format!(
         r#"listen = "127.0.0.1:0"
 [ledger]
@@ -69,12 +75,18 @@ max_retries = 0
 endpoints = [{{ provider = "p", model = "hold" }}]
 [targets.quick]
 endpoints = [{{ provider = "p", model = "quick" }}]
+{extra}
 "#,
         ledger = ledger.display()
     )
 }
 
 async fn start(limits: &str) -> Gateway {
+    start_with(limits, "").await
+}
+
+/// Starts with `extra` appended to the configuration (a `[profiles.*]` table, say).
+async fn start_with(limits: &str, extra: &str) -> Gateway {
     let (gate, _) = watch::channel(false);
     let app = Router::new()
         .route("/chat/completions", post(completions))
@@ -83,7 +95,7 @@ async fn start(limits: &str) -> Gateway {
     let dir = tempfile::tempdir().unwrap();
     let (key, hash) = humpyard::auth::generate_key().unwrap();
     let path = dir.path().join("humpyard.toml");
-    let text = config_text(&base, &hash, limits, &dir.path().join("ledger.db"));
+    let text = config_text(&base, &hash, limits, extra, &dir.path().join("ledger.db"));
     std::fs::write(&path, &text).unwrap();
     let config = Config::from_toml(&text, |n| std::env::var(n).ok()).unwrap();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -129,8 +141,13 @@ impl Gateway {
 
     /// Rewrites the config with new limits for the key and asks for a reload.
     async fn reload_with(&self, limits: &str) {
+        self.reload_all(limits, "").await;
+    }
+
+    /// Like [`Self::reload_with`], with `extra` appended to the configuration as well.
+    async fn reload_all(&self, limits: &str, extra: &str) {
         let ledger = self.path.with_file_name("ledger.db");
-        let text = config_text(&self.base, &self.hash, limits, &ledger);
+        let text = config_text(&self.base, &self.hash, limits, extra, &ledger);
         std::fs::write(&self.path, text).unwrap();
         self.reload.send(()).await.unwrap();
     }
@@ -220,4 +237,65 @@ async fn a_stream_in_flight_keeps_its_permit_across_a_reload() {
     while first.chunk().await.unwrap().is_some() {}
     while second.chunk().await.unwrap().is_some() {}
     gw.wait_for_status(200).await;
+}
+
+const TEAM: &str = "[profiles.team]\nmax_requests_per_minute = ";
+
+#[tokio::test]
+async fn a_limit_inherited_from_a_profile_is_enforced_and_follows_a_reload_of_the_profile() {
+    let gw = start_with("profile = \"team\"", &format!("{TEAM}2\n")).await;
+    assert_eq!(gw.status("quick").await, 200);
+    assert_eq!(gw.status("quick").await, 200);
+    assert_eq!(
+        gw.status("quick").await,
+        429,
+        "the profile's limit, inherited"
+    );
+    gw.reload_all("profile = \"team\"", &format!("{TEAM}50\n"))
+        .await;
+    gw.wait_for_status(200).await;
+}
+
+#[tokio::test]
+async fn a_reload_that_would_widen_a_key_past_its_profile_is_refused_and_the_old_limit_keeps_serving()
+ {
+    let gw = start_with(
+        "profile = \"team\"\nmax_requests_per_minute = 3",
+        &format!("{TEAM}10\n"),
+    )
+    .await;
+    // The profile drops to 2, under the key's own 3: the file no longer loads.
+    gw.reload_all(
+        "profile = \"team\"\nmax_requests_per_minute = 3",
+        &format!("{TEAM}2\n"),
+    )
+    .await;
+    let mut refused = false;
+    for _ in 0..150 {
+        let health: Value = reqwest::Client::new()
+            .get(format!("{}/v1/health", gw.url))
+            .bearer_auth(&gw.key)
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        if health["reload"]["ok"] == false {
+            let message = health["reload"]["message"].as_str().unwrap();
+            assert!(
+                message.contains("keys.k.max_requests_per_minute") && message.contains("`team`"),
+                "{message}"
+            );
+            refused = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(40)).await;
+    }
+    assert!(refused, "the reload was never refused");
+    // The previous configuration still serves, with the key's own limit of 3.
+    for _ in 0..3 {
+        assert_eq!(gw.status("quick").await, 200);
+    }
+    assert_eq!(gw.status("quick").await, 429);
 }

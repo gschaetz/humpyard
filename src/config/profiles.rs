@@ -4,16 +4,18 @@
 //! reloads, and written into the raw key, so the rest of the gateway reads an ordinary key and nothing is
 //! decided per request. A profile never carries a privilege (`read_config`, `manage_overrides`).
 
+use std::collections::BTreeMap;
 use std::fmt::Display;
 
 use super::schema::{OverBudget, RawConfig, RawKey, RawProfile};
 use super::validate::{MAX_REQUESTS_PER_MINUTE, key_limit};
-use super::{ConfigError, invalid};
+use super::{ConfigError, Limits, ProfileConfig, invalid};
 
-/// Checks every profile, then resolves every key that names one against it.
-pub(super) fn resolve(raw: &mut RawConfig) -> Result<(), ConfigError> {
+/// Checks every profile, then resolves every key that names one against it. Returns the profiles as defined.
+pub(super) fn resolve(raw: &mut RawConfig) -> Result<BTreeMap<String, ProfileConfig>, ConfigError> {
+    let mut defined = BTreeMap::new();
     for (id, profile) in &raw.profiles {
-        check(id, profile, raw)?;
+        defined.insert(id.clone(), check(id, profile, raw)?);
     }
     for (id, key) in &mut raw.keys {
         let Some(name) = key.profile.clone() else {
@@ -26,11 +28,11 @@ pub(super) fn resolve(raw: &mut RawConfig) -> Result<(), ConfigError> {
         })?;
         narrow_key(id, &name, key, profile)?;
     }
-    Ok(())
+    Ok(defined)
 }
 
 /// A profile's values are valid by the rules a key's are, naming the profile.
-fn check(id: &str, profile: &RawProfile, raw: &RawConfig) -> Result<(), ConfigError> {
+fn check(id: &str, profile: &RawProfile, raw: &RawConfig) -> Result<ProfileConfig, ConfigError> {
     for (field, value) in [
         ("daily_usd", profile.daily_usd),
         ("monthly_usd", profile.monthly_usd),
@@ -50,7 +52,7 @@ fn check(id: &str, profile: &RawProfile, raw: &RawConfig) -> Result<(), ConfigEr
         )));
     }
     let owner = format!("profiles.{id}");
-    limits(
+    let (max_requests_per_minute, max_concurrent) = limits(
         &owner,
         profile.max_requests_per_minute.as_ref(),
         profile.max_concurrent.as_ref(),
@@ -62,7 +64,19 @@ fn check(id: &str, profile: &RawProfile, raw: &RawConfig) -> Result<(), ConfigEr
             )));
         }
     }
-    Ok(())
+    Ok(ProfileConfig {
+        allowed_routes: profile.allowed_routes.clone(),
+        over_budget: profile.over_budget,
+        limits: Limits {
+            daily_usd: profile.daily_usd,
+            monthly_usd: profile.monthly_usd,
+            daily_tokens: profile.daily_tokens,
+            monthly_tokens: profile.monthly_tokens,
+        },
+        max_request_usd: profile.max_request_usd,
+        max_requests_per_minute,
+        max_concurrent,
+    })
 }
 
 /// Validates the two limit values of `owner`.

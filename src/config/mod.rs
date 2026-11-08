@@ -85,6 +85,8 @@ pub struct Config {
     pub routes: BTreeMap<String, RouteSpec>,
     /// Virtual keys by id. Empty means the gateway is open and unbudgeted.
     pub keys: BTreeMap<String, KeyConfig>,
+    /// Key profiles by id, as defined; the keys above are already resolved against them.
+    pub profiles: BTreeMap<String, ProfileConfig>,
     pub ledger: Option<PathBuf>,
     pub budget: BudgetConfig,
     pub health: HealthConfig,
@@ -230,6 +232,17 @@ pub struct KeyConfig {
     pub manage_overrides: bool,
     /// The profile the settings above were resolved against, if the key names one.
     pub profile: Option<String>,
+}
+
+/// A key profile as defined (ADR 0025): the bounds its keys inherit and may only narrow. `None` bounds nothing.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ProfileConfig {
+    pub allowed_routes: Option<Vec<String>>,
+    pub over_budget: Option<OverBudget>,
+    pub limits: Limits,
+    pub max_request_usd: Option<f64>,
+    pub max_requests_per_minute: Option<u32>,
+    pub max_concurrent: Option<u32>,
 }
 
 /// Per-period limits; `None` means unlimited.
@@ -402,7 +415,7 @@ impl Config {
             None => (std::collections::BTreeSet::new(), DiscoveryState::Off),
         };
         let pools = pools::resolve(&mut raw)?;
-        profiles::resolve(&mut raw)?;
+        let profiles = profiles::resolve(&mut raw)?;
         validate::validate(&raw)?;
 
         let providers = build_providers(raw.providers, env)?;
@@ -457,6 +470,7 @@ impl Config {
                     Ok((id, key))
                 })
                 .collect::<Result<_, ConfigError>>()?,
+            profiles,
             overrides: OverridesConfig::from(&raw.overrides),
             metrics,
             admin,

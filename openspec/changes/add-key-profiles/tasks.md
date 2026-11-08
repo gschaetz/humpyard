@@ -4,8 +4,8 @@
 
 - [x] 1.1 Add `[profiles.<id>]` (`allowed_routes`, `over_budget`, the four budgets, `max_request_usd`, `max_requests_per_minute`, `max_concurrent`; any other setting refused) and `profile =` on a key; make `over_budget` on a key optional so an omitted value inherits; verify config tests for a valid profile, an unknown setting such as `read_config`, an unknown profile on a key, and an invalid value in a profile naming the profile and the setting
 - [x] 1.2 Resolve a key against its profile at load (inherit what is unset; refuse a wider number, a route outside the profile's list, and `free_only` under `block`, naming key, profile and setting), keep `KeyConfig` as the resolved shape plus the profile name; verify config tests for each rule in the key-profiles spec (lower allowed, wider refused, subset allowed, outside refused, inheritance, no bound when the profile leaves it unset, no profile unchanged)
-- [ ] 1.3 Show `profile` on each key and a `profiles` object in `GET /v1/config`; verify `tests/effective_config.rs` for a key with a profile (resolved values, the profile name, no hash) and for the listed profiles
-- [ ] 1.4 Verify end to end through the gateway that an inherited `max_requests_per_minute` is enforced (the N+1th request is 429), that a reload raising the profile's limit admits the next request, and that a reload which would widen a key past its profile is refused and leaves the previous configuration serving
+- [x] 1.3 Show `profile` on each key and a `profiles` object in `GET /v1/config`; verify `tests/effective_config.rs` for a key with a profile (resolved values, the profile name, no hash) and for the listed profiles
+- [x] 1.4 Verify end to end through the gateway that an inherited `max_requests_per_minute` is enforced (the N+1th request is 429), that a reload raising the profile's limit admits the next request, and that a reload which would widen a key past its profile is refused and leaves the previous configuration serving
 
 ## 2. Docs and wrap-up
 
