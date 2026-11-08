@@ -398,6 +398,35 @@ restart (SIGHUP, or `reload_poll_secs`); see [deployment.md](deployment.md#reloa
 A reload is all or nothing, in-flight requests keep the configuration they started with, and
 endpoint health and unchanged routes' session state carry over.
 
+### A provider's per-request cap
+
+Some providers accept far less in one request than the model's window. Groq's free models declare a window of
+131072 but take about 8,000 tokens per request and answer 413 above it. Declare both numbers, so each does its own
+job:
+
+```toml
+[targets.groq-gpt-oss]
+class = "public"
+strengths = ["general", "fast"]
+endpoints = [{ provider = "groq", model = "openai/gpt-oss-120b", context_window = 131072, max_request_tokens = 8000 }]
+```
+
+- `max_request_tokens` is the most prompt tokens one request may carry to that endpoint. **Undeclared means no
+  cap.** It is a whole number of at least 1 and no more than the `context_window` when that is declared.
+- **Same rule as the window.** A target is removed from a request when the low estimate of the prompt (the same
+  deliberately low estimate as above) exceeds the cap of every one of its endpoints, so a prompt close to the cap
+  still goes to the target. A target stays if any endpoint can take the request, and inside it endpoints are still
+  tried in order.
+- **The window still decides pools.** `min_context_window` keeps reading `context_window`, so the endpoint above
+  stays in a pool that asks for 32000 and serves small prompts there; only an oversized prompt skips it.
+- **Visible.** The reason is `request_cap` in `explain`, the decision's `incapable_targets` and
+  `humpyard_capability_skips_total`; if no target can take the request it is the usual 400 `no_capable_target`,
+  and the message names `max_request_tokens`.
+- **Limits.** The comparison counts the prompt only, not the `max_tokens` the client asks for, because whether a
+  provider counts the requested output toward its cap is not verified. It does not model a per-minute allowance:
+  a prompt under the cap can still get a 429 when the minute's tokens are spent, and a stated retry time cools the
+  endpoint as usual. The value is yours to declare; `prices import` never proposes it.
+
 ## Pools and strengths
 
 A target can carry **strengths**: soft labels for what the model is good at, such as `coding`, `reasoning`,

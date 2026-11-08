@@ -1112,3 +1112,78 @@ fn an_inherited_budget_needs_a_ledger_like_a_budget_set_on_the_key() {
     );
     assert!(err(&text).contains("ledger"));
 }
+
+// A per-request cap on an endpoint (`add-endpoint-request-cap`): separate from the context window.
+
+fn capped(settings: &str) -> String {
+    format!(
+        "{VALID}\n[targets.capped]\nstrengths = [\"general\"]\nendpoints = [{{ provider = \"groq\", model = \"m\", {settings} }}]\n"
+    )
+}
+
+#[test]
+fn an_endpoint_may_declare_a_request_cap_beside_a_large_window() {
+    let config = Config::from_toml(
+        &capped("context_window = 131072, max_request_tokens = 8000"),
+        env,
+    )
+    .unwrap();
+    let endpoint = &config.targets["capped"][0];
+    assert_eq!(endpoint.context_window, Some(131_072));
+    assert_eq!(endpoint.max_request_tokens, Some(8000));
+    assert!(config.declares_context_windows());
+}
+
+#[test]
+fn an_endpoint_without_a_cap_has_none() {
+    let config = Config::from_toml(&capped("context_window = 131072"), env).unwrap();
+    assert_eq!(config.targets["capped"][0].max_request_tokens, None);
+    let only_cap = Config::from_toml(&capped("max_request_tokens = 8000"), env).unwrap();
+    assert!(
+        only_cap.declares_context_windows(),
+        "a cap alone makes the gateway measure prompts"
+    );
+}
+
+#[test]
+fn the_pool_filter_reads_the_window_not_the_cap() {
+    let text = format!(
+        "{}\n[routes.pool]\ntype = \"passthrough\"\npool = {{ strength = \"general\", min_context_window = 32000 }}\n",
+        capped("context_window = 131072, max_request_tokens = 8000")
+    );
+    let config = Config::from_toml(&text, env).unwrap();
+    assert_eq!(config.pools["pool"].members, ["capped"]);
+}
+
+#[test]
+fn a_zero_negative_or_non_integer_cap_names_the_setting() {
+    for value in ["0", "-1", "1.5", "\"8000\"", "true"] {
+        let message = err(&capped(&format!("max_request_tokens = {value}")));
+        assert!(
+            message.contains("max_request_tokens must be a whole number of at least 1"),
+            "{value}: {message}"
+        );
+    }
+}
+
+#[test]
+fn a_cap_above_the_window_names_the_target_the_endpoint_and_the_setting() {
+    let message = err(&capped(
+        "context_window = 8000, max_request_tokens = 131072",
+    ));
+    assert!(
+        message.contains("`capped`")
+            && message.contains("groq/m")
+            && message.contains("max_request_tokens")
+            && message.contains("context_window"),
+        "{message}"
+    );
+    // At the window is fine.
+    assert!(
+        Config::from_toml(
+            &capped("context_window = 8000, max_request_tokens = 8000"),
+            env
+        )
+        .is_ok()
+    );
+}

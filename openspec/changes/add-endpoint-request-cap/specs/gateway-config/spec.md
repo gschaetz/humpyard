@@ -14,11 +14,15 @@ An endpoint MAY declare `max_request_tokens`, a whole number of at least 1: the 
 - **THEN** it has no cap and the endpoint behaves exactly as before
 
 ### Requirement: A per-request cap is validated
-A `max_request_tokens` of zero, negative, not a whole number, or greater than the endpoint's declared `context_window` SHALL be refused at load, naming the target, the endpoint and the setting.
+A `max_request_tokens` that is zero, negative, not a whole number or not a number SHALL be refused at load, naming the setting. One greater than the endpoint's declared `context_window` SHALL be refused at load, naming the target, the endpoint and the setting.
 
 #### Scenario: Zero
 - **WHEN** an endpoint declares `max_request_tokens = 0`
-- **THEN** the configuration is rejected naming the target, the endpoint and `max_request_tokens`
+- **THEN** the configuration is rejected naming `max_request_tokens`
+
+#### Scenario: Not a whole number
+- **WHEN** an endpoint declares `max_request_tokens = 1.5` or `"8000"`
+- **THEN** the configuration is rejected naming `max_request_tokens`
 
 #### Scenario: Larger than the window
 - **WHEN** an endpoint declares `context_window = 8000` and `max_request_tokens = 131072`

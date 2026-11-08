@@ -105,7 +105,7 @@ Notes:
   because every endpoint was cooling down and another target remained. It stays at 0 when nothing is cold, and
   when every eligible target is cold (the route fails open).
 - **Capability skips** counts requests in which a target was [removed](routing.md#capabilities) because none
-  of its endpoints could serve them, with `reason` `tools`, `vision` or `context`. Refusals with reason
+  of its endpoints could serve them, with `reason` `tools`, `vision`, `context` or `request_cap`. Refusals with reason
   `no_capable_target` are in `refusals_total`, as are those with reason `override_no_target` (a
   [runtime override](routing.md#runtime-overrides) removed every target of the route).
 - **Cost ceiling** counts requests in which a key's [`max_request_usd`](budgets.md#a-ceiling-on-one-request)
