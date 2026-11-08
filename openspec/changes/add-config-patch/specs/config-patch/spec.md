@@ -36,7 +36,7 @@ The patch SHALL be produced by editing the file's text in place, so a line that 
 
 #### Scenario: A new table
 - **WHEN** an edit adds a target
-- **THEN** the table is added after the file's existing tables and nothing else in the diff changes
+- **THEN** the table is added beside the other targets, no existing line is changed or lost, and nothing else in the diff changes
 
 ### Requirement: A stale fingerprint is refused
 The request SHALL be refused with 409 `stale_fingerprint` carrying the current fingerprint when the fingerprint it names is not the fingerprint of the configuration file's text now (with the generated-targets file the gateway merges, as a reload reckons it), and nothing SHALL be computed from the old text.

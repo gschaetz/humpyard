@@ -44,20 +44,26 @@ every line instead of the changed ones).
 
 The gateway reads the file at request time and parses it with `toml_edit::DocumentMut`, which keeps comments,
 ordering and whitespace for everything an edit does not touch. `set` replaces a value in place and keeps the
-decor around it. `add_table` appends a standard table after the last existing table. `remove_table` removes the
-table and its leading comment. Keys and values go through the library's API, never string concatenation, so a
+decor around it. `add_table` inserts a standard table with the other tables of its section (a section the file does
+not have yet goes at the end). `remove_table` removes the table and its leading comment. Keys and values go through the library's API, never string concatenation, so a
 name with a quote or a newline cannot become syntax; path segments are also limited to a conservative character
 set (letters, digits, `-`, `_`, `.`, `:`, `+`, `/`), widened only when a real name needs it.
 
 ### The check is the reload's check
 
-Today `try_reload` reads, loads, compares restart-only settings and builds. That sequence moves into one function,
-`validate_text(text, running)`, used by `try_reload` and by the patch. The patch uses the same environment lookup
-and generated-file reader as a reload, and applies `restart_only_changes` against the running configuration, so a
-change a reload would refuse is refused here. One more rule: the loader drops an invalid generated file and loads
-the main text alone (ADR 0022). A reload accepts that. A patch does not: if the running configuration merged the
+Today `try_reload` reads, loads, compares restart-only settings and builds. The first two steps move into one
+function, `validate_text(running, text)`, which takes the configuration now serving (not the whole server state, so
+it can be tested alone) and is used by `try_reload` and by the patch. It uses the same environment lookup and
+generated-file reader as a reload, and applies `restart_only_changes`, so a change a reload would refuse is refused
+here. A second function, `validate_patched`, adds one rule: the loader drops an invalid generated file and loads the
+main text alone (ADR 0022), a reload accepts that, and a patch does not: if the running configuration merged the
 generated file and the patched one would not, the patch is refused, because that is almost never what the editor
 meant.
+
+The last step of a reload, building the serving state from the configuration, can also fail. The endpoint therefore
+builds a throwaway snapshot from the patched configuration and drops it. It passes no previous snapshot: carrying
+state over from the live one would share its limiter and health state with the copy, and building must not touch
+either.
 
 ### Fingerprint and base
 
@@ -83,7 +89,7 @@ without a file it can re-read). `None`, or an unreadable file, is 503 `config_fi
 
 ### Limits
 
-Body 64 KiB, 64 edits, path depth 8, value nesting 4, checked before the file is read or any edit applied. The
+Body 64 KiB, 64 edits, path depth 8, value nesting 4 (arrays and objects inside one another; a scalar is not a level), checked before the file is read or any edit applied. The
 file is the operator's and is not bounded here.
 
 ### Scope
