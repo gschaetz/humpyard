@@ -25,7 +25,7 @@ const BUCKETS_MS: [u64; 12] = [
 ];
 
 /// Why a target was removed for capability (ADR 0019).
-const CAPABILITY_REASONS: [&str; 3] = ["tools", "vision", "context"];
+const CAPABILITY_REASONS: [&str; 4] = ["tools", "vision", "context", "request_cap"];
 
 /// How an admin API request ended.
 const ADMIN_RESULTS: [&str; 3] = ["ok", "unauthorized", "forbidden"];

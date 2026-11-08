@@ -1648,8 +1648,8 @@ fn excluded_targets(snap: &Snapshot, route: &str) -> Vec<String> {
 }
 
 /// Why no endpoint of `target` can serve a request with `features`, or `None` when one can: tools,
-/// images, or a prompt certainly larger than every declared context window (ADR 0019). An endpoint
-/// that declares nothing is capable, so an undeclared config removes nothing.
+/// images, or a prompt certainly larger than every declared context window or per-request cap
+/// (ADR 0019). An endpoint that declares nothing is capable, so an undeclared config removes nothing.
 fn incapable_reason(snap: &Snapshot, target: &str, features: &Features) -> Option<&'static str> {
     let endpoints = snap.config.targets.get(target)?;
     let mut first = None;
@@ -1663,6 +1663,11 @@ fn incapable_reason(snap: &Snapshot, target: &str, features: &Features) -> Optio
             && low > window
         {
             Some("context")
+        } else if let (Some(cap), Some(low)) =
+            (endpoint.max_request_tokens, features.prompt_tokens_low)
+            && low > cap
+        {
+            Some("request_cap")
         } else {
             None
         };
@@ -1678,6 +1683,10 @@ fn incapable_sentence(incapable: &Incapable, features: &Features) -> String {
         "vision" => {
             "the request carries images but its endpoints declare vision = false".to_string()
         }
+        "request_cap" => format!(
+            "the prompt is at least about {} tokens, more than its declared max_request_tokens",
+            features.prompt_tokens_low.unwrap_or(0)
+        ),
         _ => format!(
             "the prompt is at least about {} tokens, more than its declared context_window",
             features.prompt_tokens_low.unwrap_or(0)

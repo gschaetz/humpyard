@@ -115,6 +115,10 @@ See the [example configs](examples.md); `humpyard check-config <file>` validates
   that cannot serve a request (tools, images or an oversized prompt) is removed before routing, only
   when that is certain, and a request no target can serve is refused with 400 `no_capable_target`.
   Undeclared means capable. See [Capabilities](routing.md#capabilities).
+- `max_request_tokens` on an endpoint (optional): the most prompt tokens one request may carry to that provider,
+  for a provider that caps a request far below the model's window. A target is removed from a request whose
+  prompt is certainly larger than that on every endpoint; the pool filter `min_context_window` keeps reading
+  `context_window`. See [A provider's per-request cap](routing.md#a-providers-per-request-cap).
 - `[health]`: optional endpoint circuit breaker (`failure_threshold`, `cooldown_secs`,
   `max_cooldown_secs`, `max_retry_after_secs`: the cap on a cooldown taken from a retry time the error
   states, default 300) and `skip_cold_targets` (default true: leave a target whose endpoints are all

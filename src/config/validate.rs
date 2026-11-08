@@ -367,6 +367,15 @@ pub(super) fn validate(raw: &RawConfig) -> Result<(), ConfigError> {
                     "target `{id}`: context_window must be at least 1 token"
                 )));
             }
+            if let (Some(cap), Some(window)) =
+                (endpoint.max_request_tokens, endpoint.context_window)
+                && cap > window
+            {
+                return Err(invalid(format!(
+                    "target `{id}`: endpoint {}/{} max_request_tokens ({cap}) is more than its context_window ({window})",
+                    endpoint.provider, endpoint.model
+                )));
+            }
             if !raw.providers.contains_key(&endpoint.provider) {
                 return Err(invalid(format!(
                     "target `{id}` names unknown provider `{}`",

@@ -77,7 +77,7 @@ api_key_env = "PATH"
 [targets.home]
 class = "private"
 strengths = ["general"]
-endpoints = [{{ provider = "lab", model = "home-model" }}]
+endpoints = [{{ provider = "lab", model = "home-model", context_window = 131072, max_request_tokens = 8000 }}]
 [routes.pool]
 type = "fastest"
 pool = {{ strength = "general" }}
@@ -300,4 +300,17 @@ async fn a_key_shows_its_profile_and_the_values_it_ended_up_with_and_profiles_ar
     assert_eq!(v["profiles"]["team"]["max_concurrent"], 2);
     assert!(v["profiles"]["team"]["daily_usd"].is_null());
     assert!(!body.contains("sha256"), "no hash in the view");
+}
+
+#[tokio::test]
+async fn an_endpoint_shows_its_request_cap_and_omits_it_when_unset() {
+    let f = fixture("request-cap", true).await;
+    let (status, body) = get(&f.url, "/v1/config", Some(&f.ops_key)).await;
+    assert_eq!(status, 200, "{body}");
+    let v: Value = serde_json::from_str(&body).unwrap();
+    let capped = &v["targets"]["home"]["endpoints"][0];
+    assert_eq!(capped["context_window"], 131_072);
+    assert_eq!(capped["max_request_tokens"], 8000);
+    let uncapped = &v["targets"]["auto-free-alpha"]["endpoints"][0];
+    assert!(uncapped.get("max_request_tokens").is_none(), "{uncapped}");
 }

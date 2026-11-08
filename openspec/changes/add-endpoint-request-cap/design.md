@@ -23,7 +23,7 @@ ADR 0019 lets an endpoint declare `context_window`, `tools` and `vision`; in pla
 
 **3. A distinct reason, `request_cap`.** Reusing `context` would make "the model's window" and "the provider's cap" indistinguishable in decisions and the counter, which is the confusion this change removes. `CAPABILITY_REASONS` grows by one bounded value. The refusal sentence names `max_request_tokens`.
 
-**4. Validation.** `max_request_tokens` must be at least 1, and no greater than the endpoint's `context_window` when both are declared: a cap above the window means nothing and is most likely two swapped numbers. Both are refused at load naming the target, endpoint and setting.
+**4. Validation.** `max_request_tokens` must be at least 1, and no greater than the endpoint's `context_window` when both are declared: a cap above the window means nothing and is most likely two swapped numbers. A bad value (zero, negative, fractional, not a number) is refused while the file is parsed, naming the setting; a cap above the window is refused in validation, naming the target, endpoint and setting.
 
 **5. The low estimate is wanted when a cap is declared.** `declares_context_windows` becomes true for an endpoint that declares either, so a configuration with only caps measures the prompt.
 

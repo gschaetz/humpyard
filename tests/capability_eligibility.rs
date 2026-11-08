@@ -53,6 +53,7 @@ struct Rig {
     big: Arc<Upstream>,
     plain: Arc<Upstream>,
     limited: Arc<Upstream>,
+    capped: Arc<Upstream>,
     db: std::path::PathBuf,
     _dir: tempfile::TempDir,
 }
@@ -61,11 +62,41 @@ struct Rig {
 /// `plain` (declares nothing), `mixed` (one endpoint with a window of 100 tokens and one of 1,000,000).
 /// Routes: `ladder` (small, big), `only-small` (small), `open` (plain, big), `mixed-first` (mixed, big),
 /// `strict-small` (small private, big public, only private allowed).
+/// A per-request cap (`add-endpoint-request-cap`): `groq` declares a huge window and a cap of 100 tokens,
+/// `mixed-cap` has a capped endpoint and an uncapped one. Routes: `cap-ladder` (groq, big), `only-groq`,
+/// `cap-mixed` (mixed-cap, big).
+fn cap_section(capped_url: &str) -> String {
+    format!(
+        r#"[providers.pg]
+base_url = "{capped_url}"
+api_key_env = "K"
+max_retries = 0
+[targets.groq]
+endpoints = [{{ provider = "pg", model = "m", context_window = 1000000, max_request_tokens = 100 }}]
+[targets.mixed-cap]
+endpoints = [
+  {{ provider = "pg", model = "m", max_request_tokens = 100 }},
+  {{ provider = "pb", model = "m" }},
+]
+[routes.cap-ladder]
+type = "passthrough"
+targets = ["groq", "big"]
+[routes.only-groq]
+type = "passthrough"
+targets = ["groq"]
+[routes.cap-mixed]
+type = "passthrough"
+targets = ["mixed-cap", "big"]
+"#
+    )
+}
+
 async fn rig() -> Rig {
     let (small, small_url) = upstream().await;
     let (big, big_url) = upstream().await;
     let (plain, plain_url) = upstream().await;
     let (limited, limited_url) = upstream().await;
+    let (capped, capped_url) = upstream().await;
     let dir = tempfile::tempdir().unwrap();
     let db = dir.path().join("ledger.db");
     let (key, key_hash) = humpyard::auth::generate_key().unwrap();
@@ -95,6 +126,7 @@ max_retries = 0
 base_url = "{limited_url}"
 api_key_env = "K"
 max_retries = 0
+{cap}
 [targets.small]
 class = "private"
 endpoints = [{{ provider = "ps", model = "m", context_window = 1000, tools = false, vision = false }}]
@@ -126,6 +158,7 @@ targets = ["small", "big"]
 allowed_classes = ["private"]
 "#,
         db = db.display(),
+        cap = cap_section(&capped_url),
     );
     let config = Config::from_toml(&toml, |_| Some("k".into())).unwrap();
     Rig {
@@ -139,6 +172,7 @@ allowed_classes = ["private"]
         big,
         plain,
         limited,
+        capped,
         db,
         _dir: dir,
     }
@@ -532,4 +566,85 @@ async fn an_older_ledger_is_upgraded_and_keeps_its_decisions() {
         Vec::<humpyard::ledger::Incapable>::new()
     );
     assert_eq!(by_id("after").incapable_targets[0].reason, "tools");
+}
+
+// A per-request cap (`add-endpoint-request-cap`): `groq` declares a huge window and a cap of 100 tokens.
+
+#[tokio::test]
+async fn a_prompt_over_a_per_request_cap_skips_the_target_however_large_its_window() {
+    let rig = rig().await;
+    let (status, target, _) = rig
+        .send(&plain_request("cap-ladder", &"word ".repeat(2400)))
+        .await;
+    assert_eq!((status, target.as_str()), (200, "big"));
+    assert_eq!(rig.capped.calls(), 0, "the capped target was never asked");
+    let text = rig.metrics().await;
+    assert!(
+        text.contains(
+            r#"humpyard_capability_skips_total{route="cap-ladder",target="groq",reason="request_cap"} 1"#
+        ),
+        "{text}"
+    );
+    assert_eq!(
+        rig.decision("cap-ladder").await["incapable_targets"],
+        json!([{"target": "groq", "reason": "request_cap"}])
+    );
+}
+
+#[tokio::test]
+async fn a_prompt_under_the_cap_is_still_served_by_the_capped_target() {
+    let rig = rig().await;
+    let (status, target, _) = rig.send(&plain_request("cap-ladder", "hi")).await;
+    assert_eq!((status, target.as_str()), (200, "groq"));
+    assert_eq!(rig.capped.calls(), 1);
+}
+
+#[tokio::test]
+async fn a_prompt_at_the_cap_stays_and_one_over_it_goes() {
+    let rig = rig().await;
+    let at = rig
+        .explain(&json!({"model": "cap-ladder", "prompt_tokens": 100}))
+        .await;
+    assert_eq!(at["incapable_targets"], json!([]));
+    let over = rig
+        .explain(&json!({"model": "cap-ladder", "prompt_tokens": 101}))
+        .await;
+    assert_eq!(
+        over["incapable_targets"],
+        json!([{"target": "groq", "reason": "request_cap"}])
+    );
+}
+
+#[tokio::test]
+async fn a_target_with_a_capped_and_an_uncapped_endpoint_stays() {
+    let rig = rig().await;
+    let (status, target, _) = rig
+        .send(&plain_request("cap-mixed", &"word ".repeat(2400)))
+        .await;
+    assert_eq!((status, target.as_str()), (200, "mixed-cap"));
+    assert_eq!(
+        rig.decision("cap-mixed").await["incapable_targets"],
+        json!([])
+    );
+}
+
+#[tokio::test]
+async fn a_request_every_target_caps_out_is_refused_naming_the_cap() {
+    let rig = rig().await;
+    let (status, _, body) = rig
+        .send(&plain_request("only-groq", &"word ".repeat(2400)))
+        .await;
+    assert_eq!(status, 400, "{body}");
+    let message = body["error"]["message"].as_str().unwrap();
+    assert!(
+        message.contains("`groq`") && message.contains("max_request_tokens"),
+        "{message}"
+    );
+    assert_eq!(rig.capped.calls(), 0, "refused before any upstream call");
+    let decision = rig.decision("only-groq").await;
+    assert_eq!(decision["outcome"], "no_capable_target");
+    assert_eq!(
+        decision["incapable_targets"],
+        json!([{"target": "groq", "reason": "request_cap"}])
+    );
 }

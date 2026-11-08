@@ -475,12 +475,36 @@ pub struct Endpoint {
     /// The model's context window in tokens. Undeclared means unknown, which means capable (ADR 0019).
     #[serde(default)]
     pub context_window: Option<u64>,
+    /// The most prompt tokens one request may carry to this provider, below the window (a provider's
+    /// per-request cap). Undeclared means no cap. Does not affect a pool's `min_context_window`.
+    #[serde(
+        default,
+        deserialize_with = "request_cap",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub max_request_tokens: Option<u64>,
     /// Whether the model supports tool calls; `false` removes the target from requests that use tools.
     #[serde(default)]
     pub tools: Option<bool>,
     /// Whether the model accepts images; `false` removes the target from requests that carry them.
     #[serde(default)]
     pub vision: Option<bool>,
+}
+
+/// Reads `max_request_tokens` untyped so that a zero, negative, fractional or non-numeric value is refused
+/// naming the setting, not with a parser message about `u64`.
+fn request_cap<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<u64>, D::Error> {
+    let Some(value) = Option::<toml::Value>::deserialize(d)? else {
+        return Ok(None);
+    };
+    value
+        .as_integer()
+        .and_then(|n| u64::try_from(n).ok())
+        .filter(|n| *n >= 1)
+        .map(Some)
+        .ok_or_else(|| {
+            serde::de::Error::custom("max_request_tokens must be a whole number of at least 1")
+        })
 }
 
 /// Token prices in USD per million tokens (numerically equal to micro-USD per token).
