@@ -1,9 +1,9 @@
 # 0034. A configuration patch is typed edits, checked by the reload path, and written by no one
 
-- Status: proposed
+- Status: accepted
 - Date: 2026-11-08
 - Supersedes: none
-- Change: `openspec/changes/add-config-patch`
+- Change: `openspec/changes/archive/2026-11-08-add-config-patch`
 
 ## Context
 

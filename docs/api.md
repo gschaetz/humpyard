@@ -48,7 +48,7 @@ The code tells it apart from a 429 that a provider sent and the gateway passed t
 | `GET /v1/stats/switches` | what changing endpoint in the middle of a session abandoned: switches, cached tokens left behind, the extra cost at the destination's prices, session coverage ([Cache use and sessions](budgets.md#cache-use-and-sessions)) |
 | `GET /v1/quota` | the latest usage windows (percent used, status, reset time) of each provider that names a `quota_source`, with the age of the data, or why it is unknown ([Provider quota](routing.md#provider-quota)) |
 | `GET /v1/quota/history` | stored quota samples (`window` such as `7d`, optional `provider` and `name`), oldest first, each with the cost of the provider's calls since the previous sample of its window; needs a ledger ([Provider quota](routing.md#provider-quota)) |
-| `GET /admin/v1/whoami`, `/config`, `/health`, `/quota`, `/decisions`, `/stats`, `/credentials`, `/overrides`, the revoke endpoints and `/openapi.json` | the [admin API](#the-admin-api): who you are, and what the gateway is doing across every key |
+| `GET /admin/v1/whoami`, `/config`, `/health`, `/quota`, `/decisions`, `/stats`, `/credentials`, `/overrides`, the revoke endpoints, `POST /admin/v1/config/patch` and `/openapi.json` | the [admin API](#the-admin-api): who you are, and what the gateway is doing across every key |
 | `GET /metrics` | Prometheus metrics, off by default; on a separate listener or behind its own credential ([Metrics and alerts](metrics.md)) |
 | `POST /v1/messages/count_tokens`, `POST /v1/responses/input_tokens` | conservative local estimates: no provider call, no cost |
 
@@ -103,6 +103,52 @@ from the file and reload. `GET /admin/v1/credentials` shows `revoked: true` whil
 A revocation is stored with the overrides but is not one: it is not listed by `/v1/overrides` or
 `/admin/v1/overrides`, is not counted in `humpyard_overrides_active`, never affects routing, and cannot be ended
 through the override endpoints, so a client key that manages overrides cannot restore a revoked admin.
+
+### Configuration patches
+
+`POST /admin/v1/config/patch` (scope `config`) turns a list of typed edits into a reviewable patch against the
+configuration file, and **writes nothing**: not the file, not the ledger, and the running gateway is not reloaded
+or changed. It is how a tool (the admin GUI later) proposes a structural change; the operator applies it the way
+the file is managed (a commit, a ConfigMap, a template). The credential also needs `read` to learn the file's
+fingerprint, from `GET /admin/v1/config` (`config.fingerprint`).
+
+```
+curl -X POST https://gateway.example/admin/v1/config/patch \
+  -H "Authorization: Bearer $ADMIN_SECRET" -H 'content-type: application/json' \
+  -d '{"fingerprint": "f50a5670de4f",
+       "edits": [{"op": "set", "path": ["targets", "groq-x", "endpoints", 0, "max_request_tokens"], "value": 8000}]}'
+```
+
+- **Edits.** `set` (a value at a key or array position; the key may be new, its table must exist), `remove` (a key
+  or array element), `add_table` (a new table; `value` is an object of its keys) and `remove_table`. A path is table
+  names, keys and array positions, such as `["targets", "t", "endpoints", 0, "model"]`, at most 8 segments; values
+  are JSON (no `null`) nesting at most 4 deep. Edits apply in order, and none applies unless all do.
+- **What can be edited.** `providers`, `targets`, `routes`, `profiles`, `aliases`, `budget`, `health`, `overrides`
+  and `keys`. Under `keys` only `set` and `remove` work, never on a key's `sha256`, and a key cannot be added or
+  removed here. The `admin` table, `metrics`, `ledger`, `discovery`, the top-level settings and the `[[select]]`
+  rules cannot be edited this way.
+- **Formatting survives.** The edits are made in the file's own text, so every line an edit does not touch comes
+  back byte for byte, a replaced value keeps its trailing comment, and a new table is placed beside the others of
+  its section.
+- **The same check as a reload.** The edited text is loaded with the same loader, environment and generated
+  targets file a reload uses, and the gateway also builds the serving state from it. A patch is stricter than a
+  reload in one way: it is refused if it would make the gateway stop merging the generated targets file.
+- **The answer.** `{"object": "config_patch", "changed": true, "base_fingerprint": "...", "fingerprint": "...",
+  "edits": 1, "diff": "..."}`. `fingerprint` is what the file's fingerprint would be with the edits applied; with
+  `changed: false` the diff is empty and the two fingerprints are equal. The diff is a unified diff with three
+  lines of context. **It is for review, not for `patch(1)`:** a key hash, a credential hash and every provider
+  header value are shown as `<redacted>` (`<redacted: changed>` when the value differs after the edits), so a diff
+  that crosses such a line does not apply there. The edit list you sent is the reproducible form.
+- **Refusals.** 400 `invalid_edit` names the edit (`error.index`, from 0) that is malformed, outside the editable
+  sections or does not fit the file; 400 `invalid_request` is a malformed body or more than 64 edits; 409
+  `stale_fingerprint` means the file has changed since you read it (`error.current_fingerprint` is its fingerprint
+  now, including an edit the gateway has not reloaded yet); 413 `request_too_large` is a body over 64 KiB; 422
+  `config_rejected` carries the loader's reason and no patch; 503 `config_file_unavailable` means the gateway has
+  no configuration file it can read.
+
+The `config` scope is separate from `read` on purpose: a diff shows the lines around an edit, so a credential
+that holds it can learn the file's structure by probing (secrets are masked). Give it to a person or tool you
+would let read the configuration file. Each request logs the admin id and the outcome, never the edits or the file.
 
 ### Reading
 

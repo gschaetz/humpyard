@@ -17,4 +17,4 @@ it is not covered by ADR 0025, which fixes only the principle.
 
 ## New ADRs
 
-- [ADR-0034 A configuration patch is typed edits, checked by the reload path, and written by no one](../../../docs/adr/0034-a-configuration-patch-is-typed-edits-checked-by-the-reload-path-and-written-by-no-one.md) (proposed; becomes accepted when the change ships)
+- [ADR-0034 A configuration patch is typed edits, checked by the reload path, and written by no one](../../../docs/adr/0034-a-configuration-patch-is-typed-edits-checked-by-the-reload-path-and-written-by-no-one.md) (accepted)

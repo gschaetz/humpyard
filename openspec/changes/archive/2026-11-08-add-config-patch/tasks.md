@@ -18,9 +18,9 @@
 
 ## 4. Docs and wrap-up
 
-- [ ] 4.1 Document the endpoint in `docs/api.md` (request, edit forms, answers, limits, the diff being for review), add the invariant "a patch writes nothing" to `docs/invariants.md`, add `docs/roadmap.md` (unreleased) and update `docs/architecture.md` (the admin surface, status table, "Last updated"); verify the strict docs build and that its Mermaid diagrams still match the code
-- [ ] 4.2 Check the design's threat model against what was built (each of the nine rows still true, each proof exists) and update `docs/threat-model.md` (B3 and B4, and the accepted gap in row 8); verify every row cites a test or invariant that exists
-- [ ] 4.3 Run fmt, clippy `-D warnings`, `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features --document-private-items` and the full test suite; set ADR 0034 to accepted, tick 5.1 in `define-ui-config-model`, and archive with `openspec archive add-config-patch --yes`; verify all gates pass and the spec deltas merge
+- [x] 4.1 Document the endpoint in `docs/api.md` (request, edit forms, answers, limits, the diff being for review), add the invariant "a patch writes nothing" to `docs/invariants.md`, add `docs/roadmap.md` (unreleased) and update `docs/architecture.md` (the admin surface, status table, "Last updated"); verify the strict docs build and that its Mermaid diagrams still match the code
+- [x] 4.2 Check the design's threat model against what was built (each of the nine rows still true, each proof exists) and update `docs/threat-model.md` (B3 and B4, and the accepted gap in row 8); verify every row cites a test or invariant that exists
+- [x] 4.3 Run fmt, clippy `-D warnings`, `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features --document-private-items` and the full test suite; set ADR 0034 to accepted, tick 5.1 in `define-ui-config-model`, and archive with `openspec archive add-config-patch --yes`; verify all gates pass and the spec deltas merge
 
 ## Workflow follow-up
 
