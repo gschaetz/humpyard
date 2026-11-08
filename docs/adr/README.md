@@ -46,6 +46,7 @@ numbers are monotonic and never reused. Start from [template.md](template.md).
 | [0030](0030-response-quality-is-recorded-as-content-free-flags-per-call.md) | Response quality is recorded as content-free flags per call |
 | [0031](0031-a-providers-timeout-bounds-the-wait-to-start-and-a-streams-idle-time.md) | A provider's timeout bounds the wait to start and a stream's idle time, not an answer's length |
 | [0032](0032-the-admin-gui-runs-as-its-own-process-from-the-same-binary.md) | The admin GUI runs as its own process from the same binary |
+| [0034](0034-a-configuration-patch-is-typed-edits-checked-by-the-reload-path-and-written-by-no-one.md) | A configuration patch is typed edits, checked by the reload path, and written by no one (proposed) |
 
 How decisions relate to enforcement: invariants that must hold mechanically are listed in
 [../invariants.md](../invariants.md) and checked by tests and CI.
