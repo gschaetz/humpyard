@@ -12,9 +12,9 @@ Turn a list of typed edits into a reviewable patch against the gateway's configu
 - **WHEN** an edit sets `max_request_tokens` to 0
 - **THEN** the response is 422 `config_rejected` carrying the loader's message, with no diff and no new fingerprint
 
-#### Scenario: An edit that needs a restart
-- **WHEN** the edits would change a setting that a reload refuses to apply
-- **THEN** the response is 422 `config_rejected` naming the setting, as a reload of the same text would
+#### Scenario: An edit that would stop the generated targets file merging
+- **WHEN** the gateway merges a generated targets file and an edit removes a provider that file's targets use
+- **THEN** the response is 422 `config_rejected` saying the generated targets file would be ignored, although a reload of the same text would load
 
 ### Requirement: A valid patch is a diff, a change flag and the new fingerprint
 When the result loads, the response SHALL be 200 with a unified diff, whether anything changed, and the fingerprint the new text would have.

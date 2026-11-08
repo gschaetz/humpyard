@@ -56,6 +56,7 @@ const TARGET_HEADER: &str = "x-humpyard-target";
 const TOKEN_COUNT_HEADER: &str = "x-humpyard-token-count";
 /// Response headers naming the route that served a request and the selector rule that chose it.
 mod admin;
+mod config_patch;
 mod config_view;
 mod decisions;
 mod explain;
@@ -104,6 +105,8 @@ pub struct AppState {
     metrics: Arc<crate::metrics::Metrics>,
     /// The embedder's policy; it is composed with the budget policy of every snapshot.
     extra_policy: Arc<dyn RoutingPolicy>,
+    /// The configuration file, for the patch endpoint; `None` when the gateway has no file to re-read.
+    config_path: Option<PathBuf>,
     /// The outcome of the latest reload attempt.
     reload: Mutex<ReloadStatus>,
     /// Serializes reloads.
@@ -164,6 +167,9 @@ pub async fn router_with_policy(
 pub struct Options {
     pub policy: Option<Arc<dyn RoutingPolicy>>,
     pub clock: Option<Arc<dyn Clock>>,
+    /// The configuration file the gateway was loaded from, which `POST /admin/v1/config/patch` reads (ADR 0034).
+    /// `run` sets it from its reload path; without one the endpoint answers 503.
+    pub config_path: Option<PathBuf>,
 }
 
 pub async fn router_with_options(config: Config, options: Options) -> Result<Router, String> {
@@ -200,7 +206,11 @@ pub async fn run(
             |text| watched_fingerprint(&text, config.discovery.file.as_deref()),
         );
     log_discovery(None, &config);
-    let built = build(config, Options::default(), initial_fingerprint).await?;
+    let options = Options {
+        config_path: reload.as_ref().map(|r| r.path.clone()),
+        ..Options::default()
+    };
+    let built = build(config, options, initial_fingerprint).await?;
     let poll = (poll_secs > 0).then(|| Duration::from_secs(poll_secs));
     let reloader = reload.map(|r| tokio::spawn(reload_loop(built.state.clone(), r, poll)));
     let metrics_listener = spawn_metrics_listener(&built.state).await?;
@@ -398,7 +408,6 @@ fn validate_text(running: &Config, text: &str) -> Result<Config, String> {
 /// targets file that would make the configuration invalid and loads the main text alone (ADR 0022), and a reload
 /// accepts that. A patch that would make the running gateway stop merging that file is almost never what the
 /// editor meant, so it is refused.
-#[cfg_attr(not(test), allow(dead_code))] // the patch endpoint calls it (add-config-patch 3.1)
 fn validate_patched(running: &Config, text: &str) -> Result<Config, String> {
     use crate::config::DiscoveryState;
     let config = validate_text(running, text)?;
@@ -654,6 +663,7 @@ async fn open_overrides(
 }
 
 async fn build(config: Config, options: Options, fingerprint: String) -> Result<Built, String> {
+    let config_path = options.config_path;
     let clock: Arc<dyn Clock> = options.clock.unwrap_or_else(|| Arc::new(SystemClock));
     let extra_policy: Arc<dyn RoutingPolicy> = options.policy.unwrap_or_else(|| Arc::new(AllowAll));
     let ledger = match &config.ledger {
@@ -696,6 +706,7 @@ async fn build(config: Config, options: Options, fingerprint: String) -> Result<
         drains,
         metrics,
         extra_policy,
+        config_path,
         reload: Mutex::new(ReloadStatus::default()),
         reloading: tokio::sync::Mutex::new(()),
     });

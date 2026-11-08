@@ -169,6 +169,132 @@
         }
       }
     },
+    "/admin/v1/config/patch": {
+      "post": {
+        "operationId": "createConfigPatch",
+        "summary": "Turn edits into a validated patch against the configuration file (nothing is written)",
+        "description": "Applies the edits, in order, to the text of the configuration file with a format-preserving editor, loads the result the way a reload does, and returns a unified diff and the fingerprint the new text would have. Key hashes, credential hashes and provider header values are shown as `<redacted>`, so the diff is for review and not for `patch(1)`. The file, the ledger and the running configuration are never changed. `fingerprint` must be the file's current fingerprint (`GET /admin/v1/config`, `config.fingerprint`). The credential also needs `read` to learn it.",
+        "security": [
+          {
+            "adminBearer": [
+              "config"
+            ]
+          }
+        ],
+        "x-error-codes": [
+          "admin_credential_invalid",
+          "admin_scope_required",
+          "config_file_unavailable",
+          "config_rejected",
+          "invalid_edit",
+          "invalid_request",
+          "request_too_large",
+          "stale_fingerprint"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConfigPatchRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The patch. `changed` is false, `diff` is empty and `fingerprint` equals `base_fingerprint` when the edits leave the text as it was.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConfigPatch"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A malformed body, more than 64 edits (`invalid_request`), or an edit that is malformed, outside the editable sections, or does not fit the file (`invalid_edit`, with `error.index`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, unknown, expired or revoked credential. One shape for every reason.",
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "Bearer"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "A valid credential without the `config` scope; `error.scope` names it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`fingerprint` is not the file's now (`stale_fingerprint`); `error.current_fingerprint` is.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "The body is larger than 64 KiB (`request_too_large`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The edited file would not load the way a reload loads it (`config_rejected`); the message is the loader's reason.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The gateway has no configuration file it can read, or it does not parse (`config_file_unavailable`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/admin/v1/health": {
       "get": {
         "operationId": "health",
@@ -1175,6 +1301,14 @@
               "scope": {
                 "type": "string",
                 "description": "With `admin_scope_required`: the scope the credential lacks."
+              },
+              "index": {
+                "type": "integer",
+                "description": "With `invalid_edit`: the position of the edit, counting from 0."
+              },
+              "current_fingerprint": {
+                "type": "string",
+                "description": "With `stale_fingerprint`: the fingerprint of the file now."
               }
             }
           }
@@ -1516,6 +1650,102 @@
           },
           "response_signals": {
             "$ref": "#/components/schemas/ResponseSignalCounts"
+          }
+        }
+      },
+      "ConfigPatchRequest": {
+        "type": "object",
+        "required": [
+          "fingerprint",
+          "edits"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "fingerprint": {
+            "type": "string",
+            "description": "The fingerprint of the configuration file the editor last read."
+          },
+          "edits": {
+            "type": "array",
+            "maxItems": 64,
+            "items": {
+              "$ref": "#/components/schemas/ConfigEdit"
+            }
+          }
+        }
+      },
+      "ConfigEdit": {
+        "type": "object",
+        "required": [
+          "op",
+          "path"
+        ],
+        "description": "One typed change. `path` is table names, keys and array positions inside `providers`, `targets`, `routes`, `profiles`, `aliases`, `budget`, `health`, `overrides` or `keys` (under `keys` only `set` and `remove`, never a key's `sha256`). `value` is required by `set` and `add_table` (an object for `add_table`); `remove` and `remove_table` take none. At most 8 path segments; values nest at most 4 deep.",
+        "additionalProperties": false,
+        "properties": {
+          "op": {
+            "type": "string",
+            "enum": [
+              "set",
+              "remove",
+              "add_table",
+              "remove_table"
+            ]
+          },
+          "path": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 8,
+            "items": {
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              ]
+            }
+          },
+          "value": {
+            "description": "Any JSON value except null; an object for `add_table`."
+          }
+        }
+      },
+      "ConfigPatch": {
+        "type": "object",
+        "required": [
+          "object",
+          "changed",
+          "base_fingerprint",
+          "fingerprint",
+          "edits",
+          "diff"
+        ],
+        "properties": {
+          "object": {
+            "type": "string",
+            "enum": [
+              "config_patch"
+            ]
+          },
+          "changed": {
+            "type": "boolean"
+          },
+          "base_fingerprint": {
+            "type": "string"
+          },
+          "fingerprint": {
+            "type": "string",
+            "description": "What the file's fingerprint would be with the edits applied."
+          },
+          "edits": {
+            "type": "integer"
+          },
+          "diff": {
+            "type": "string",
+            "description": "A unified diff with three lines of context, empty when nothing changed. For review: masked values do not apply with `patch(1)`."
           }
         }
       }
