@@ -81,6 +81,9 @@ See the [example configs](examples.md); `humpyard check-config <file>` validates
 - `max_requests_per_minute` and `max_concurrent` on a key (optional, off by default): the most requests the key
   may make in 60 seconds (1 to 100000) and the most it may have in flight; the request after the limit gets a
   429 with `Retry-After`. See [Limiting a key's speed](budgets.md#limiting-a-keys-speed).
+- `[profiles.<id>]` (optional) and `profile = "<id>"` on a key: a named bundle of routes, budgets, `over_budget` and
+  rate limits that its keys inherit and may only narrow. See [Key profiles](budgets.md#key-profiles). Not the same
+  as the `x-humpyard-profile` request header.
 - `[metrics]` (optional, off by default): the Prometheus `/metrics` endpoint. `enabled`, `listen` (a
   separate address; recommended), `bearer_sha256` (the credential for serving it on the main
   listener), `key_labels` and `key_label_limit`. See [Metrics and alerts](metrics.md).

@@ -332,6 +332,52 @@ limit is the setting times the replicas, and a holder of several keys has each k
 The refusal is a decision with the outcome `rate_limited` and is counted in
 `humpyard_refusals_total{reason="rate_limited"}`.
 
+### Key profiles
+
+When several keys share the same routes, budgets and limits, define them once as a **profile** and name it on each
+key. A profile is a named bundle of the settings a key may be narrowed on; it is in the configuration file, like the
+keys that use it, and changes with a reload.
+
+```toml
+[profiles.agent]
+allowed_routes = ["auto", "fast"]
+daily_usd = 5.0
+over_budget = "free_only"
+max_requests_per_minute = 60
+max_concurrent = 4
+
+[keys.build-bot]
+sha256 = "sha256:..."
+profile = "agent"                 # inherits all of the above
+
+[keys.review-bot]
+sha256 = "sha256:..."
+profile = "agent"
+daily_usd = 2.0                   # narrower than the profile's 5.0: allowed
+allowed_routes = ["fast"]         # a subset of the profile's routes: allowed
+```
+
+A profile may set `allowed_routes`, `over_budget`, `daily_usd`, `monthly_usd`, `daily_tokens`, `monthly_tokens`,
+`max_request_usd`, `max_requests_per_minute` and `max_concurrent`, each with the meaning and the checks it has on a
+key. Nothing else: in particular a profile cannot set `read_config` or `manage_overrides`, so it can never give a key
+a privilege.
+
+- **A key inherits what it leaves unset.** A key that sets no rate limit gets the profile's, not an unlimited one.
+- **A key can only narrow.** A number it sets must be no more than the profile's; its `allowed_routes` must all be in
+  the profile's list; `over_budget = "block"` is allowed under a `free_only` profile, `free_only` under a `block`
+  profile is not. A setting the profile leaves unset bounds nothing. A wider value is refused when the file loads,
+  naming the key, the profile and the setting.
+- **The profile must exist.** A key naming one that is not defined is refused; a profile no key uses is fine.
+- **A reload applies a changed profile** to every key that names it from the next request. If the change would put a
+  key wider than its profile, the reload is refused as a whole and the previous configuration keeps serving
+  (`reload.message` in `GET /v1/health` says which key, profile and setting).
+
+`GET /v1/config` shows each key's `profile` beside the values it ended up with, and lists the profiles. Each key
+still has its own counters: ten keys on a profile with `max_requests_per_minute = 60` each get 60, not 60 between them.
+
+A key profile has nothing to do with the `x-humpyard-profile` request header, which a client sends to steer
+[route selection](routing.md#selecting-the-route) and carries no authority.
+
 ## Notes
 
 - Switchyard falls back across *all* of a route's targets when the answer candidates fail, so a
