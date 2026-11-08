@@ -17,11 +17,15 @@ The gateway SHALL count, per route and target, requests in which a target was sk
 - **THEN** the counter does not change
 
 ### Requirement: Capability removals are counted
-The gateway SHALL count, per route, target and reason, requests in which a target was removed for capability, as `humpyard_capability_skips_total{route,target,reason}`. `route` and `target` SHALL be configured names and `reason` one of `tools`, `vision` or `context`.
+The gateway SHALL count, per route, target and reason, requests in which a target was removed for capability, as `humpyard_capability_skips_total{route,target,reason}`. `route` and `target` SHALL be configured names and `reason` one of `tools`, `vision`, `context` or `request_cap`.
 
 #### Scenario: An oversized prompt
 - **WHEN** a target is removed because the prompt exceeds its window
 - **THEN** the counter for that route, target and `context` increases by one
+
+#### Scenario: A prompt over a per-request cap
+- **WHEN** a target is removed because the prompt exceeds its `max_request_tokens`
+- **THEN** the counter for that route, target and `request_cap` increases by one
 
 ### Requirement: Cache tokens are counted
 `humpyard_tokens_total` SHALL also carry the `direction` values `cached_input` and `cache_creation`, so the cache-hit ratio can be derived in a dashboard. Session ids SHALL NOT be used as a metric label.
