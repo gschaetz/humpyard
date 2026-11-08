@@ -2,6 +2,7 @@
 //! from the environment.
 
 mod discovered;
+pub mod patch;
 mod pools;
 mod profiles;
 mod schema;

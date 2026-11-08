@@ -360,12 +360,8 @@ async fn reload_config(state: &AppState, path: &std::path::Path) {
 fn try_reload(state: &AppState, path: &std::path::Path) -> Result<String, String> {
     let text = std::fs::read_to_string(path)
         .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
-    let config = Config::from_toml_with(&text, |name| std::env::var(name).ok(), &|file| {
-        std::fs::read_to_string(file).ok()
-    })
-    .map_err(|e| e.to_string())?;
     let current = state.snapshot();
-    restart_only_changes(&current.config, &config)?;
+    let config = validate_text(&current.config, &text)?;
     log_pool_changes(&current.config, &config);
     log_discovery(Some(&current.config), &config);
     let fingerprint = watched_fingerprint(&text, config.discovery.file.as_deref());
@@ -383,6 +379,37 @@ fn try_reload(state: &AppState, path: &std::path::Path) -> Result<String, String
     state.metrics.set_vocabulary(&next.config);
     *state.snapshot.write() = Arc::new(next);
     Ok(fingerprint)
+}
+
+/// Loads `text` the way a reload does (this process's environment, the generated targets file from disk) and
+/// applies the checks a reload makes against the configuration now serving: the loader's own, and the settings
+/// that need a restart. A reload and a configuration patch (ADR 0034) both go through here, so "the patch loads"
+/// and "the reload loads" cannot drift apart.
+fn validate_text(running: &Config, text: &str) -> Result<Config, String> {
+    let config = Config::from_toml_with(text, |name| std::env::var(name).ok(), &|file| {
+        std::fs::read_to_string(file).ok()
+    })
+    .map_err(|e| e.to_string())?;
+    restart_only_changes(running, &config)?;
+    Ok(config)
+}
+
+/// [`validate_text`] for a patch, which is stricter than a reload in one way: the loader drops a generated
+/// targets file that would make the configuration invalid and loads the main text alone (ADR 0022), and a reload
+/// accepts that. A patch that would make the running gateway stop merging that file is almost never what the
+/// editor meant, so it is refused.
+#[cfg_attr(not(test), allow(dead_code))] // the patch endpoint calls it (add-config-patch 3.1)
+fn validate_patched(running: &Config, text: &str) -> Result<Config, String> {
+    use crate::config::DiscoveryState;
+    let config = validate_text(running, text)?;
+    if let (DiscoveryState::Loaded(_), DiscoveryState::Ignored(why)) =
+        (&running.discovery_state, &config.discovery_state)
+    {
+        return Err(format!(
+            "the generated targets file would be ignored: {why}"
+        ));
+    }
+    Ok(config)
 }
 
 /// Names, in the log, each pool route whose membership a reload changed (ADR 0021): a strength moved
@@ -2142,6 +2169,109 @@ mod tests {
 
     fn raw(value: &Value) -> Vec<u8> {
         serde_json::to_vec(value).unwrap()
+    }
+
+    /// A small valid configuration; `extra` is appended at top level, before any table.
+    fn base_text(extra: &str, tables: &str) -> String {
+        format!(
+            "listen = \"127.0.0.1:0\"\n{extra}\n[providers.p]\nbase_url = \"http://127.0.0.1:1\"\napi_key_env = \"PATH\"\n\
+             [targets.t]\nendpoints = [{{ provider = \"p\", model = \"m\" }}]\n{tables}"
+        )
+    }
+
+    fn running(text: &str) -> Config {
+        Config::from_toml_with(text, |name| std::env::var(name).ok(), &|file| {
+            std::fs::read_to_string(file).ok()
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn every_setting_that_needs_a_restart_is_refused_by_the_shared_check() {
+        let key = "[keys.k]\nsha256 = \"sha256:00000000000000000000000000000000000000000000000000000000000000aa\"\nallowed_routes = [\"t\"]\n";
+        let admin = "[admin]\nlisten = \"127.0.0.1:9\"\n[admin.credentials.a]\nsha256 = \"sha256:00000000000000000000000000000000000000000000000000000000000000bb\"\nscopes = [\"read\"]\n";
+        let before = running(&base_text("", &format!("{key}{admin}")));
+        let cases: [(&str, String); 7] = [
+            (
+                "listen",
+                base_text("", &format!("{key}{admin}")).replace("127.0.0.1:0", "127.0.0.1:7"),
+            ),
+            (
+                "ledger",
+                base_text(
+                    "",
+                    &format!("[ledger]\npath = \"/tmp/other.db\"\n{key}{admin}"),
+                ),
+            ),
+            (
+                "shutdown_grace_secs",
+                base_text("shutdown_grace_secs = 7", &format!("{key}{admin}")),
+            ),
+            (
+                "reload_poll_secs",
+                base_text("reload_poll_secs = 7", &format!("{key}{admin}")),
+            ),
+            (
+                "decision_retention_days",
+                base_text("decision_retention_days = 7", &format!("{key}{admin}")),
+            ),
+            (
+                "admin.listen",
+                base_text("", &format!("{key}{admin}"))
+                    .replace("127.0.0.1:9\"\n[admin.c", "127.0.0.1:8\"\n[admin.c"),
+            ),
+            ("keys at all", base_text("", admin)),
+        ];
+        for (what, text) in cases {
+            let refused = validate_text(&before, &text).unwrap_err();
+            assert!(
+                refused.contains("restart")
+                    && refused.contains(what.split_whitespace().next().unwrap()),
+                "{what}: {refused}"
+            );
+        }
+        // The unchanged text, and an ordinary edit, load.
+        assert!(validate_text(&before, &base_text("", &format!("{key}{admin}"))).is_ok());
+        let edited =
+            base_text("", &format!("{key}{admin}")).replace("model = \"m\"", "model = \"n\"");
+        assert!(validate_text(&before, &edited).is_ok());
+    }
+
+    #[test]
+    fn a_patch_is_refused_when_the_generated_file_would_stop_merging_but_a_reload_is_not() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("generated.toml");
+        // A generated target on provider `q`, which the main text defines.
+        std::fs::write(
+            &file,
+            "[targets.auto-q-x]\nstrengths = [\"general\"]\nendpoints = [{ provider = \"q\", model = \"x\", price = { input = 0.0, output = 0.0 } }]\n",
+        )
+        .unwrap();
+        let discovery = format!(
+            "[discovery]\nenabled = true\nfile = \"{}\"\n",
+            file.display()
+        );
+        let providers = "[providers.q]\nbase_url = \"http://127.0.0.1:2\"\napi_key_env = \"PATH\"\nprice_source = \"models-dev:groq\"\ndiscover = { strengths = [\"general\"] }\n";
+        let with_q = base_text("", &format!("{providers}{discovery}"));
+        let before = running(&with_q);
+        assert!(matches!(
+            before.discovery_state,
+            crate::config::DiscoveryState::Loaded(1)
+        ));
+        // Removing the provider leaves a valid main text and an unmergeable generated file.
+        let without_q = base_text("", &discovery);
+        let reload = validate_text(&before, &without_q).unwrap();
+        assert!(matches!(
+            reload.discovery_state,
+            crate::config::DiscoveryState::Ignored(_)
+        ));
+        let refused = validate_patched(&before, &without_q).unwrap_err();
+        assert!(
+            refused.contains("generated targets file would be ignored"),
+            "{refused}"
+        );
+        // A patch that keeps merging it passes both.
+        assert!(validate_patched(&before, &with_q).is_ok());
     }
 
     #[test]
