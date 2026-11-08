@@ -13,7 +13,7 @@
 ## 3. Docs and wrap-up
 
 - [x] 3.1 Document the cap in `docs/routing.md` (Capabilities, and the Groq example with a window and a cap), `docs/configuration.md` and `docs/metrics.md`, and update `docs/architecture.md` (status table, "Last updated"); verify the strict docs build and that its Mermaid diagrams still match the code
-- [ ] 3.2 Run fmt, clippy `-D warnings`, `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features --document-private-items` and the full test suite, then archive with `openspec archive add-endpoint-request-cap --yes`; verify all gates pass and the spec deltas merge
+- [x] 3.2 Run fmt, clippy `-D warnings`, `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features --document-private-items` and the full test suite, then archive with `openspec archive add-endpoint-request-cap --yes`; verify all gates pass and the spec deltas merge
 
 ## Workflow follow-up
 
