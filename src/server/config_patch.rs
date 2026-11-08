@@ -222,7 +222,7 @@ fn rejected(why: &str) -> Refused {
         "rejected",
         StatusCode::UNPROCESSABLE_ENTITY,
         "config_rejected",
-        format!("the configuration would not load: {why}"),
+        format!("the configuration would not load: {}", without_source(why)),
     )
 }
 
@@ -231,6 +231,42 @@ fn unavailable(why: &str) -> Refused {
         "unavailable",
         StatusCode::SERVICE_UNAVAILABLE,
         "config_file_unavailable",
-        why.to_string(),
+        without_source(why),
     )
+}
+
+/// A loader or parser message without the lines of the file it quotes. A TOML error prints the offending line
+/// between `  |` gutters, and that line can hold a header value; the position and the reason are kept.
+fn without_source(message: &str) -> String {
+    let quoted = |line: &str| {
+        line.trim_start()
+            .trim_start_matches(|c: char| c.is_ascii_digit())
+            .trim_start()
+            .starts_with('|')
+    };
+    message
+        .lines()
+        .filter(|line| !quoted(line) && !line.trim().is_empty())
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::without_source;
+
+    #[test]
+    fn a_toml_error_keeps_its_position_and_reason_and_loses_the_quoted_line() {
+        let error = "invalid config: TOML parse error at line 8, column 64\n  |\n8 | headers = { \"a\" = \"SECRET\" , b = 5 }\n  |                       ^\ninvalid type: integer `5`, expected a string\n";
+        assert_eq!(
+            without_source(error),
+            "invalid config: TOML parse error at line 8, column 64; invalid type: integer `5`, expected a string"
+        );
+        assert!(!without_source(error).contains("SECRET"));
+        // A message with no quoted source is unchanged.
+        assert_eq!(
+            without_source("target `t`: no endpoints"),
+            "target `t`: no endpoints"
+        );
+    }
 }

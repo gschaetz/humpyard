@@ -1,9 +1,9 @@
-# Spec Delta
+# config-patch Specification
 
 ## Purpose
 Turn a list of typed edits into a reviewable patch against the gateway's configuration file, accepted by the real configuration loader before it is offered, without changing the file or the running gateway.
 
-## ADDED Requirements
+## Requirements
 
 ### Requirement: Edits become a patch only when the loader accepts the result
 `POST /admin/v1/config/patch`, with the `config` scope, SHALL take the fingerprint the editor last read and a list of edits, apply them in order to the text of the configuration file the gateway loaded, and load the result with the same loader, environment and generated-targets file as a reload, including the checks a reload makes (a change that needs a restart is refused). A result the loader rejects SHALL return its reason and no patch.
@@ -86,16 +86,26 @@ A path SHALL lie inside `providers`, `targets`, `routes`, `profiles`, `aliases`,
 - **WHEN** an edit adds a table under `keys`
 - **THEN** the response is 400 `invalid_edit`
 
-### Requirement: The request and the answer are bounded and carry no secret
-A request body larger than 64 KiB, more than 64 edits, a path deeper than 8 or a value nested deeper than 4 SHALL be refused, naming the limit, before any edit is applied. The diff SHALL show the value of a key hash, a credential hash or a provider header as `<redacted>` wherever it appears, and no other response field SHALL contain one. A caller without the `config` scope SHALL receive 403 `admin_scope_required` naming `config`.
+### Requirement: The request is bounded
+A request body larger than 64 KiB, more than 64 edits, a path deeper than 8 or a value nested deeper than 4 SHALL be refused, naming the limit, before any edit is applied.
 
 #### Scenario: Too many edits
 - **WHEN** a request carries 65 edits
 - **THEN** the response is 400 naming the limit and nothing is applied
 
+### Requirement: The answer carries no secret
+The diff SHALL show the value of a key hash, a credential hash or a provider header as `<redacted>` wherever it appears, and no other response field SHALL contain one. An error message SHALL give the position and the reason of a loader or parser failure but SHALL NOT quote a line of the file.
+
 #### Scenario: A removed provider
 - **WHEN** an edit removes a provider whose table has header values
 - **THEN** the diff shows the removed header lines with `<redacted>` in place of the values
+
+#### Scenario: A loader error on a line holding a secret
+- **WHEN** an edit makes a value invalid on a line that also holds a provider header value
+- **THEN** the response is 422 `config_rejected` with the line and column and the reason, and neither the line nor the header value appears anywhere in it
+
+### Requirement: The config scope is required before anything is read
+A caller without the `config` scope SHALL receive 403 `admin_scope_required` naming `config`, and the request body and the configuration file SHALL NOT be read.
 
 #### Scenario: A read-only credential
 - **WHEN** a credential with only `read` calls the endpoint

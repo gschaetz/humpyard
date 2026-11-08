@@ -152,3 +152,15 @@ in an ADR (`docs/adr/`) in the same change.
 10. **The ledger refers to key ids, never hashes.** Identity changes (for example database-managed
     keys) must not require a ledger migration. *Enforced by* review and the ledger schema; see
     [ADR-0003](adr/0003-config-first-virtual-keys-behind-keystore.md).
+
+23. **A configuration patch writes nothing and is checked by the reload path.** `POST /admin/v1/config/patch`
+    produces a diff and a fingerprint from typed edits and changes neither the file, the ledger, the reload
+    status nor the running configuration, whatever the outcome; the edited text must pass the same function a
+    reload uses (loader and restart-only checks) before a diff is offered; the `admin` table, key hashes and key
+    existence cannot be edited through it; and no key hash, credential hash or provider header value appears in
+    its answer. *Enforced by* `tests/config_patch.rs`
+    (`no_outcome_writes_the_file_reloads_or_changes_the_running_configuration`,
+    `edits_outside_the_editable_sections_are_refused_naming_the_edit`,
+    `removing_a_provider_shows_its_header_without_the_value`,
+    `a_hash_near_an_edit_is_masked_in_the_context`), `server::tests::every_setting_that_needs_a_restart_is_refused_by_the_shared_check`
+    and the `config::patch` unit tests; see [ADR-0034](adr/0034-a-configuration-patch-is-typed-edits-checked-by-the-reload-path-and-written-by-no-one.md).

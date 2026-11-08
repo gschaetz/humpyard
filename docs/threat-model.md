@@ -20,7 +20,7 @@ Optional commands read public price and model lists (`prices`, `models`). Releas
 |---|---|
 | Provider API keys | They spend the operator's money and carry the operator's identity at each provider |
 | Client keys (stored as SHA-256 hashes) | They authorise spend through the gateway, within route and budget limits |
-| Admin credentials (hashes in the file) | They can create overrides and revoke credentials |
+| Admin credentials (hashes in the file) | They can create overrides and revoke credentials; one with the `config` scope can ask for configuration patches, which write nothing |
 | Prompts and responses | They may contain anything the user sent; the gateway does not store them |
 | The ledger (SQLite) | Key ids, models, token counts, costs, decisions with scrubbed provider error text |
 | The configuration and generated target file | They decide where prompts go; a poisoned one sends them elsewhere |
@@ -86,6 +86,10 @@ sufficient answer today; they are collected at the end.
 | An admin credential leaks | Hashed, scoped, optionally expiring, and revocable as an expiring override without a deploy | [ADR 0027](adr/0027-admin-authority-is-granted-by-configuration-to-named-scoped-principals.md); **Gap:** no rate limit on failed admin authentication |
 | The admin credential or API is exposed in cleartext | The admin API can have its own listener | **Gap:** the gateway speaks plain HTTP and expects TLS from a reverse proxy; the deployment guide does not say so plainly |
 | An admin action is not attributable | Admin actions are audited as `admin:<id>` | [ADR 0027](adr/0027-admin-authority-is-granted-by-configuration-to-named-scoped-principals.md)
+| A `config` credential is used to edit authority: a new admin credential, a changed key hash, a new key | Only named sections are editable; the `admin` table is not; under `keys` only `set` and `remove`, never `sha256`, never adding or removing a key; a rejected edit applies nothing | [ADR 0034](adr/0034-a-configuration-patch-is-typed-edits-checked-by-the-reload-path-and-written-by-no-one.md); invariant 23; `tests/config_patch.rs` (`edits_outside_the_editable_sections_are_refused_naming_the_edit`) and the `config::patch` unit tests |
+| A patch answer shows a key hash, a credential hash or a provider header value | The diff is computed on texts masked by walking the parsed document; loader and parser messages have the file lines they quote removed | `config_patch.rs` (`removing_a_provider_shows_its_header_without_the_value`, `a_hash_near_an_edit_is_masked_in_the_context`, `a_loader_error_never_echoes_a_line_of_the_file`); the `config::patch` diff tests |
+| A patch changes the file, reloads or alters the running gateway | The endpoint has no write path and no reload trigger; every outcome is checked to leave the file, fingerprint and reload status as they were | invariant 23; `config_patch.rs` (`no_outcome_writes_the_file_reloads_or_changes_the_running_configuration`) |
+| A `config` credential reads the file's structure by probing diffs | **Gap, accepted:** a diff shows the lines around an edit (secrets masked); `config` is a separate scope, so `read` alone cannot, and the docs say to give it only to someone who may see the file | residual; [API reference](api.md#configuration-patches) |
 | The admin GUI | Its own threat model | The `add-admin-gui-delivery` change |
 
 ### B4: configuration and secrets
@@ -94,6 +98,7 @@ sufficient answer today; they are collected at the end.
 |---|---|---|
 | Secrets in files or in the repository | Provider keys come from the environment; the loader rejects plaintext secrets; a maintainer-side pre-commit check blocks key-shaped strings and private names (local, not enforced in CI) | Invariant 8; [ADR 0004](adr/0004-no-plaintext-secrets.md); the config tests |
 | A poisoned generated target file | A strict loader accepts it whole or ignores it whole, forces the class, requires zero prices and refuses duplicates | [ADR 0022](adr/0022-free-pool-membership-may-be-updated-on-a-schedule-without-review.md); `tests/discovery_loader.rs` |
+| A stale or unvalidated change proposed for the file | A patch names the file's current fingerprint (a stale base is refused with the current one) and passes the check a reload makes before a diff is offered | [ADR 0034](adr/0034-a-configuration-patch-is-typed-edits-checked-by-the-reload-path-and-written-by-no-one.md); `config_patch.rs` (`a_stale_fingerprint_is_refused_with_the_current_one_even_before_a_reload`); `server::tests` (the shared check) |
 | An unreviewed change to the running configuration | The configuration fingerprint is exposed, so drift is detectable | [ADR 0025](adr/0025-the-ui-has-no-state-of-its-own.md); `humpyard ctl config --fingerprint` |
 
 ### B5: the ledger

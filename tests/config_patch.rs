@@ -453,6 +453,26 @@ async fn removing_a_provider_shows_its_header_without_the_value() {
 }
 
 #[tokio::test]
+async fn a_loader_error_never_echoes_a_line_of_the_file() {
+    let g = start().await;
+    // A header value that is not a string makes the loader fail on the line that also holds the secret one.
+    let (status, body) = g
+        .edit(json!([{"op": "set", "path": ["providers", "p", "headers", "x-new"], "value": 5}]))
+        .await;
+    assert_eq!(status, 422, "{body}");
+    assert_eq!(body["error"]["code"], "config_rejected");
+    assert!(!body.to_string().contains(SECRET_HEADER), "{body}");
+    assert!(!body.to_string().contains(&g.creds.key_hash), "{body}");
+    // The reason and the position are still given.
+    let message = body["error"]["message"].as_str().unwrap();
+    assert!(
+        message.contains("expected a string") && message.contains("line"),
+        "{message}"
+    );
+    g.shut_down().await;
+}
+
+#[tokio::test]
 async fn a_hash_near_an_edit_is_masked_in_the_context() {
     let g = start().await;
     let (status, body) = g
