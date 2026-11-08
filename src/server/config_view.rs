@@ -14,7 +14,7 @@ use serde_json::{Value, json};
 use switchyard_protocol::WireFormat;
 
 use super::{AppState, authenticate};
-use crate::config::{Config, Endpoint, KeyConfig};
+use crate::config::{Config, Endpoint, KeyConfig, ProfileConfig};
 use crate::overrides::Override;
 
 /// One key as the view shows it: its limits and flags, never its hash.
@@ -29,6 +29,23 @@ fn key_view(k: &KeyConfig) -> Value {
         "max_requests_per_minute": k.max_requests_per_minute,
         "max_concurrent": k.max_concurrent,
         "read_config": k.read_config,
+        "profile": k.profile,
+        "source": "file",
+    })
+}
+
+/// One profile as defined: the bounds its keys inherit and may only narrow. `null` bounds nothing.
+fn profile_view(p: &ProfileConfig) -> Value {
+    json!({
+        "allowed_routes": p.allowed_routes,
+        "over_budget": p.over_budget.map(|o| format!("{o:?}").to_lowercase()),
+        "daily_usd": p.limits.daily_usd,
+        "monthly_usd": p.limits.monthly_usd,
+        "daily_tokens": p.limits.daily_tokens,
+        "monthly_tokens": p.limits.monthly_tokens,
+        "max_request_usd": p.max_request_usd,
+        "max_requests_per_minute": p.max_requests_per_minute,
+        "max_concurrent": p.max_concurrent,
         "source": "file",
     })
 }
@@ -100,6 +117,11 @@ pub(super) fn view(
         .iter()
         .map(|(id, k)| (id.clone(), key_view(k)))
         .collect();
+    let profiles: serde_json::Map<String, Value> = config
+        .profiles
+        .iter()
+        .map(|(id, p)| (id.clone(), profile_view(p)))
+        .collect();
     json!({
         "object": "config",
         "config": {"fingerprint": fingerprint, "loaded_at_ms": loaded_at_ms},
@@ -120,6 +142,7 @@ pub(super) fn view(
         "routes": routes,
         "selectors": config.select,
         "keys": keys,
+        "profiles": profiles,
         // Only a count: who may administer the gateway is for administrators to see, not for every key that
         // may read the configuration (ADR 0027).
         "admin": {

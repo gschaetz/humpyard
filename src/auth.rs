@@ -189,6 +189,7 @@ mod tests {
                 limits: Limits::default(),
                 read_config: false,
                 manage_overrides: false,
+                profile: None,
             },
         )]
         .into();

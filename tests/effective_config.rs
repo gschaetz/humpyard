@@ -48,10 +48,11 @@ endpoints = [{ provider = "free", model = "alpha", context_window = 32000, price
     .unwrap();
     let (ops_key, ops_hash) = humpyard::auth::generate_key().unwrap();
     let (app_key, app_hash) = humpyard::auth::generate_key().unwrap();
+    let (_, member_hash) = humpyard::auth::generate_key().unwrap();
     let (metrics_key, metrics_hash) = humpyard::auth::generate_key().unwrap();
     let keys = if with_keys {
         format!(
-            "[keys.ops]\nsha256 = \"{ops_hash}\"\nread_config = true\nmax_requests_per_minute = 60\nmax_concurrent = 4\n[keys.app]\nsha256 = \"{app_hash}\"\n"
+            "[keys.ops]\nsha256 = \"{ops_hash}\"\nread_config = true\nmax_requests_per_minute = 60\nmax_concurrent = 4\n[keys.app]\nsha256 = \"{app_hash}\"\n[profiles.team]\nmax_requests_per_minute = 30\nmax_concurrent = 2\n[keys.member]\nsha256 = \"{member_hash}\"\nprofile = \"team\"\nmax_concurrent = 1\n"
         )
     } else {
         String::new()
@@ -279,4 +280,24 @@ async fn check_config_prints_the_fingerprint_and_it_follows_the_files() {
     text.push_str("\n# a change\n");
     std::fs::write(&f.main_path, text).unwrap();
     assert_ne!(run_check(), first, "it changes when the file does");
+}
+
+#[tokio::test]
+async fn a_key_shows_its_profile_and_the_values_it_ended_up_with_and_profiles_are_listed() {
+    let f = fixture("key-profiles", true).await;
+    let (status, body) = get(&f.url, "/v1/config", Some(&f.ops_key)).await;
+    assert_eq!(status, 200, "{body}");
+    let v: Value = serde_json::from_str(&body).unwrap();
+    let member = &v["keys"]["member"];
+    assert_eq!(member["profile"], "team");
+    assert_eq!(member["max_requests_per_minute"], 30, "inherited");
+    assert_eq!(
+        member["max_concurrent"], 1,
+        "its own, narrower than the profile's"
+    );
+    assert!(v["keys"]["app"]["profile"].is_null());
+    assert_eq!(v["profiles"]["team"]["max_requests_per_minute"], 30);
+    assert_eq!(v["profiles"]["team"]["max_concurrent"], 2);
+    assert!(v["profiles"]["team"]["daily_usd"].is_null());
+    assert!(!body.contains("sha256"), "no hash in the view");
 }

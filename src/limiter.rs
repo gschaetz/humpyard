@@ -293,6 +293,7 @@ mod tests {
             max_concurrent: concurrent,
             read_config: false,
             manage_overrides: false,
+            profile: None,
         }
     }
 

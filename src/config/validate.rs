@@ -77,16 +77,17 @@ pub(super) fn key(id: &str, key: RawKey) -> Result<KeyConfig, ConfigError> {
     Ok(KeyConfig {
         sha256: parse_hash(id, &key.sha256)?,
         allowed_routes: key.allowed_routes,
-        over_budget: key.over_budget,
+        over_budget: key.over_budget.unwrap_or_default(),
+        profile: key.profile,
         max_request_usd: key.max_request_usd,
         max_requests_per_minute: key_limit(
-            id,
+            &format!("keys.{id}"),
             "max_requests_per_minute",
             key.max_requests_per_minute.as_ref(),
             MAX_REQUESTS_PER_MINUTE,
         )?,
         max_concurrent: key_limit(
-            id,
+            &format!("keys.{id}"),
             "max_concurrent",
             key.max_concurrent.as_ref(),
             u32::MAX.into(),
@@ -105,9 +106,10 @@ pub(super) fn key(id: &str, key: RawKey) -> Result<KeyConfig, ConfigError> {
 /// The most a key may be admitted per minute; the limiter keeps one timestamp per admission.
 pub(super) const MAX_REQUESTS_PER_MINUTE: i64 = 100_000;
 
-/// Checks a key's optional rate or concurrency limit: a positive integer, at most `max`.
+/// Checks an optional rate or concurrency limit of `owner` (`keys.<id>` or `profiles.<id>`): a positive
+/// integer, at most `max`.
 pub(super) fn key_limit(
-    id: &str,
+    owner: &str,
     field: &str,
     value: Option<&toml::Value>,
     max: i64,
@@ -119,7 +121,7 @@ pub(super) fn key_limit(
         .map(Some)
         .ok_or_else(|| {
             invalid(format!(
-                "keys.{id}.{field} must be a whole number from 1 to {max}"
+                "{owner}.{field} must be a whole number from 1 to {max}"
             ))
         })
 }

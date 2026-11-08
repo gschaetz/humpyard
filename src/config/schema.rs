@@ -32,6 +32,9 @@ pub(super) struct RawConfig {
     pub(super) routes: BTreeMap<String, RouteSpec>,
     #[serde(default)]
     pub(super) keys: BTreeMap<String, RawKey>,
+    /// Named bundles of key authority (`add-key-profiles`, ADR 0025); a key names one with `profile`.
+    #[serde(default)]
+    pub(super) profiles: BTreeMap<String, RawProfile>,
     pub(super) ledger: Option<RawLedger>,
     #[serde(default)]
     pub(super) budget: RawBudget,
@@ -283,8 +286,8 @@ pub(super) struct RawKey {
     /// `sha256:<64 hex>` of the key, from `keygen`. Plaintext keys are never accepted.
     pub(super) sha256: String,
     pub(super) allowed_routes: Option<Vec<String>>,
-    #[serde(default)]
-    pub(super) over_budget: OverBudget,
+    /// Unset inherits the key's profile, and is `block` without one.
+    pub(super) over_budget: Option<OverBudget>,
     pub(super) daily_usd: Option<f64>,
     pub(super) monthly_usd: Option<f64>,
     pub(super) daily_tokens: Option<u64>,
@@ -297,12 +300,30 @@ pub(super) struct RawKey {
     pub(super) max_requests_per_minute: Option<toml::Value>,
     /// Requests in flight at once, a streamed answer counting until it ends. Read untyped like the rate.
     pub(super) max_concurrent: Option<toml::Value>,
+    /// The profile whose settings this key inherits and may only narrow.
+    pub(super) profile: Option<String>,
     /// May read the effective configuration (`GET /v1/config`); off by default.
     #[serde(default)]
     pub(super) read_config: bool,
     /// May create and remove runtime overrides (`/v1/overrides`); off by default.
     #[serde(default)]
     pub(super) manage_overrides: bool,
+}
+
+/// What a profile bounds: the narrowable settings of a key. It carries no privilege (`read_config`,
+/// `manage_overrides`): a profile cannot give a key anything.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct RawProfile {
+    pub(super) allowed_routes: Option<Vec<String>>,
+    pub(super) over_budget: Option<OverBudget>,
+    pub(super) daily_usd: Option<f64>,
+    pub(super) monthly_usd: Option<f64>,
+    pub(super) daily_tokens: Option<u64>,
+    pub(super) monthly_tokens: Option<u64>,
+    pub(super) max_request_usd: Option<f64>,
+    pub(super) max_requests_per_minute: Option<toml::Value>,
+    pub(super) max_concurrent: Option<toml::Value>,
 }
 
 #[derive(Debug, Deserialize)]
