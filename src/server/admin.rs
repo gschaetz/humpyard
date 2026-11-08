@@ -130,6 +130,20 @@ pub(super) const ROUTES: &[Route] = &[
         register: |m| m.post(create_override),
     },
     Route {
+        method: "POST",
+        path: "/admin/v1/config/patch",
+        scope: Some(AdminScope::Config),
+        codes: &[
+            "invalid_request",
+            "request_too_large",
+            "invalid_edit",
+            "stale_fingerprint",
+            "config_rejected",
+            "config_file_unavailable",
+        ],
+        register: |m| m.post(super::config_patch::patch),
+    },
+    Route {
         method: "DELETE",
         path: "/admin/v1/overrides/{id}",
         scope: Some(AdminScope::Overrides),
