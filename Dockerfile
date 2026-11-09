@@ -8,6 +8,7 @@ FROM rust:1.99-bookworm AS build
 WORKDIR /src
 # The image's own toolchain is used, so rust-toolchain.toml is deliberately not copied.
 COPY Cargo.toml Cargo.lock ./
+COPY build.rs ./
 COPY src ./src
 # The admin API's OpenAPI document is embedded in the binary (src/server/admin.rs).
 COPY docs/openapi ./docs/openapi
