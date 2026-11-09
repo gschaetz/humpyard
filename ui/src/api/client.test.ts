@@ -63,4 +63,19 @@ describe("the admin API client", () => {
     const client = createClient(() => "k", vi.fn<typeof fetch>().mockResolvedValue(respond(200, { info: {} })));
     await expect(client.contractVersion()).rejects.toBeInstanceOf(ApiError);
   });
+
+  it("sends the access token in a request body to /ui/session and never in a URL", async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(null, { status: 204 }));
+    await createClient(() => null, fetchImpl).exchangeToken("tok");
+    const [url, init] = fetchImpl.mock.calls[0] ?? [];
+    expect(url).toBe("/ui/session");
+    expect(init?.method).toBe("POST");
+    expect(init?.body).toBe('{"token":"tok"}');
+  });
+
+  it("reports a refused token with the service's code", async () => {
+    const error = { error: { code: "ui_token_invalid", message: "That is not the access token." } };
+    const client = createClient(() => null, vi.fn<typeof fetch>().mockResolvedValue(respond(401, error)));
+    await expect(client.exchangeToken("x")).rejects.toMatchObject({ status: 401, code: "ui_token_invalid" });
+  });
 });

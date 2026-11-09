@@ -1,0 +1,17 @@
+{
+  "files.watcherExclude": {
+    "**/target/**": true,
+    "**/node_modules/**": true,
+    "**/ui/dist/**": true
+  },
+  "search.exclude": {
+    "**/target": true,
+    "**/node_modules": true,
+    "**/ui/dist": true
+  },
+  "files.exclude": {
+    "**/target": true
+  },
+  "cSpell.ignorePaths": ["target", "**/node_modules/**", "ui/dist", "Cargo.lock", "ui/package-lock.json"],
+  "eslint.workingDirectories": ["ui"]
+}

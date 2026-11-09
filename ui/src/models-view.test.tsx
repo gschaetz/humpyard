@@ -10,6 +10,7 @@ function client(over: Partial<Client> = {}): Client {
     contractVersion: () => Promise.reject(new Error("not used")),
     stats: () => Promise.resolve(stats(group("fast"))),
     health: () => Promise.resolve(health({ name: "fast", states: ["healthy"], latency: 350 })),
+    exchangeToken: () => Promise.reject(new Error("not used")),
     ...over,
   };
 }

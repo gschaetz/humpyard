@@ -129,6 +129,9 @@ fn rules() -> BTreeMap<&'static str, Module> {
         ("init", module(Edge, &[])),
         // The read-only `ctl` client for a running gateway; `serve` never uses it.
         ("ctl", module(Edge, &[])),
+        // The admin GUI's server and its embedded files; `serve` never uses either.
+        ("ui", module(Edge, &[])),
+        ("ui_assets", module(Edge, &[])),
         ("lib", module(Edge, &[])),
         (
             "main",
@@ -471,6 +474,36 @@ fn only_the_ctl_command_uses_the_ctl_module() {
     assert!(
         offenders.is_empty(),
         "these files use the ctl module, which only `humpyard ctl` may: {offenders:?}"
+    );
+}
+
+/// Only the `ui` command (`main`) may use the module that serves the admin GUI, and only that module may use the
+/// embedded files, so the serving path can never carry a web page or a static-file path (ADR 0032).
+#[test]
+fn only_the_ui_command_uses_the_gui_modules() {
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut offenders = Vec::new();
+    for path in rust_files(&src) {
+        let module = module_of(path.strip_prefix(&src).unwrap());
+        let code = production_code(&fs::read_to_string(&path).unwrap());
+        let uses = |name: &str| {
+            code.contains(&format!("crate::{name}"))
+                || code.contains(&format!("humpyard::{name}"))
+                || code.contains(&format!("super::{name}"))
+        };
+        if !matches!(module.as_str(), "ui" | "ui_assets" | "main" | "lib")
+            && (uses("ui") || uses("ui_assets"))
+        {
+            offenders.push(path.display().to_string());
+        }
+        // The embedded files are reached through `ui` only.
+        if module != "ui" && module != "ui_assets" && module != "lib" && uses("ui_assets") {
+            offenders.push(format!("{} (ui_assets)", path.display()));
+        }
+    }
+    assert!(
+        offenders.is_empty(),
+        "these files use the admin GUI modules, which only `humpyard ui` may: {offenders:?}"
     );
 }
 
