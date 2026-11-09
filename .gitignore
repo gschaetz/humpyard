@@ -2,3 +2,5 @@
 /local
 build/
 site-out/
+ui/node_modules/
+ui/dist/

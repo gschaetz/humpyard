@@ -217,6 +217,19 @@ async fn real_decisions_and_statistics_match_the_documented_schemas() {
         stats["data"][0]["response_signals"],
         json!({"observed": 2, "empty_output": 0, "truncated_output": 0, "bad_tool_call": 1, "cut_stream": 0})
     );
+    // The figures the admin GUI's models view reads are documented too, not only the signal counters.
+    assert!(stats["data"][0]["latency_ms"]["p50"].is_u64(), "{stats}");
+    assert!(stats["data"][0]["failure_rate"].is_number(), "{stats}");
+
+    let health = rig.get("/admin/v1/health").await;
+    let found = violations(
+        &doc,
+        &response_schema(&doc, "/admin/v1/health"),
+        &health,
+        "health",
+    );
+    assert!(found.is_empty(), "{found:#?}\n{health}");
+    assert_eq!(health["targets"][0]["endpoints"][0]["state"], "healthy");
 }
 
 #[tokio::test]
@@ -244,6 +257,20 @@ async fn the_check_fails_when_a_documented_field_is_missing_from_a_response() {
         found,
         ["stats.data[0].response_signals.cut_stream: missing"]
     );
+
+    // The same for the health body: an endpoint without its state is reported by name.
+    let mut health = rig.get("/admin/v1/health").await;
+    health["targets"][0]["endpoints"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("state");
+    let found = violations(
+        &doc,
+        &response_schema(&doc, "/admin/v1/health"),
+        &health,
+        "health",
+    );
+    assert_eq!(found, ["health.targets[0].endpoints[0].state: missing"]);
 
     // A signal name outside the documented set is reported too.
     let schema = response_schema(&doc, "/admin/v1/decisions");

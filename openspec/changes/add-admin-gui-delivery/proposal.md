@@ -31,5 +31,5 @@ The admin API is complete enough for a GUI (config with provenance, decisions wi
 - `src/` gains an embedded-assets module and a `ui` command module that only `main` may use, registered in the architecture rules.
 - `Dockerfile` and `.github/workflows/release.yml` build the GUI first and embed it, with a smoke test that fails on the placeholder.
 - Docs: a GUI page, `deployment.md` (Docker and Kubernetes as a second container running `humpyard ui`), `architecture.md`.
-- No change to the gateway's serving path, the admin API or its contract, the ledger, or client traffic.
+- No change to the gateway's serving path, the admin API's behaviour, the ledger, or client traffic. The published contract `docs/openapi/admin-v1.json` gains the response fields the models view reads and that the real responses already carried but the document did not describe (`StatsGroup` rates, latency percentiles and average cost; the `Health` body and `EndpointHealth`); this is additive, and the contract test now checks `/admin/v1/health` as well as the statistics.
 - Not in scope: gateway-side serving, decisions and overrides screens, config patches (ADR 0025's patch generation), database-managed keys, CORS, an identity-provider login, and serving custom assets from disk.
