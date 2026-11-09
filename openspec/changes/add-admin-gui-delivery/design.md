@@ -19,7 +19,7 @@ In-force ADRs read: 0004 and 0013 (no content stored), 0016 (metrics registry), 
 **Non-Goals:**
 - Serving the GUI from the gateway (see decision 1), CORS, an identity-provider login, serving custom assets from disk.
 - The decisions and overrides screens, config patches, database-managed keys: separate changes.
-- Changing the admin API or its contract.
+- Changing the admin API's behaviour. (Its published contract is only completed: the models view needs fields the responses already carry and the document left undescribed, so they are added, additively, and the contract test checks them. A generated client types only what the document says.)
 
 ## Decisions
 

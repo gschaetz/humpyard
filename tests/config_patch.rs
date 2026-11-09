@@ -600,12 +600,9 @@ async fn a_request_is_logged_by_who_and_how_it_ended_and_never_by_its_content() 
         lines.iter().any(|l| l.contains("outcome=\"invalid_edit\"")),
         "{lines:?}"
     );
-    for secret in [
-        "UNIQUE-VALUE-9931",
-        SECRET_HEADER,
-        "max_request_tokens",
-        "8000",
-    ] {
+    // A number such as the cap is not a needle: the captured text holds every test's logs, with ports and
+    // timestamps that can contain any digits. The strings below cannot occur by chance.
+    for secret in ["UNIQUE-VALUE-9931", SECRET_HEADER, "max_request_tokens"] {
         assert!(!text.contains(secret), "{secret} was logged");
     }
     g.shut_down().await;

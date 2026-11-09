@@ -2,9 +2,9 @@
 
 ## 1. The GUI project
 
-- [ ] 1.1 Create `ui/` (Preact, TypeScript, Vite) with a committed lockfile, a client generated from `docs/openapi/admin-v1.json`, a sign-in step that keeps the credential in `sessionStorage`, and the contract-version check; configure the build to emit no inline scripts or styles and add a lint rule that bans raw-HTML insertion; verify with a type-check, lint, unit tests of the client and the version check, and a production build whose `index.html` has no inline script
-- [ ] 1.2 Add the models view: per target, requests, answered calls, failure and fallback rates, response-signal rates over observed calls (no rate when none were observed), tokens, cost, latency percentiles and endpoint health, from `/admin/v1/stats` and `/admin/v1/health`, with a window selector and an error state that does not keep stale numbers; verify component tests including a hostile model name rendered as text with no element created, a target with no observed calls, and an unreachable API
-- [ ] 1.3 Add a CI job for `ui/` (`npm ci --ignore-scripts`, type-check, lint, tests, build, `npm audit`) that runs on pull requests and uploads `dist`; verify the job passes and fails when the generated client no longer matches the contract
+- [x] 1.1 Create `ui/` (Preact, TypeScript, Vite) with a committed lockfile, a client generated from `docs/openapi/admin-v1.json`, a sign-in step that keeps the credential in `sessionStorage`, and the contract-version check; configure the build to emit no inline scripts or styles and add a lint rule that bans raw-HTML insertion; verify with a type-check, lint, unit tests of the client and the version check, and a production build whose `index.html` has no inline script
+- [x] 1.2 Add the models view: per target, requests, answered calls, failure and fallback rates, response-signal rates over observed calls (no rate when none were observed), tokens, cost, latency percentiles and endpoint health, from `/admin/v1/stats` and `/admin/v1/health`, with a window selector and an error state that does not keep stale numbers; verify component tests including a hostile model name rendered as text with no element created, a target with no observed calls, and an unreachable API
+- [x] 1.3 Add a CI job for `ui/` (`npm ci --ignore-scripts`, type-check, lint, tests, build, `npm audit`) that runs on pull requests and uploads `dist`; verify the job passes and fails when the generated client no longer matches the contract
 
 ## 2. The `humpyard ui` command
 

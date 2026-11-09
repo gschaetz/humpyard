@@ -316,8 +316,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "description": "As `GET /v1/health`."
+                  "$ref": "#/components/schemas/Health"
                 }
               }
             }
@@ -1601,7 +1600,12 @@
           "answered",
           "outcomes",
           "tokens",
-          "response_signals"
+          "response_signals",
+          "failure_rate",
+          "fallback_rate",
+          "latency_ms",
+          "avg_cost_usd",
+          "avg_tokens"
         ],
         "properties": {
           "group": {
@@ -1650,6 +1654,62 @@
           },
           "response_signals": {
             "$ref": "#/components/schemas/ResponseSignalCounts"
+          },
+          "failure_rate": {
+            "type": "number",
+            "nullable": true,
+            "description": "Failed attempts over attempts; null when there were no attempts."
+          },
+          "fallback_rate": {
+            "type": "number",
+            "nullable": true,
+            "description": "Requests that fell back over requests; null when there were no requests."
+          },
+          "latency_ms": {
+            "type": "object",
+            "description": "Time to answer over the window's answer calls, in milliseconds; each is null when there were none.",
+            "required": [
+              "p50",
+              "p90",
+              "p99"
+            ],
+            "properties": {
+              "p50": {
+                "type": "integer",
+                "nullable": true,
+                "description": "Median."
+              },
+              "p90": {
+                "type": "integer",
+                "nullable": true,
+                "description": "90th percentile."
+              },
+              "p99": {
+                "type": "integer",
+                "nullable": true,
+                "description": "99th percentile."
+              }
+            }
+          },
+          "avg_cost_usd": {
+            "type": "number",
+            "nullable": true,
+            "description": "Average cost of an answer call in US dollars; null when there were no answer calls or no price."
+          },
+          "avg_tokens": {
+            "type": "number",
+            "nullable": true,
+            "description": "Average tokens of an answer call; null when there were no answer calls."
+          },
+          "current_latency_ms": {
+            "type": "number",
+            "nullable": true,
+            "description": "With `group_by=target`: the smoothed time to answer that `fastest` routes see now, from memory, so it can differ from the percentiles; null until the target has answered."
+          },
+          "latency_samples": {
+            "type": "integer",
+            "nullable": true,
+            "description": "With `group_by=target`: how many answers the smoothed figure is built from."
           }
         }
       },
@@ -1746,6 +1806,140 @@
           "diff": {
             "type": "string",
             "description": "A unified diff with three lines of context, empty when nothing changed. For review: masked values do not apply with `patch(1)`."
+          }
+        }
+      },
+      "EndpointHealth": {
+        "type": "object",
+        "description": "The breaker state of one endpoint of a target.",
+        "required": [
+          "provider",
+          "model",
+          "state",
+          "consecutive_failures",
+          "cooldown_remaining_ms",
+          "cooldown_source"
+        ],
+        "properties": {
+          "provider": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "healthy",
+              "cooling_down",
+              "probing"
+            ]
+          },
+          "consecutive_failures": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "cooldown_remaining_ms": {
+            "type": "integer",
+            "nullable": true,
+            "description": "Milliseconds until the endpoint is tried again; null when it is not cooling down."
+          },
+          "cooldown_source": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "failures",
+              "retry_after",
+              null
+            ],
+            "description": "Why it is cooling down: its own failures or a provider's `Retry-After`; null when it is not."
+          }
+        }
+      },
+      "Health": {
+        "type": "object",
+        "description": "Skipped endpoints, latency, the loaded configuration and the last reload, as `GET /v1/health`.",
+        "required": [
+          "targets",
+          "config",
+          "reload"
+        ],
+        "properties": {
+          "targets": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "target",
+                "current_latency_ms",
+                "latency_samples",
+                "endpoints"
+              ],
+              "properties": {
+                "target": {
+                  "type": "string"
+                },
+                "current_latency_ms": {
+                  "type": "number",
+                  "nullable": true,
+                  "description": "The smoothed time to answer; null until the target has answered."
+                },
+                "latency_samples": {
+                  "type": "integer",
+                  "nullable": true,
+                  "description": "How many answers the figure is built from; null until the target has answered."
+                },
+                "endpoints": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/EndpointHealth"
+                  }
+                }
+              }
+            }
+          },
+          "config": {
+            "type": "object",
+            "required": [
+              "fingerprint",
+              "loaded_at_ms"
+            ],
+            "properties": {
+              "fingerprint": {
+                "type": "string"
+              },
+              "loaded_at_ms": {
+                "type": "integer"
+              }
+            }
+          },
+          "reload": {
+            "type": "object",
+            "required": [
+              "attempts",
+              "at_ms",
+              "ok",
+              "message"
+            ],
+            "properties": {
+              "attempts": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "at_ms": {
+                "type": "integer",
+                "nullable": true,
+                "description": "When the last reload ran; null before the first."
+              },
+              "ok": {
+                "type": "boolean",
+                "nullable": true
+              },
+              "message": {
+                "type": "string",
+                "nullable": true
+              }
+            }
           }
         }
       }
