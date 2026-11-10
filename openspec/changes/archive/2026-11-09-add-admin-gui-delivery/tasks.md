@@ -19,10 +19,10 @@
 
 ## 4. Docs and wrap-up
 
-- [ ] 4.1 Document the GUI in a new `docs/admin-gui.md` (running `humpyard ui`, the credential modes, TLS and loopback advice, `--allow-host`, Docker and Kubernetes as a second container running the same image) and `docs/deployment.md`, and add it to the nav; verify the strict docs build
-- [ ] 4.2 Update `docs/architecture.md` (the module table, the status table, the "Last updated" line, the operator-surface diagram) and verify its Mermaid diagrams still match the code
-- [ ] 4.3 Check the threat model in `design.md` against what was built (each row still true, each proof exists) and record the result in `docs/admin-gui.md`; then accept ADR 0032 when the design is confirmed; verify `docs/adr/README.md` lists it as accepted
-- [ ] 4.4 Run fmt, clippy `-D warnings`, `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --document-private-items` (and with `--all-features` where `ui/dist` is built), the full test suite and the `ui/` checks, then archive this change with `openspec archive add-admin-gui-delivery --yes`; verify all gates pass and the spec deltas merge
+- [x] 4.1 Document the GUI in a new `docs/admin-gui.md` (running `humpyard ui`, the credential modes, TLS and loopback advice, `--allow-host`, Docker and Kubernetes as a second container running the same image) and `docs/deployment.md`, and add it to the nav; verify the strict docs build
+- [x] 4.2 Update `docs/architecture.md` (the module table, the status table, the "Last updated" line, the operator-surface diagram) and verify its Mermaid diagrams still match the code
+- [x] 4.3 Check the threat model in `design.md` against what was built (each row still true, each proof exists) and record the result in `docs/admin-gui.md`; then accept ADR 0032 when the design is confirmed; verify `docs/adr/README.md` lists it as accepted
+- [x] 4.4 Run fmt, clippy `-D warnings`, `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --document-private-items` (and with `--all-features` where `ui/dist` is built), the full test suite and the `ui/` checks, then archive this change with `openspec archive add-admin-gui-delivery --yes`; verify all gates pass and the spec deltas merge
 
 ## Workflow follow-up
 

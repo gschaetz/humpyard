@@ -99,6 +99,13 @@ virtual keys first) to reach it from other machines.
   carries a build provenance attestation (buildx default), shown as an `unknown/unknown` entry in
   `docker buildx imagetools inspect`.
 
+## The admin GUI
+
+The binary and the image carry a web page for looking at a running gateway. It runs as its own process, so
+the gateway serves no page and needs no new setting: run `humpyard ui --url https://gateway.example` on your
+machine, or run the same image a second time with the `ui` command. See [the admin GUI](admin-gui.md) for
+the credential modes, the address it listens on, TLS and Kubernetes.
+
 ## macOS service (launchd)
 
 Layout (all under your home directory, nothing needs root):

@@ -90,7 +90,7 @@ sufficient answer today; they are collected at the end.
 | A patch answer shows a key hash, a credential hash or a provider header value | The diff is computed on texts masked by walking the parsed document; loader and parser messages have the file lines they quote removed | `config_patch.rs` (`removing_a_provider_shows_its_header_without_the_value`, `a_hash_near_an_edit_is_masked_in_the_context`, `a_loader_error_never_echoes_a_line_of_the_file`); the `config::patch` diff tests |
 | A patch changes the file, reloads or alters the running gateway | The endpoint has no write path and no reload trigger; every outcome is checked to leave the file, fingerprint and reload status as they were | invariant 23; `config_patch.rs` (`no_outcome_writes_the_file_reloads_or_changes_the_running_configuration`) |
 | A `config` credential reads the file's structure by probing diffs | **Gap, accepted:** a diff shows the lines around an edit (secrets masked); `config` is a separate scope, so `read` alone cannot, and the docs say to give it only to someone who may see the file | residual; [API reference](api.md#configuration-patches) |
-| The admin GUI | Its own threat model | The `add-admin-gui-delivery` change |
+| The admin GUI (`humpyard ui`) | Host, Origin and fetch-site rules, a per-run token when it holds the credential, a strict CSP, text-only rendering | [The admin GUI](admin-gui.md#threat-model-check) |
 
 ### B4: configuration and secrets
 
@@ -135,4 +135,4 @@ sufficient answer today; they are collected at the end.
 4. **Say plainly that the gateway speaks HTTP** and that TLS, in front of it, is required wherever a bearer key or an admin credential crosses a network.
 5. **Release provenance and repository hygiene:** artifact attestations and an SBOM for the binaries and the image; pin CI actions by commit; automated dependency updates for cargo, npm and the actions; secret scanning with push protection on the repository (the pre-commit check is not in CI).
 6. **A test that provider keys are not forwarded on a redirect** in chat calls, and a schema test that no ledger column can hold content.
-7. The admin GUI lands with its own threat model and re-checks it against what was built.
+7. ~~The admin GUI lands with its own threat model and re-checks it against what was built.~~ Done: [the admin GUI page](admin-gui.md#threat-model-check) records the check.
