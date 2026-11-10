@@ -9,6 +9,7 @@
     clippy::needless_pass_by_value
 )]
 
+pub mod load;
 pub mod seed;
 
 use std::net::SocketAddr;

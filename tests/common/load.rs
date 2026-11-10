@@ -1,0 +1,55 @@
+//! Request traffic for the harnesses: a number of requests spread over a number of concurrent workers, with the
+//! per-request latency summarised. Shared by the overhead harness and the isolation tests.
+#![allow(clippy::cast_precision_loss)] // reporting only
+
+use std::time::Instant;
+
+use super::chat_request;
+
+pub struct Run {
+    pub p50: f64,
+    pub p90: f64,
+    pub p99: f64,
+    pub rps: f64,
+}
+
+/// The `percent`th percentile (nearest rank) of an ascending list.
+pub fn percentile(sorted: &[f64], percent: usize) -> f64 {
+    let index = ((sorted.len() - 1) * percent + 50) / 100;
+    sorted[index.min(sorted.len() - 1)]
+}
+
+/// `requests` requests spread over `concurrency` workers; per-request latency in milliseconds.
+pub async fn run(client: &reqwest::Client, url: &str, concurrency: usize, requests: usize) -> Run {
+    let body = chat_request("r", false);
+    let per_worker = requests.div_ceil(concurrency);
+    let started = Instant::now();
+    let workers: Vec<_> = (0..concurrency)
+        .map(|_| {
+            let (client, url, body) = (client.clone(), url.to_string(), body.clone());
+            tokio::spawn(async move {
+                let mut latencies = Vec::with_capacity(per_worker);
+                for _ in 0..per_worker {
+                    let t = Instant::now();
+                    let resp = client.post(&url).json(&body).send().await.unwrap();
+                    assert_eq!(resp.status(), 200);
+                    let _ = resp.bytes().await.unwrap();
+                    latencies.push(t.elapsed().as_secs_f64() * 1000.0);
+                }
+                latencies
+            })
+        })
+        .collect();
+    let mut all = Vec::new();
+    for worker in workers {
+        all.extend(worker.await.unwrap());
+    }
+    let elapsed = started.elapsed().as_secs_f64();
+    all.sort_by(f64::total_cmp);
+    Run {
+        p50: percentile(&all, 50),
+        p90: percentile(&all, 90),
+        p99: percentile(&all, 99),
+        rps: all.len() as f64 / elapsed,
+    }
+}

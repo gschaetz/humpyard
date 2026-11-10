@@ -23,13 +23,14 @@
 mod common;
 
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use axum::Router;
 use axum::extract::State;
 use axum::response::IntoResponse;
 use axum::routing::post;
-use common::{chat_completion, chat_request, serve, usage};
+use common::load::run;
+use common::{chat_completion, serve, usage};
 use humpyard::config::Config;
 use humpyard::server;
 
@@ -225,54 +226,6 @@ fn report(lines: &[BudgetLine], enforced: bool) -> Vec<String> {
         );
     }
     exceeded
-}
-
-struct Run {
-    p50: f64,
-    p90: f64,
-    p99: f64,
-    rps: f64,
-}
-
-/// The `percent`th percentile (nearest rank) of an ascending list.
-fn percentile(sorted: &[f64], percent: usize) -> f64 {
-    let index = ((sorted.len() - 1) * percent + 50) / 100;
-    sorted[index.min(sorted.len() - 1)]
-}
-
-/// `requests` requests spread over `concurrency` workers; per-request latency in milliseconds.
-async fn run(client: &reqwest::Client, url: &str, concurrency: usize, requests: usize) -> Run {
-    let body = chat_request("r", false);
-    let per_worker = requests.div_ceil(concurrency);
-    let started = Instant::now();
-    let workers: Vec<_> = (0..concurrency)
-        .map(|_| {
-            let (client, url, body) = (client.clone(), url.to_string(), body.clone());
-            tokio::spawn(async move {
-                let mut latencies = Vec::with_capacity(per_worker);
-                for _ in 0..per_worker {
-                    let t = Instant::now();
-                    let resp = client.post(&url).json(&body).send().await.unwrap();
-                    assert_eq!(resp.status(), 200);
-                    let _ = resp.bytes().await.unwrap();
-                    latencies.push(t.elapsed().as_secs_f64() * 1000.0);
-                }
-                latencies
-            })
-        })
-        .collect();
-    let mut all = Vec::new();
-    for worker in workers {
-        all.extend(worker.await.unwrap());
-    }
-    let elapsed = started.elapsed().as_secs_f64();
-    all.sort_by(f64::total_cmp);
-    Run {
-        p50: percentile(&all, 50),
-        p90: percentile(&all, 90),
-        p99: percentile(&all, 99),
-        rps: all.len() as f64 / elapsed,
-    }
 }
 
 #[tokio::test(flavor = "multi_thread")]
