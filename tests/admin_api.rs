@@ -43,7 +43,7 @@ fn secrets() -> Secrets {
         client_hash,
         metrics,
         metrics_hash,
-        ledger: std::env::temp_dir().join(format!(
+        ledger: common::scratch().join(format!(
             "humpyard-adminapi-{}-{}.db",
             std::process::id(),
             NEXT_LEDGER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)

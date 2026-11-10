@@ -65,3 +65,8 @@ keep the old `x-conductor-*` header names as history; living specs and code use 
 - Switchyard crates (`switchyard-libsy`, `-protocol`, `-translation`, ...) are on crates.io, Apache-2.0.
   Findings on their real API are in docs/background.md; the original chat's code sketches were
   illustrative and wrong in places (e.g. no budget/telemetry input, targets are model ids not tags).
+- Disk use: every integration test file is its own debug executable (about 57 MB), and a new feature set or a
+  dependency or compiler change leaves a new hashed copy of each beside the old ones, which Cargo never removes.
+  `target/` grows by tens of gigabytes in a day of work. If the disk is filling, check `du -sh target` first, then
+  `cargo clean` (or `cargo sweep`). Tests put their files under `tests/common`'s `scratch()`, not the system temp
+  directory, so they do not leave scattered paths there.

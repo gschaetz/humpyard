@@ -55,7 +55,7 @@ async fn init(options: InitOptions, key: Option<&str>) -> (Result<(), String>, S
 }
 
 fn temp() -> std::path::PathBuf {
-    let dir = std::env::temp_dir().join(format!(
+    let dir = common::scratch().join(format!(
         "humpyard-init-{}-{:?}",
         std::process::id(),
         std::thread::current().id()

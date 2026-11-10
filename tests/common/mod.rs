@@ -17,6 +17,45 @@ use std::sync::{Arc, Mutex, OnceLock};
 use axum::Router;
 use serde_json::{Value, json};
 
+/// How long a scratch directory must have gone untouched before a later process may remove it.
+const STALE_AFTER: std::time::Duration = std::time::Duration::from_hours(1);
+
+/// The directory this test process puts its files in: `humpyard-tests-<pid>` under the system temp directory, so a
+/// test never scatters its own paths there. A test binary cannot remove its directory when it exits, so the first
+/// call in a process removes the directories of earlier processes that have gone untouched for an hour: a run
+/// leaves one directory per test binary that used this, and a later run an hour on clears them.
+pub fn scratch() -> &'static std::path::Path {
+    static ROOT: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+    ROOT.get_or_init(|| {
+        let base = std::env::temp_dir();
+        sweep_stale_scratch(&base);
+        let root = base.join(format!("humpyard-tests-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        root
+    })
+}
+
+/// Removes `humpyard-tests-*` directories in `base` that nothing has touched for an hour.
+pub fn sweep_stale_scratch(base: &std::path::Path) {
+    let Ok(entries) = std::fs::read_dir(base) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        if !name.to_string_lossy().starts_with("humpyard-tests-") {
+            continue;
+        }
+        let idle = entry
+            .metadata()
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.elapsed().ok());
+        if idle.is_some_and(|age| age > STALE_AFTER) {
+            let _ = std::fs::remove_dir_all(entry.path());
+        }
+    }
+}
+
 /// Serves `app` on an ephemeral localhost port and returns its address.
 pub async fn serve(app: Router) -> SocketAddr {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
