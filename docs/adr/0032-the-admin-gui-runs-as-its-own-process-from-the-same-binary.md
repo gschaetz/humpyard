@@ -1,6 +1,6 @@
 # 0032. The admin GUI runs as its own process from the same binary
 
-- Status: proposed
+- Status: accepted
 - Date: 2026-11-05
 - Supersedes: none (refines [0025](0025-the-ui-has-no-state-of-its-own.md): where it said the GUI is a separate client, this says where it runs and what protects it)
 - Change: `openspec/changes/add-admin-gui-delivery`
@@ -11,7 +11,7 @@ ADR 0025 says the GUI holds no state of its own and is a separate client of the 
 
 ## Decision
 
-There is one admin GUI, built from `ui/` (Preact, TypeScript, Vite) with a client typed from the published OpenAPI document, embedded in the binary and served only by a separate command, `humpyard ui`, which runs as its own process. The command serves the embedded files by exact path under a strict Content-Security-Policy and forwards exactly `/admin/v1/*` to a gateway, after normalising the path and without following redirects. It can add the admin credential itself so the browser never holds it, and then refuses a non-loopback address unless told it is safe. Because a local web service is reachable by any page the user visits, it accepts a request only when its `Host` is loopback or explicitly allowed, and refuses cross-site and cross-origin requests. The gateway serves no GUI and gains no setting for one.
+There is one admin GUI, built from `ui/` (Preact, TypeScript, Vite) with a client typed from the published OpenAPI document, embedded in the binary and served only by a separate command, `humpyard ui`, which runs as its own process. The command serves the embedded files by exact path under a strict Content-Security-Policy and forwards exactly `/admin/v1/*` to a gateway, after normalising the path and without following redirects. It can add the admin credential itself so the browser never holds it; it then requires a per-run access token (exchanged for an `HttpOnly`, `SameSite=Strict` cookie), refuses a non-loopback address unless told it is safe, and sends the credential only to the named gateway, over `https` unless that gateway is on loopback or the operator says otherwise. Because a local web service is reachable by any page the user visits, it accepts a request only when its `Host` is loopback or explicitly allowed, and refuses cross-site and cross-origin requests. The gateway serves no GUI and gains no setting for one.
 
 The GUI renders every string from the API as text, keeps its credential for the browser session only, and checks the API's contract version on load. Release builds embed the built GUI and fail without it; a plain `cargo build` serves a placeholder.
 
