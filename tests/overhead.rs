@@ -13,7 +13,8 @@
 //! runners are too noisy for absolute numbers, so CI relies on the relative isolation test instead.
 //!
 //! - `OVERHEAD_BASELINE_RPS`: the throughput recorded on this machine at the highest concurrency against the
-//!   instant upstream; without it the throughput budget is reported as not checked.
+//!   instant upstream; without it the throughput budget is reported as not checked, and an enforced run fails
+//!   rather than pass without having checked it.
 //! - `OVERHEAD_BUDGET_P50_MS`, `OVERHEAD_BUDGET_P99_MS`: replace a recorded limit, to check the failing path with a
 //!   tightened one. The recorded values are the constants below, and they change only with the documentation.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // test scaffolding
@@ -191,7 +192,9 @@ fn evaluate(
     ]
 }
 
-/// Prints the budget lines and returns one message per exceeded budget, naming the budget and the value.
+/// Prints the budget lines and returns one message per budget that fails the run: an exceeded one always (the
+/// caller fails the run only when enforcing), and, when enforcing, one that could not be checked, because an
+/// enforced run that skipped a budget would pass without having enforced it.
 fn report(lines: &[BudgetLine], enforced: bool) -> Vec<String> {
     println!("\n=== budgets (docs/performance.md) ===");
     let mut exceeded = Vec::new();
@@ -205,11 +208,15 @@ fn report(lines: &[BudgetLine], enforced: bool) -> Vec<String> {
             "{:<46} limit {:<32} measured {:<44} {verdict}",
             line.name, line.limit, line.measured
         );
-        if line.verdict == Verdict::Exceeded {
-            exceeded.push(format!(
+        match &line.verdict {
+            Verdict::Exceeded => exceeded.push(format!(
                 "budget exceeded: {}: measured {}, limit {}",
                 line.name, line.measured, line.limit
-            ));
+            )),
+            Verdict::NotChecked(why) if enforced => {
+                exceeded.push(format!("budget not checked: {}: {why}", line.name));
+            }
+            _ => {}
         }
     }
     if !exceeded.is_empty() && !enforced {
@@ -383,7 +390,7 @@ fn the_recorded_run_meets_every_latency_budget() {
 #[test]
 fn an_exceeded_budget_names_the_budget_the_value_and_the_worst_cell() {
     let cells = [cell(1, 0.5, 0.6), cell(64, 2.5, 4.0)];
-    let lines = evaluate(&cells, None, None, RECORDED);
+    let lines = evaluate(&cells, Some(50_000.0), Some(46_000.0), RECORDED);
     assert_eq!(lines[0].verdict, Verdict::Exceeded);
     assert_eq!(lines[1].verdict, Verdict::Met);
     let messages = report(&lines, true);
@@ -415,6 +422,26 @@ fn throughput_is_judged_against_ninety_percent_of_the_baseline_or_not_at_all() {
     assert_eq!(at_floor[2].verdict, Verdict::Met);
     let unchecked = evaluate(&cells, Some(1.0), None, RECORDED);
     assert!(matches!(unchecked[2].verdict, Verdict::NotChecked(_)));
+}
+
+#[test]
+fn an_unchecked_budget_fails_an_enforced_run_and_only_an_enforced_run() {
+    let cells = [cell(64, 0.1, 0.1)];
+    let lines = evaluate(&cells, Some(46_000.0), None, RECORDED);
+    assert!(matches!(lines[2].verdict, Verdict::NotChecked(_)));
+    assert_eq!(report(&lines, false), Vec::<String>::new());
+    let messages = report(&lines, true);
+    assert_eq!(messages.len(), 1);
+    assert!(
+        messages[0].contains("budget not checked"),
+        "{}",
+        messages[0]
+    );
+    assert!(
+        messages[0].contains("OVERHEAD_BASELINE_RPS"),
+        "{}",
+        messages[0]
+    );
 }
 
 #[test]
