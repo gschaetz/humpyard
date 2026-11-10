@@ -1,0 +1,84 @@
+# Design
+
+## Context
+
+See proposal.md for why. Observed in the code:
+
+- Statistics are computed at request time in `src/ledger/stats.rs` from the `decisions` table: one query reads `route` and the `attempts` JSON of the newest rows in the window (`ORDER BY ts_ms DESC LIMIT cap+1`, cap 50,000), folds them in Rust into per-group accumulators, then adds cost, tokens and signals from the `usage` table. `decisions` is indexed on `ts_ms` and `(key_id, ts_ms)`. Retention defaults to 90 days and bounds the window.
+- A request counts once per group it touched; failures and latencies are per attempt; a fallback is a request with more than one attempt. The parameter check and window parsing are in `src/server/stats.rs`, shared by `/v1/stats` and `/admin/v1/stats`; the sessions view already hangs a sibling endpoint off the same handler.
+- The GUI (`ui/`) reads `/admin/v1/stats?group_by=target` and `/admin/v1/health` and shows one wide table. Endpoint health is a current state (it has no history anywhere), the windows are 1h, 6h, 24h, 7d and 30d, and the strict policy (`style-src 'self'`, no inline script) is checked by the build.
+- In-force ADRs read: 0013 (the decision row is the record of a request and holds no content), 0016 (one metrics registry), 0025 (the GUI holds no state of its own and is a client of the admin API), 0027 (admin authority is scoped by the file; the contract is published and tested), 0030 (response signals), 0032 (the GUI is its own process; strict policy; text-only rendering). None is superseded.
+
+## Goals / Non-Goals
+
+**Goals:**
+- A chart of any of four metrics over time for the busiest groups, from the data the gateway already keeps.
+- One counting rule: a series and the unbucketed statistics cannot disagree.
+- A first screen that says what needs attention without reading every column, and stays current without being reloaded.
+
+**Non-Goals:**
+- Storing rollups, downsampling or a metrics database; reading Prometheus from the GUI.
+- A history of endpoint health, or cost and token series (those come from `usage` rows and are not needed for the four chart metrics).
+- Changing `/v1/stats`, the ledger schema or the write path.
+
+## Decisions
+
+**1. A sibling admin endpoint, not a parameter on `/admin/v1/stats`.** `GET /admin/v1/stats/series` returns `{object: "stats_series", group_by, interval_ms, window, now_ms, truncated, covered_since_ms, omitted_groups, data: [{group, buckets: [{start_ms, requests, attempts, failures, failure_rate, fallbacks, fallback_rate, latency_ms: {p50, p90, p99}}]}]}`. A parameter that changes the response shape makes one operation two contracts (and a generated client types it badly); the sessions view already set the precedent for a sibling. It is admin-only: the operator's chart is the only consumer, and a client-key series would need the per-key visibility rules reviewed for no user.
+
+**2. One fold, two projections.** Today `compute` folds rows into accumulators keyed by group. The change keys them by `(group, bucket)` where the bucket is `None` for the totals and `floor(ts_ms / interval) * interval` for a series, through one function, so the counting rules (once per group touched, fallback when more than one attempt, failures by class, `target` filter on attempts) exist once. The row query adds `ts_ms` to its select. A test builds one window of rows and asserts every group's bucket sums equal its totals, which is the first scenario of the spec and holds by construction rather than by two copies agreeing. Alternative: a second implementation shaped for series (simpler to write, free to drift).
+
+**3. Buckets are aligned to the Unix epoch and zero-filled.** Bucket starts are whole multiples of the interval in UTC, so two reads of the same instant agree and a chart does not shimmer as `now` moves. Every group's series has every bucket from the one containing the window start to the one containing now; a bucket with no requests has zero counts and null rates and percentiles (never 0%). The last bucket is in progress and the GUI draws it so. An interval of a day is aligned to UTC days, which is documented.
+
+**4. Bounds.** `interval` takes the same `30m`/`2h`/`1d` syntax as `window`, at least one minute; the bucket count (window ÷ interval, rounded up) is at most 400; `limit` is 1 to 25 groups (default 8); an unknown parameter is a 400 naming it. With `interval` omitted the server picks the smallest of 1m, 5m, 15m, 30m, 1h, 2h, 6h, 12h and 1d that gives at most 120 buckets, so a client that does not care still gets a drawable answer. Groups are the busiest by requests; `omitted_groups` says how many were left out. Alternative considered: a fixed bucket count (`buckets=96`) with the server choosing the width; rejected because epoch alignment wants a width from a short list, and the GUI wants to know it.
+
+**5. Truncation is reported where it hurts.** The row query keeps the newest rows, so when the cap cuts a busy window it removes the oldest requests and the left of the chart would read as quiet. The response carries `truncated` and `covered_since_ms` (the time of the oldest row it did count), and the GUI shades the chart before that time and says so. Raising the cap or reading in SQL per bucket was considered and rejected: the first moves the cost of one query, the second adds a grouped scan per bucket and per group to the serving process for a screen read a few times a day.
+
+**6. The GUI is five small modules, no chart library.** `query.ts` (the query value, its defaults, the interval chosen for each window, and parse and serialise for the URL fragment against fixed lists), `refresh.ts` (the timer, decision 11), `chart.tsx` (an SVG line chart and a bar view, drawn from the series with scales computed in TypeScript), `query-bar.tsx`, and the table (`models-view.tsx`, reworked). Appearance comes from the stylesheet: series colours are classes (`s0` to `s7`) over custom properties with a dark-mode set, so no `style` attribute is ever written and the policy is untouched. A library was rejected because the common ones inject style elements or set inline styles, which the policy forbids, and because the chart here is lines, bars, ticks and a legend.
+
+**7. A chart that is honest and readable.** Gaps for null buckets (never a zero), a dashed in-progress last bucket, a shaded truncated region, a legend that is also the filter control, and series told apart by shape markers and direct labels as well as colour (eight series at most, which is also the default `limit`). Each point carries a `<title>` with its time, value and count, so hovering works without script, and the table beneath is the accessible form of the same numbers.
+
+**8. The table: four figures up front.** Health (target and endpoint groupings; a route has no endpoint state), requests with failure rate, fallback rate and latency (p90, with p50 and p99 in the detail). Tokens, cost, answered calls and the four signal rates move to the detail row; the data is the same `/stats` answer the view already reads, so no information is lost. Default order: a total score is not invented. It is a fixed lexicographic order: all endpoints cooling down, then any endpoint not healthy, then failure rate, then fallback rate, then requests, then name; groups with no calls last. A column header re-sorts, and the default is one click away. The order is confirmed with the user before the tasks are applied (it is the one judgment call in the change).
+
+**9. The query is the URL fragment.** `#window=24h&group=target&metric=failure_rate&refresh=1m&route=…&target=…&focus=…`. The fragment never reaches a server, is not a place for secrets (and holds none), and makes a view linkable. It is parsed against fixed lists: an unknown window, grouping, metric or refresh period becomes the default; a filter or focus value is kept as a string and only ever shown as text and sent as an encoded query parameter. The window sets the interval (1h:1m, 6h:5m, 24h:15m, 7d:2h, 30d:6h), so the bucket count stays between 60 and 120.
+
+**10. Old gateway, new GUI.** `humpyard ui` can run at a different version from its gateway. A 404 from the series endpoint shows the table and a one-line note on the chart instead of an error page; the existing version warning still appears.
+
+**11. Refresh is a client-side timer with four rules, and no server push.** The query bar offers off, 30 seconds, 1 minute and 5 minutes, starting at 1 minute (the width of the finest chart bucket, so the default never polls faster than the chart can change; 30 seconds is offered for watching an incident, and is the floor). `refresh.ts` runs one timer for the whole view that re-reads the series, the stats and the health together, and obeys: (a) *visible only* — the timer is paused while the page is hidden (`visibilitychange`), and on becoming visible it refreshes once if the data is older than the period; (b) *no overlap* — the next wait starts when the previous request ends, so a slow gateway is never given a second request; (c) *back off* — after a failure the wait grows (the period, then double, to a ceiling of five minutes) and returns to the period after a success; (d) *stop on refusal* — a 401 or 403 ends refreshing and shows the sign-in. A change of the query discards the running request's answer (an abort and a sequence number, so a late answer cannot overwrite a newer query), reads at once and restarts the period. The view shows "updated hh:mm:ss" and, after a failed refresh, marks the numbers out of date with that time instead of leaving them looking current, which is the existing "gateway unreachable" rule applied to a timer. The refresh period is part of the query and so of the URL fragment; it is not stored anywhere else, so the GUI still holds no state of its own (ADR 0025). Alternatives: server push (SSE or WebSocket: a new long-lived connection through `humpyard ui` and the ingress, and a new thing on the serving process), and a fixed non-optional poll (a screen left open would poll forever with no way to stop it).
+
+## Threat model
+
+Assets: the admin API's aggregate data (route, target and endpoint names, counts, rates, latencies; no request content, no key material); the serving process's CPU and memory; the operator's browser session and credential. Actors: the operator; a holder of a `read` credential; any other website open in the operator's browser; a provider or a client key whose chosen strings end up in group names (discovered model ids, requested models); a viewer of a shared link. Trust boundaries crossed: browser to `humpyard ui` to the gateway's `/admin/v1` (unchanged from ADR 0032); the new endpoint reads the ledger inside the serving process.
+
+| # | Threat | Category | Mitigation | Proof |
+|---|---|---|---|---|
+| 1 | A caller asks for a huge window with a tiny interval or many groups to exhaust the serving process | Denial of service | Interval at least 1 minute, at most 400 buckets, `limit` at most 25, the same 50,000-row cap as `stats`; parameters rejected before any query | spec: series is bounded; handler tests for each bound |
+| 2 | A credential without `read` reads the series | Elevation | The route sits in the `ROUTES` table with scope `read`; authentication and scope run before the body of the handler | admin API tests; spec scope scenario |
+| 3 | A client key reads cross-key aggregates | Disclosure | The endpoint exists only under `/admin/v1`; `/v1/stats/series` is a 404 | spec scenario; router test |
+| 4 | A parameter value reaches SQL or the route filter unescaped | Tampering | Values are bound parameters, intervals and windows parse to integers, unknown parameters are a 400 | handler tests with hostile values |
+| 5 | A group name chosen by a provider or a client (a discovered model id, a requested model) injects script through the chart's text, titles or legend | Elevation, Disclosure | Preact text nodes only, no raw-HTML API (lint-enforced), SVG `<title>` and `aria-label` set as text, strict policy as the second line | component test rendering hostile group names in every place the chart shows one |
+| 6 | A crafted link sets the fragment to hostile values | Tampering | Fixed lists for window, grouping and metric; free values shown as text and sent encoded | `query.ts` unit tests; spec scenario |
+| 7 | A shared link leaks something | Disclosure | The fragment holds only the query: no credential, no token; the recipient signs in themselves; the fragment is not sent to any server | unit test that serialising never includes credential state |
+| 8 | A truncated or partly empty series is read as "quiet" and hides a problem | Repudiation (misleading) | `truncated` and `covered_since_ms` in the answer, shaded and labelled in the chart; null buckets are gaps, never zeros | spec scenarios; chart component tests |
+| 9 | The chart brings back inline styles or a library that injects them, weakening the policy | Elevation | Appearance by class only; the build's dist check fails on an inline style or script; the policy test is unchanged | `check-dist` in the `ui` CI job; `tests/ui.rs` header test |
+| 10 | A stolen or shared `read` credential is used to read the series (and every other read) as fast as it likes | Denial of service | **Gap**: the admin API has no per-credential rate limit today, for this or any read; bounded cost per call only. The refresh timer does not change this: it is client behaviour, and an attacker would not use it | accepted here; recorded in `docs/threat-model.md` as a known gap of the admin surface |
+| 11 | Open tabs refresh forever, or many tabs refresh at once, and the repeated reads load the serving process | Denial of service | Hidden tabs do not poll; a 30-second floor; no overlapping requests; back-off to five minutes on failure; each refresh is one bounded series read plus the stats and health reads; the default is 1 minute. Many visible tabs still add up, and there is no server-side limit (row 10) | `refresh.ts` tests with fake timers for each rule; spec scenarios |
+| 12 | A refresh that fails or stalls leaves old numbers that look current, so a failing gateway is mistaken for a quiet one | Repudiation (misleading) | "updated hh:mm:ss" always shown; a failed refresh marks the numbers out of date with their time and shows the error; a late answer to an old query is discarded | spec scenarios; app tests with a failing and a slow gateway |
+| 13 | A refused credential is retried forever against the gateway and its logs | Denial of service | A 401 or 403 stops refreshing and shows the sign-in | spec scenario; `refresh.ts` test |
+
+Residual risk, accepted: a credential that can read statistics can read all of them (that is what `read` means, ADR 0027), and a series adds time resolution to what it could already see.
+
+## Risks / Trade-offs
+
+- **The row cap makes long windows partial on a busy gateway** → reported in the answer and drawn in the chart; if it bites in practice the cap or a rollup is its own change.
+- **Query cost on the serving process** (the series read is the heaviest of the admin reads, and now repeats) → bounded like `stats` and, with `define-performance-budget`, run off the serving runtime behind a one-at-a-time gate with a ten-second shared cache (that change lands first and its isolation test must pass with the series in its load); refresh runs only in a visible tab, never overlaps, backs off, has a 30-second floor and defaults to a minute. A page left open on a wall display still reads every period, by intent.
+- **Percentiles per small bucket are noisy** → a bucket with few attempts still reports them (nearest rank), and the hover text carries the count so a spike on three requests is not mistaken for a trend.
+- **Problems-first ordering is a judgment** → it is a plain lexicographic rule written in the spec, easy to change, confirmed with the user.
+- **Eight series is a limit** → a deliberate one for legibility; the table and the filters reach everything else.
+
+## Migration Plan
+
+Additive. The endpoint is new, the contract grows, the GUI is rebuilt and released with the gateway. A GUI newer than its gateway degrades as in decision 10; a gateway newer than its GUI has an endpoint nobody calls. Rollback is the previous release.
+
+## Open Questions
+
+- The default metric (failure rate): it can change after use without touching the specs or the tasks. (Refresh is decided in 11: off, 30s, 1m, 5m, default 1m.)
