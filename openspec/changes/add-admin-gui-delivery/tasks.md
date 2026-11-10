@@ -15,7 +15,7 @@
 
 ## 3. Building and releasing it
 
-- [ ] 3.1 Build the GUI in the release workflow before the Rust builds, enable the `ui` feature in the release builds and add a Node stage and the feature to the `Dockerfile`; add a smoke test that runs the built binary's `humpyard ui` and fails when the page is the placeholder; verify a release-style build and the image serve the GUI, and that a build with the files removed fails
+- [x] 3.1 Build the GUI in the release workflow before the Rust builds, enable the `ui` feature in the release builds and add a Node stage and the feature to the `Dockerfile`; add a smoke test that runs the built binary's `humpyard ui` and fails when the page is the placeholder; verify a release-style build and the image serve the GUI, and that a build with the files removed fails
 
 ## 4. Docs and wrap-up
 
