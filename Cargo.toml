@@ -13,6 +13,11 @@ readme = "README.md"
 lto = "thin"
 strip = true
 
+[features]
+# Embeds the built admin GUI (`ui/dist`) so `humpyard ui` serves it (ADR 0032). Off by default so `cargo build` needs no
+# Node; with it on, the build fails when `ui/dist` is missing. Release builds and the image turn it on.
+ui = []
+
 [lints.rust]
 unsafe_code = "forbid"
 

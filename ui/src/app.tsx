@@ -4,10 +4,12 @@ import { clearCredential, loadCredential } from "./api/session";
 import { contractNotice } from "./api/version";
 import { ModelsView } from "./models-view";
 import { SignIn } from "./signin";
+import { TokenEntry } from "./token";
 
 type Phase =
   | { kind: "checking" }
   | { kind: "signin" }
+  | { kind: "token" }
   | { kind: "unreachable"; message: string }
   | { kind: "ready"; principal: Principal };
 
@@ -40,7 +42,10 @@ export function App(props: { client?: Client }) {
       })
       .catch((failure: unknown) => {
         if (!current) return;
-        if (failure instanceof ApiError && (failure.status === 401 || failure.status === 403)) {
+        if (failure instanceof ApiError && failure.code === "ui_token_required") {
+          // `humpyard ui` holds the credential and wants its access token first.
+          setPhase({ kind: "token" });
+        } else if (failure instanceof ApiError && (failure.status === 401 || failure.status === 403)) {
           setPhase({ kind: "signin" });
         } else {
           setPhase({
@@ -72,6 +77,15 @@ export function App(props: { client?: Client }) {
             held.current = credential === "" ? null : credential;
           }}
           onSignedIn={() => {
+            setAttempt((n) => n + 1);
+          }}
+        />
+      );
+    case "token":
+      return (
+        <TokenEntry
+          client={client}
+          onDone={() => {
             setAttempt((n) => n + 1);
           }}
         />

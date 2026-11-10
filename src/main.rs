@@ -34,6 +34,9 @@ enum Command {
     /// Look at a running gateway, local or remote: status, models, health, stats, decisions, quota, explain,
     /// whoami. Read-only; uses your key from an environment variable and never prints it.
     Ctl(CtlArgs),
+    /// Serve the admin GUI on its own address and forward `/admin/v1` to a gateway. A separate process from `serve`:
+    /// the gateway serves no web page. Listens on loopback unless told otherwise; see docs/admin-gui.md.
+    Ui(UiArgs),
     /// Create a virtual key: prints the key once and the config block holding its hash. With `--admin`, the
     /// secret is an admin credential instead and the block is an `[admin.credentials.<id>]` one.
     Keygen {
@@ -70,6 +73,31 @@ enum Command {
         /// The shell to generate completions for.
         shell: clap_complete::Shell,
     },
+}
+
+#[derive(clap::Args)]
+struct UiArgs {
+    /// The gateway whose `/admin/v1` is forwarded, like `https://gateway.example` or `http://127.0.0.1:8080`.
+    #[arg(long)]
+    url: String,
+    /// Where to serve the GUI.
+    #[arg(long, default_value = "127.0.0.1:8787")]
+    listen: String,
+    /// Read the admin credential from this environment variable and add it to every forwarded request, so it never
+    /// reaches the browser. Anyone who can reach the port then acts with it, so a per-run access token is required.
+    #[arg(long)]
+    credential_env: Option<String>,
+    /// Allow `--credential-env` with a `--listen` address that is not loopback.
+    #[arg(long)]
+    allow_remote_with_credential: bool,
+    /// A host name this service answers to besides loopback (repeatable), like `ui.internal:8787`. Required to
+    /// listen on a non-loopback address.
+    #[arg(long = "allow-host")]
+    allow_host: Vec<String>,
+    /// With `--credential-env`: allow a plain `http://` gateway on another machine (the credential would cross the
+    /// network unprotected).
+    #[arg(long)]
+    allow_insecure_upstream: bool,
 }
 
 #[derive(clap::Args)]
@@ -737,6 +765,9 @@ async fn main() -> ExitCode {
     if let Command::Ctl(args) = command {
         return ctl_command(args).await;
     }
+    if let Command::Ui(args) = command {
+        return ui_command(args).await;
+    }
     if let Command::MigrateModelrelay(args) = command {
         return match migrate_command(args).await {
             Ok(()) => ExitCode::SUCCESS,
@@ -747,6 +778,29 @@ async fn main() -> ExitCode {
         };
     }
     match run(command).await {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(message) => {
+            eprintln!("error: {message}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+async fn ui_command(args: UiArgs) -> ExitCode {
+    let settings = humpyard::ui::Settings {
+        url: args.url,
+        listen: args.listen,
+        credential_env: args.credential_env,
+        allow_remote_with_credential: args.allow_remote_with_credential,
+        allow_hosts: args.allow_host,
+        allow_insecure_upstream: args.allow_insecure_upstream,
+    };
+    let env = |name: &str| std::env::var(name).ok();
+    let mut stop = termination_signals();
+    let shutdown = async move {
+        stop.recv().await;
+    };
+    match humpyard::ui::run(&settings, &env, &mut std::io::stdout(), shutdown).await {
         Ok(()) => ExitCode::SUCCESS,
         Err(message) => {
             eprintln!("error: {message}");
@@ -947,6 +1001,7 @@ async fn run(command: Command) -> Result<(), String> {
         | Command::Models { .. }
         | Command::Init(_)
         | Command::Ctl(_)
+        | Command::Ui(_)
         | Command::Completions { .. } => Ok(()), // handled in `main`
         Command::Serve { config: path } => {
             let config = Config::load(&path).map_err(|e| e.to_string())?;

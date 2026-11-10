@@ -12,6 +12,7 @@ function fake(overrides: Partial<Client> = {}): Client {
     contractVersion: () => Promise.resolve("1"),
     stats: () => Promise.reject(new Error("not used")),
     health: () => Promise.reject(new Error("not used")),
+    exchangeToken: () => Promise.reject(new Error("not used")),
     ...overrides,
   };
 }
@@ -89,5 +90,28 @@ describe("the shell", () => {
     expect((await screen.findByRole("alert")).textContent).toBe("The admin API could not be reached.");
     fireEvent.click(screen.getByText("Try again"));
     await waitFor(() => { expect(screen.getByText("gary")).toBeTruthy(); });
+  });
+
+  it("asks for humpyard ui's access token when it holds the credential, and goes in once it is exchanged", async () => {
+    const whoami = vi
+      .fn<Client["whoami"]>()
+      .mockRejectedValueOnce(new ApiError(401, "ui_token_required", "Enter the access token."))
+      .mockResolvedValue(principal);
+    const exchangeToken = vi.fn<Client["exchangeToken"]>().mockResolvedValue(undefined);
+    render(<App client={fake({ whoami, exchangeToken })} />);
+    fireEvent.input(await screen.findByLabelText("Access token"), { target: { value: "tok" } });
+    fireEvent.click(screen.getByText("Continue"));
+    expect(await screen.findByText("gary")).toBeTruthy();
+    expect(exchangeToken).toHaveBeenCalledWith("tok");
+    expect(sessionStorage.length).toBe(0);
+  });
+
+  it("reports a wrong access token in the service's words", async () => {
+    const need = () => Promise.reject(new ApiError(401, "ui_token_required", "Enter the access token."));
+    const exchangeToken = () => Promise.reject(new ApiError(401, "ui_token_invalid", "That is not the access token."));
+    render(<App client={fake({ whoami: need, exchangeToken })} />);
+    fireEvent.input(await screen.findByLabelText("Access token"), { target: { value: "bad" } });
+    fireEvent.click(screen.getByText("Continue"));
+    expect((await screen.findByRole("alert")).textContent).toBe("That is not the access token.");
   });
 });

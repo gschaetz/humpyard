@@ -73,7 +73,9 @@ jobs:
         with:
           toolchain: "1.99"
       - uses: Swatinem/rust-cache@v2
-      - run: cargo doc --no-deps --all-features --document-private-items
+      # No `--all-features`: the `ui` feature embeds the built GUI and fails without it, and nothing it adds is
+      # documented differently.
+      - run: cargo doc --no-deps --document-private-items
 
   # The declared minimum supported Rust version (Cargo.toml `rust-version`) must still build.
   msrv:

@@ -45,7 +45,11 @@ The GUI's files SHALL need no credential and SHALL contain no data from the gate
 - **THEN** the answer is 401 as from the gateway
 
 ### Requirement: The GUI talks only to the admin API of its own origin and keeps its credential for the session
-The GUI SHALL send requests only to `/admin/v1` on the origin it was loaded from. When the user supplies a credential, the GUI SHALL keep it for the browser session only (not in `localStorage`, a cookie or any storage that outlives the session), and SHALL hold no configuration or data of its own beyond what it displays.
+The GUI SHALL send requests only to `/admin/v1` on the origin it was loaded from, and, when `humpyard ui` holds the admin credential and asks for its access token, one request to `/ui/session` on that origin with the token in the body (never in a URL). When the user supplies a credential, the GUI SHALL keep it for the browser session only (not in `localStorage`, a cookie or any storage that outlives the session), and SHALL hold no configuration or data of its own beyond what it displays.
+
+#### Scenario: The access token
+- **WHEN** the service answers a data request with `ui_token_required`
+- **THEN** the GUI asks for the token, sends it once in a request body to `/ui/session`, does not store it, and asks the data request again
 
 #### Scenario: Credential lifetime
 - **WHEN** the browser session ends

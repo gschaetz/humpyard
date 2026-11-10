@@ -33,3 +33,5 @@ pub mod scrub;
 pub mod select;
 pub mod server;
 pub mod signals;
+pub mod ui;
+pub mod ui_assets;

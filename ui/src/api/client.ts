@@ -30,9 +30,15 @@ export interface Client {
   contractVersion(): Promise<string>;
   stats(query?: StatsQuery): Promise<Stats>;
   health(): Promise<Health>;
+  /**
+   * Exchanges the access token `humpyard ui --credential-env` printed at start for a session cookie (the only call
+   * outside `/admin/v1`). The token goes in the body, never in a URL.
+   */
+  exchangeToken(token: string): Promise<void>;
 }
 
 const PREFIX = "/admin/v1/";
+const SESSION_PATH = "/ui/session";
 
 /**
  * A client of `/admin/v1` on the origin the page was loaded from, and of nothing else: every path is a constant
@@ -83,6 +89,20 @@ export function createClient(
     },
     stats: (query = {}) => getJson<Stats>("/admin/v1/stats", { window: query.window, group_by: query.groupBy }),
     health: () => getJson<Health>("/admin/v1/health"),
+    exchangeToken: async (token) => {
+      let response: Response;
+      try {
+        response = await fetchImpl(SESSION_PATH, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ token }),
+          cache: "no-store",
+        });
+      } catch {
+        throw new ApiError(0, null, "The service could not be reached.");
+      }
+      if (!response.ok) throw await refusal(response);
+    },
   };
 }
 
