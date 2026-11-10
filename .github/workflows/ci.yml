@@ -150,3 +150,10 @@ jobs:
         with:
           context: .
           push: false
+          load: true
+          tags: humpyard:ci
+      - name: The image's binary carries the GUI
+        run: |
+          docker create --name humpyard-ci humpyard:ci
+          docker cp humpyard-ci:/usr/local/bin/humpyard ./humpyard-from-image
+          scripts/smoke-ui.sh ./humpyard-from-image
