@@ -82,11 +82,11 @@ as text; some of them are chosen by whoever holds a client key.
 - **Beside a gateway on a VM.** Run it on the VM and reach it through an SSH tunnel
   (`ssh -L 8787:127.0.0.1:8787 host`), which keeps it on loopback. If it must be reached by name, set
   `--listen` and `--allow-host` and put TLS in front of it (the page and the access token cross the network).
-- **Docker.** The image has the GUI in it (from the first release after 0.28.0). Run it a second time with a different command:
+- **Docker.** The image has the GUI in it (from 0.29.0). Run it a second time with a different command:
 
     ```sh
     docker run -d --name humpyard-ui -p 127.0.0.1:8787:8787 \
-      ghcr.io/gschaetz/humpyard:X.Y.Z \
+      ghcr.io/gschaetz/humpyard:0.29.0 \
       ui --url https://gateway.example --listen 0.0.0.0:8787 --allow-host localhost:8787
     ```
 
