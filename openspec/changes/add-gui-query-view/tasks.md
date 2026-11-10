@@ -1,0 +1,38 @@
+# Tasks
+
+## 1. Counting a series in the ledger
+
+- [ ] 1.1 Fold decision rows into accumulators keyed by `(group, bucket)` through one function (`bucket` is `None` for the totals), with `ts_ms` added to the row query; verify the existing statistics tests pass unchanged and a new test shows the totals are the same as before on a fixed set of rows
+- [ ] 1.2 Add the series computation: epoch-aligned buckets from the window's first to the current one, every bucket present with zero counts and null rates and percentiles when quiet, the busiest `limit` groups with `omitted_groups`, and `truncated` with `covered_since_ms`; verify with unit tests for bucket edges, a quiet bucket, the top-N cut, the row-cap cut, the `target` filter and `group_by` for route, target and endpoint, plus a property test that each group's bucket sums equal its totals
+
+## 2. The endpoint and its contract
+
+- [ ] 2.1 Add `GET /admin/v1/stats/series` to the admin route table with the `read` scope: parse `window`, `interval` (default chosen to give at most 120 buckets), `group_by`, `route`, `target`, `key` and `limit`, reject unknown parameters, an interval under a minute, more than 400 buckets, a window over the retention and a limit over 25 with a 400 that names the parameter, and leave `/v1/stats/series` a 404; verify with handler tests for each bound, hostile parameter values, a missing scope (403 `admin_scope_required`), reads across keys with and without `key`, and an empty window
+- [ ] 2.2 Describe the endpoint, its parameters and every response field in `docs/openapi/admin-v1.json`, regenerate `ui/src/api/schema.d.ts`, and add the section to `docs/api.md`; verify the contract test passes, fails when the route is removed from the document, and `npm run check:generated` is clean
+
+## 3. The query model in the GUI
+
+- [ ] 3.1 Add the query module: the query value and its defaults (24h, target, failure rate, refresh every 1m, with off, 30s, 1m and 5m as the only periods), the interval for each window (1h:1m, 6h:5m, 24h:15m, 7d:2h, 30d:6h), and parse and serialise for the URL fragment against fixed lists; verify with unit tests for round trips, unknown and hostile values falling back to the defaults, filters kept as plain strings, an unknown refresh period such as `1ms` falling back to the default, and nothing resembling a credential or token ever serialised
+- [ ] 3.2 Add the series call to the typed client, with a 404 mapped to "the gateway cannot draw a series" rather than an error; verify with client tests for success, 404, a 403 and an unreachable gateway, and that the credential is sent as before
+- [ ] 3.3 Rework the row model: rows for target, endpoint and route groupings (health only where the grouping has it), the four headline figures, and the default problems-first order from the spec, with column sorting; confirm the order with the user before this task is applied; verify with unit tests for each scenario of the spec (failing target above a busy one, unrated last, route grouping without health, ties by name)
+
+## 4. The query view
+
+- [ ] 4.1 Draw the line chart as SVG from a series: scales and ticks in code, gaps for null buckets, a dashed in-progress last bucket, a shaded truncated region, shape markers and direct labels besides colour, a `<title>` per point with time, value and count, and series classes with light and dark colours in the stylesheet; verify with component tests including group names such as `<img src=x onerror=alert(1)>` in the legend, titles and labels creating no element, and that no `style` attribute is written
+- [ ] 4.2 Add the ranked bar view of the same metric and the choice between the two views; verify with component tests that the bars match the table's numbers and the order, and that null values are shown as no value rather than zero
+- [ ] 4.3 Build the query bar and the table (four headline figures, an expandable detail row with tokens, cost, answered calls and signal rates), wire the chart's series choice to the table filter and the whole query to the URL fragment, and show a note on the chart when the gateway has no series endpoint; verify with app tests for each scenario of the spec (changing the window re-queries both, a filter with no match, choosing a series filters and unchoosing restores, a shared link restores the query after sign-in, a hostile fragment gives the defaults) and that `npm run build` passes its no-inline-script-or-style check
+- [ ] 4.4 Add the refresh timer and its control: one timer re-reading series, stats and health together at the chosen period; paused while the page is hidden with one catch-up refresh on return when the data is older than the period; no second request while one runs; waits of the period, then double, to five minutes after failures, back to the period after a success; a 401 or 403 stops it and shows the sign-in; a query change aborts the running request, discards its answer, reads at once and restarts the period; an "updated hh:mm:ss" indication and out-of-date marking after a failure; a 503 `admin_busy` waits at least its `Retry-After` before the next attempt and is shown as busy, not as a failure of the credential; verify with fake-timer tests for every scenario of the refresh requirement (hidden tab, slow gateway, failure and recovery, a busy gateway, refused credential, query change during a request, period off) and that a late answer to an old query never replaces a newer one
+- [ ] 4.5 Update `docs/admin-gui.md` with the query view (the bar, the chart, the table, the URL fragment, the ordering and the refresh behaviour) and the screens' limits (eight series, partial windows, a refresh per visible tab); verify the strict docs build passes
+
+## 5. Wrap-up
+
+- [ ] 5.1 Update `docs/architecture.md` (the module table for the series code and the GUI modules, the status table, the "Last updated" line, and the operator-surface diagram if it changes) and verify its Mermaid diagrams still match the code
+- [ ] 5.2 Check the threat model in `design.md` against what was built (each row still true, each proof exists), record the result in `docs/admin-gui.md`, add the admin read-rate gap (row 10, now with the refresh timer in mind) to `docs/threat-model.md`, accept ADR 0035 and mark it accepted in `docs/adr/README.md`; verify every proof named in the table exists and passes
+- [ ] 5.3 Add the series endpoint and a session view to the load of the isolation test from `define-performance-budget` (which must land first) and pass it, with the series going through that change's gate and cache; verify the isolation test passes with the series in its looping load and records no dropped entries
+- [ ] 5.4 Run fmt, clippy `-D warnings`, `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --document-private-items` (also with `--features ui` once `ui/dist` is built), the full test suite with and without the `ui` feature, the `ui/` checks and `openspec validate --specs`, then archive this change with `openspec archive add-gui-query-view --yes`; verify all gates pass and the spec deltas merge
+
+## Workflow follow-up
+
+- Release: 0.30.0 (a new endpoint and a reworked screen; nothing changes for existing deployments or client keys). The cluster then needs the mirror and the image pin bumped, as for 0.29.0; the GUI container needs no other change.
+- Release notes: `GET /admin/v1/stats/series`; the GUI's models view is now a query view that refreshes itself every minute while visible (changeable or off in the query bar).
+- Separate changes: the decisions view and the overrides view; a trend for endpoint health (needs something to record it first); cost and token series.

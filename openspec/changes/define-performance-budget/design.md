@@ -1,0 +1,108 @@
+# Design
+
+## Context
+
+See proposal.md for why. Observed in the code and configuration:
+
+- The binary uses `#[tokio::main]`: the default multi-thread runtime, one worker per available core, no dedicated runtime and no `spawn_blocking` anywhere. `std`'s `available_parallelism` reads the cgroup CPU quota on Linux, and the cluster's gateway container has a 500m limit, so the pod's runtime may have a single worker. That has not been confirmed in the pod.
+- `Ledger::open_with` creates one pool of two connections used by the usage writer and by every read (`stats`, `session_scan`, `decisions`, `spend_since`...). The writer is fed by a bounded queue; `record()` never waits and drops the entry (counted by `dropped()`, logged at error level) when the queue is full.
+- `ledger::stats::compute` fetches up to 50,001 `decisions` rows with `fetch_all` and then loops over them in the async function, parsing each row's `attempts` JSON and updating accumulators, with no await between rows. `sqlx`'s SQLite driver runs each connection's statements on its own OS thread, so the SQL is not on the runtime; the fold is. Recorded timings for the whole read are 90 to 580 ms at the cap (`docs/performance.md`, Run 1); the fold's share is not separated.
+- The ledger sets WAL and `synchronous = NORMAL` and nothing more: no `busy_timeout`, no pool acquire timeout, no checkpoint setting. The `sqlx` 0.9.0 defaults apply (5 seconds to wait on a locked database, 30 seconds to wait for a pool connection) and SQLite's automatic PASSIVE checkpoint. Under WAL readers and the writer do not block each other; the contention that exists is writer against writer: the usage writer task (batch inserts and the decision prune, which is one `DELETE` that held writes for 1.3 s at 511,112 rows in Run 1) and the admin override create and revoke calls, which write through the same pool on another connection. The request path is not exposed to it: it only `try_send`s to the writer's queue, and overrides are held in memory (the database is read at startup and on create or revoke).
+- `stats_view` is shared by `/v1/stats` and `/admin/v1/stats`, and also calls `ledger.flush()` first, which waits on the writer. The session views read up to 50,000 rows the same way.
+- Two harnesses exist and are `#[ignore]`d: `tests/overhead.rs` (client, mock upstream and gateway on one multi-thread runtime) and `tests/ledger_scale.rs` (which has the seeded-row generator). `docs/performance.md` records two runs; its Run 2 gives the added latency with a 50 ms upstream: p50 +0.57, +0.41, +1.22 ms and p99 +0.59, +0.64, +5.72 ms at concurrency 1, 16 and 64.
+- In-force ADRs read: 0005 (SQLite ledger with an async batching writer), 0013 (decision rows), 0016 (one metrics registry), 0025 (the GUI holds no state), 0027 (admin authority and scopes), 0032 (the GUI is its own process), 0035 (time series from the decision log at query time; proposed in `add-gui-query-view`, so it is read as a plan, not as in force). None is superseded.
+
+## Goals / Non-Goals
+
+**Goals:**
+- A written definition of "performance" with values for what has been measured, and an honest list of what has not.
+- A test that fails CI when administrative or statistics work moves request latency or loses ledger entries.
+- A structure in which the wrong code (a heavy fold on the serving runtime) does not compile or does not pass the architecture test, so the rule outlives this change's author.
+
+**Non-Goals:**
+- Stored rollups, a read replica or a separate read process (the escalation path in decision 8, and its own ADR if ever needed).
+- Making statistics faster. They are bounded and moved aside, not optimised.
+- The request path's own code: nothing in routing, planning, pooling or metering changes.
+- `GET /admin/v1/decisions?request_id=`, which scans without an index (open finding 3 in `docs/performance.md`). It is limit-bounded, not a fold over the cap, and stays an open finding.
+- Absolute budgets in CI (decision 2).
+
+## Decisions
+
+**1. Budgets are measures with a value, a basis and an enforcer.** `docs/performance.md` gains a Budgets table. Now: gateway-added latency over a direct call with a 50 ms mock upstream at concurrency up to 64, p50 at most 2 ms and p99 at most 10 ms (about 1.6 times the recorded figures at the worst cell, which were good to a tenth of a millisecond on that machine); throughput no more than 10% below the recorded 46,000 req/s against an instant upstream, on the same machine. Listed as unbudgeted until measured: memory under load, streaming overhead, TLS, a long soak, and restart time on a large ledger. The first task after the harness changes is a measurement run for the unbudgeted ones; their budgets are set from it in the same change.
+
+**2. Relative gates fail CI; absolute gates are checked at release.** A shared runner's absolute numbers vary by multiples, while the ratio of two runs made back to back on one runner is stable. So the isolation test (decision 3) is in CI and fails the build. The absolute budgets are checked by running the overhead harness with `HUMPYARD_BUDGET_ENFORCE=1` on a reference machine as a step of the release procedure (`docs/deployment.md`, Releases), and the result is recorded in `docs/performance.md`. Without the variable the harness reports each budget as met or exceeded and still exits successfully. Alternative: absolute thresholds in CI with a wide margin, rejected because a margin wide enough to be stable is too wide to catch the regressions that matter.
+
+**3. The isolation test: the gateway on its own one-worker runtime, paired and interleaved runs.**
+- The gateway is started on a runtime built with `worker_threads(1)` in a dedicated thread; the client, the mock upstream and the admin load stay on the test's runtime, so only the gateway is constrained and the client does not slow the measurement. One worker is the worst case for stalling and is what a 500m container may give.
+- The ledger is seeded with at least 60,000 decision rows (past the 50,000 cap) and the usage rows that go with them, using the generator moved from the scale harness into `tests/common`.
+- A round is one run without the admin load (A) and one with it (B), alternated so drift in the machine hits both. The load is two concurrent clients, each looping `GET /admin/v1/stats?group_by=target&window=30d` back to back (two, so that overlapping reads exercise the gate), plus a session view. Request traffic is 16 concurrent requests against a 5 ms mock upstream, so a stalled worker shows as a large p99, and each run sends enough requests (several thousand) for a stable p99. The verdict uses the median of five rounds.
+- It fails when the median p99 of B exceeds A by more than `max(10%, 1 ms)`; when `ledger.dropped()` is above zero afterwards; or when the load made no successful read (so a gate that refuses everything cannot pass).
+- A self-check runs A against A first. If those differ by more than the threshold the machine is too noisy, and the test retries up to three times before failing with "environment too noisy to decide", so noise is a loud failure, not a silent pass.
+- A second test covers write contention: a ledger holding about 300,000 decision rows older than the retention is pruned and an override is created during a loaded run. It fails when request p99 moves past the same threshold, when an entry is dropped, when the override write fails or takes longer than the writer's busy timeout, and it records the size of the `-wal` file afterwards, so a checkpoint held back by readers shows as growth instead of going unseen.
+- It is `#[ignore]`d from the default run like the other harnesses and run by a new `isolation` CI job in release mode. Once it exists and before the fixes, it is run against today's code and its failure is recorded in `docs/performance.md` (the baseline the fixes are measured against). If it does not fail, the premise was wrong and decisions 4 to 6 shrink to what the test shows is needed.
+- A manual check repeats it with the gateway under a real 0.5 CPU cgroup limit (a container run with `--cpus 0.5`), because the CPU-quota effect cannot be reproduced on a hosted runner; the result is recorded and is not a CI gate.
+
+**4. The fold moves off the runtime and the data structure hides it.** The per-row work becomes synchronous private functions in `src/ledger/` (a row-fold taking already-fetched rows, no await) and the public methods (`stats`, `session_scan`, and later the series) stay `async` but run the fold through `tokio::task::spawn_blocking`. Nothing outside the ledger can call the fold: it is not `pub`. The query still goes through `sqlx` (which runs it on the connection's own thread). Alternative: `block_in_place` or a plain thread, rejected because `block_in_place` still occupies a runtime worker (and panics on a current-thread runtime used in tests).
+
+**5. A read-only pool of its own.** The ledger opens a second pool for reads (two connections) with `PRAGMA query_only = ON` and leaves the writer's pool for the writer, `flush` and shutdown. `query_only` rather than a read-only open mode, because opening a WAL database read-only needs the `-shm` file to be writable by the opener in some environments; with `query_only` the connection is an ordinary one that the engine refuses to write through. Both pools are in the same process, so WAL's shared memory is the ordinary single-process case, which is how the ledger already runs on NFS. Reads that must see the writer's pending rows still call `flush` first (which uses the writer side). The read pool's waits are set in decision 9.
+
+**6. A gate per surface, shedding instead of queueing, with single-flight and a ten-second cache.**
+- Two gates, one for `/admin/v1` and one for `/v1`, each a semaphore of one permit taken with `try_acquire`. A heavy read that finds its gate taken is answered 503 with `Retry-After: 5` and the error `admin_busy` or `stats_busy`; nothing waits. Two gates so that a client key reading its own statistics in a loop cannot make the operator's GUI answer busy, and the cost is bounded: at most two heavy reads at once, two blocking threads.
+- Heavy means statistics, the session views and (with `add-gui-query-view`) the series. Light admin reads and overrides are not gated.
+- Order of events: authenticate and check the scope, then look the request up: a fresh result is returned; an identical read in flight is joined (it awaits the same result, so five tabs refreshing at the same instant are one computation and no 503); otherwise take the gate (or 503), compute, store the result and answer.
+- The cache key is the surface, the caller's key id (or the admin `key` filter) and the normalised sorted query string. Only 200 answers are stored, as serialized bodies, at most 16 entries and 2 MiB each, expiring after ten seconds. The answer carries `computed_at_ms`, so a number read from the cache says how old it is. Cache hits skip the pre-read `flush`, which is why the freshness bound is ten seconds and not zero.
+- The ten seconds is a constant, not a setting: an operator has nothing sensible to tune, and a knob invites setting it to zero. Tests that need to see new rows at once construct the state with a zero ttl.
+- Alternatives: a queue (a backlog of heavy reads is the problem, not the answer); a global rate limit (does not bound concurrency); a shared single gate (lets one surface starve the other).
+
+**7. The rule is a numbered invariant with a test that reads the source.** `docs/invariants.md` gets the next number: heavy ledger reads never run on the serving runtime, never take the writer's connections, and never queue. `tests/architecture.rs` enforces it as it enforces the others, on source text: the fold functions are not `pub`; the stats and session modules call `spawn_blocking`; any server module that calls a heavy ledger method also names the gate. This catches the careless version (calling the fold from a handler, or adding a handler that skips the gate). It does not prove the behaviour; the isolation test does.
+
+**8. The escalation is named and not built.** If the isolation test still fails with decisions 4 to 6 in place, the next step is a separate read process (a sidecar or another command) working from a local snapshot of the ledger made with SQLite's backup API or `VACUUM INTO`, which also gives it its own CPU allowance. It is never a second process opening the live WAL ledger: the cluster keeps the ledger on NFS, and WAL needs shared memory between processes on one host, which NFS does not support. It would be its own ADR, and ADR 0036 says so.
+
+**9. Timeouts are explicit, a long write lock is cut into short ones, and a wait fails fast.** The values are constants in the ledger, not settings: an operator has nothing sensible to tune, and the right values depend on each other.
+- *Writer pool:* `busy_timeout` 5 s (the current default, now stated) and an acquire timeout of 5 s. The rule that goes with it: no single write statement may hold the lock for anything near the busy timeout. The decision prune deletes in batches of 10,000 rows (each its own statement, looped until fewer than a batch is deleted, yielding between batches), so a 511,000-row prune is about 50 short locks instead of one 1.3 s lock, and an override write waits for one batch at most. The same applies to the override and quota prunes. A prune interrupted by shutdown is harmless: the next one continues, because the cutoff is a time.
+- *Read pool:* `busy_timeout` 1 s and an acquire timeout of 2 s. A read that cannot get a lock or a connection in that time fails, and the surface answers 503 with its busy code and `Retry-After`, instead of holding an HTTP request for the 30 s default and a gate permit with it. Under WAL a read rarely sees `SQLITE_BUSY` at all (recovery, or a checkpoint mode stronger than the default), so this is a bound for the rare case.
+- *Checkpointing* stays at SQLite's default (automatic, PASSIVE, which never blocks). Reads hold their snapshot only while their rows are fetched (the fold runs after, on already-fetched rows), so they cannot hold a checkpoint back for long; the WAL size recorded by the write-contention test is what would show otherwise. Tuning is left until it shows.
+- Alternatives: raising the busy timeout (hides the lock instead of shortening it); a separate connection with its own timeout for override writes only (more pools for a problem chunking removes).
+
+**10. `openspec/config.yaml` carries the process rule.** Under `rules.tasks`: when a design names the serving runtime, the ledger pool, the writer's queue or the CPU allowance as used, the tasks include a performance task that records a before and after measurement or passes the isolation test.
+
+## Threat model
+
+Assets: the serving process's responsiveness (it is the product); the ledger's integrity (entries must not be lost); the confidentiality of per-key statistics; the operator's ability to reach the GUI. Actors: the operator; a holder of a `read` credential; a client key holder (who can read their own statistics); any caller that floods heavy reads; a maintainer who changes the test or the thresholds. Trust boundaries crossed: admin and client API to the ledger inside the serving process (unchanged); this change adds shared state (the cache and the gates) between callers.
+
+| # | Threat | Category | Mitigation | Proof |
+|---|---|---|---|---|
+| 1 | A heavy read holds a runtime worker and stalls every request | Denial of service | The fold runs on the blocking pool; the isolation test runs on a one-worker runtime | isolation test; spec: heavy reads run off the serving runtime |
+| 2 | Reads take the writer's connections and the queue fills and drops entries | Tampering (loss of records) | A read pool of its own; `dropped()` must stay zero in the isolation test | isolation test; spec: reads cannot cause entries to be lost |
+| 3 | A flood of distinct heavy reads exhausts CPU and memory | Denial of service | One heavy read at a time per surface, the rest shed with 503, never queued; the cache is bounded in entries and size | handler tests for 503 and `Retry-After`; cache bound test |
+| 4 | A client key's statistics loop occupies the gate and the operator is shut out | Denial of service | Separate gates for `/admin/v1` and `/v1` | spec scenario: a client cannot hold the administrative gate |
+| 5 | A cached result is served to a different key | Disclosure | The key id (or the admin `key` filter) is part of the cache key | test: two keys, same query, own results |
+| 6 | A caller without the scope occupies the gate or reads a cached result | Elevation | Authentication and scope run before the cache and the gate | spec: shedding happens after the scope is checked |
+| 7 | A stale cached number is read as current | Repudiation (misleading) | `computed_at_ms` is in the answer; the bound is ten seconds | spec scenario: freshness is visible |
+| 8 | The GUI's refresh timer treats 503 as an error and retries at once, adding load | Denial of service | `Retry-After` is honoured by the GUI's back-off (recorded as a task of `add-gui-query-view`) | GUI refresh tests |
+| 9 | Someone loosens the thresholds or removes the CI job to make a change pass | Tampering | The thresholds are in the performance spec and `docs/performance.md`; the job is a required check; changing either is a reviewed change to those files | review; the spec |
+| 10 | CPU-quota throttling (a 500m limit) slows the whole container even with the fold off the runtime | Denial of service | **Gap**: not reproducible on a hosted runner and not removed by threads; bounded work per read, and a manual check with `--cpus 0.5` recorded; the named escalation (decision 8) | manual check result in `docs/performance.md` |
+| 11 | `GET /admin/v1/decisions?request_id=` scans without an index | Denial of service | **Gap**: limit-bounded and not a fold; left as the open finding in `docs/performance.md` | none; recorded there |
+| 12 | A long prune holds the write lock and an admin override write waits out the busy timeout and fails | Denial of service | The prune runs in batches of 10,000 rows so no lock approaches the timeout; the writer pool's busy timeout is stated | write-contention isolation test; prune unit test for batching |
+| 13 | The read pool is exhausted and a request waits the 30 s default for a connection, holding a gate permit | Denial of service | Acquire timeout of 2 s and busy timeout of 1 s on the read pool; a timeout is a 503 busy with `Retry-After` | ledger test with both read connections held; handler test for the 503 |
+
+Residual risk, accepted: a caller with a valid credential can still make the gateway do bounded work (one heavy read per surface at a time, repeatable every ten seconds); the admin API has no per-credential rate limit (also recorded by `add-gui-query-view`).
+
+## Risks / Trade-offs
+
+- **The test is noisy on a shared runner** → relative, paired and interleaved runs, a median of five, an A-against-A self-check, and an explicit "too noisy" failure rather than a silent pass.
+- **Statistics up to ten seconds old** → carried in the answer; the GUI shows it; tests that need fresh rows use a zero ttl.
+- **A 503 is new behaviour for a caller that read statistics in parallel** → `Retry-After`, and the cache absorbs identical reads; `ctl` reads are one at a time.
+- **Transient memory of a read** (up to 50,000 rows' JSON in memory, tens of megabytes, held by one blocking thread per surface) → bounded by the gates; measured in the memory measurement run and recorded.
+- **The test could pass for the wrong reason** (a gate that refuses everything, or a load that never overlaps) → it requires successful reads and runs two overlapping clients.
+- **A chunked prune takes longer in total and interleaves with inserts** → each batch is short, the total only matters to the prune's own task, and it finishes with the same rows deleted; the 10,000 figure is measured in the contention test and can change without touching the specs.
+- **The architecture test reads source text** → it catches the careless case; it is the second line behind the behavioural test, as for the other invariants.
+
+## Migration Plan
+
+Additive for clients: a new 503 and a `computed_at_ms` field on statistics answers (the OpenAPI contract and the client's types are updated). The read pool is opened at startup with the writer's; no schema change. Rollback is the previous release. The isolation job is added in the same change as the fix, after its baseline failure has been recorded.
+
+## Open Questions
+
+- Whether the budget numbers for memory and streaming can be set from one measurement run or need a second after the first fix lands: decided when the run is made, without changing the specs.
+- The prune batch size (10,000) and the read-pool timeouts (1 s and 2 s) are starting values; the contention test is where they are confirmed or changed.
