@@ -9,6 +9,8 @@
     clippy::needless_pass_by_value
 )]
 
+pub mod seed;
+
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex, OnceLock};
 
