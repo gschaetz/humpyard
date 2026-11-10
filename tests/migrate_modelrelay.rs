@@ -25,7 +25,7 @@ const MODELS_JSON: &str = include_str!("fixtures/modelrelay/models.json");
 fn unique(name: &str) -> std::path::PathBuf {
     static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-    std::env::temp_dir().join(format!("mig-{}-{n}-{name}", std::process::id()))
+    common::scratch().join(format!("mig-{}-{n}-{name}", std::process::id()))
 }
 
 fn fixture(name: &str, body: &str) -> String {

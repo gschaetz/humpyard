@@ -25,7 +25,7 @@ targets = ["t"]
 "#;
 
 fn temp(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!(
+    let dir = common::scratch().join(format!(
         "humpyard-admincfg-{}-{name}-{:?}",
         std::process::id(),
         std::thread::current().id()

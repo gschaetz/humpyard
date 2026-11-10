@@ -27,7 +27,7 @@ async fn fixture() -> Fixture {
         post(|| async { axum::Json(chat_completion("m", "ok", Some(usage(20, 5)))) }),
     ))
     .await;
-    let dir = std::env::temp_dir().join(format!(
+    let dir = common::scratch().join(format!(
         "humpyard-ctl-{}-{:?}",
         std::process::id(),
         std::thread::current().id()

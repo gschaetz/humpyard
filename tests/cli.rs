@@ -1,4 +1,6 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // integration tests fail loudly on purpose
+mod common;
+
 use std::process::Command;
 
 fn run(args: &[&str], key: Option<&str>) -> std::process::Output {
@@ -11,7 +13,7 @@ fn run(args: &[&str], key: Option<&str>) -> std::process::Output {
 }
 
 fn write_config(name: &str, body: &str) -> String {
-    let path = std::env::temp_dir().join(format!("sc-{}-{name}.toml", std::process::id()));
+    let path = common::scratch().join(format!("sc-{}-{name}.toml", std::process::id()));
     std::fs::write(&path, body).unwrap();
     path.to_string_lossy().into_owned()
 }
@@ -118,7 +120,7 @@ fn the_general_example_config_is_valid() {
 #[test]
 fn keygen_prints_a_key_and_the_matching_hash_and_stores_nothing() {
     use sha2::{Digest, Sha256};
-    let dir = std::env::temp_dir().join(format!("sc-keygen-{}", std::process::id()));
+    let dir = common::scratch().join(format!("sc-keygen-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let out = Command::new(env!("CARGO_BIN_EXE_humpyard"))
         .args(["keygen", "alice"])
