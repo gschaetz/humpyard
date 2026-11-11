@@ -60,11 +60,14 @@ mod config_patch;
 mod config_view;
 mod decisions;
 mod explain;
+mod heavy;
 mod metrics;
 mod overrides;
 mod quota;
 mod sessions;
 mod stats;
+
+pub use heavy::{HeavyReads, Surface};
 
 const ROUTE_HEADER: &str = "x-humpyard-route";
 const RULE_HEADER: &str = "x-humpyard-rule";
@@ -88,6 +91,8 @@ struct Snapshot {
 }
 
 pub struct AppState {
+    /// The gates and shared results of the heavy ledger reads (statistics and session views).
+    heavy: Arc<HeavyReads>,
     /// The current configuration; swapped by a reload.
     snapshot: RwLock<Arc<Snapshot>>,
     /// Flips to `true` when shutdown gives up waiting: running requests are cancelled.
@@ -170,6 +175,10 @@ pub struct Options {
     /// The configuration file the gateway was loaded from, which `POST /admin/v1/config/patch` reads (ADR 0034).
     /// `run` sets it from its reload path; without one the endpoint answers 503.
     pub config_path: Option<PathBuf>,
+    /// The gates and the shared results of the heavy reads (ADR 0036). Without one the gateway makes its own, with
+    /// the ten-second freshness; tests pass one to hold a gate or to see every read computed.
+    #[doc(hidden)]
+    pub heavy_reads: Option<Arc<HeavyReads>>,
 }
 
 pub async fn router_with_options(config: Config, options: Options) -> Result<Router, String> {
@@ -662,22 +671,26 @@ async fn open_overrides(
     Ok((Some(store), drains))
 }
 
+/// Opens the ledger the configuration names, if any.
+async fn open_ledger(config: &Config) -> Result<Option<Ledger>, String> {
+    match &config.ledger {
+        Some(path) => Ledger::open_with(
+            path,
+            crate::ledger::DEFAULT_CAPACITY,
+            config.decision_retention_days,
+        )
+        .await
+        .map(Some)
+        .map_err(|e| e.to_string()),
+        None => Ok(None),
+    }
+}
+
 async fn build(config: Config, options: Options, fingerprint: String) -> Result<Built, String> {
     let config_path = options.config_path;
     let clock: Arc<dyn Clock> = options.clock.unwrap_or_else(|| Arc::new(SystemClock));
     let extra_policy: Arc<dyn RoutingPolicy> = options.policy.unwrap_or_else(|| Arc::new(AllowAll));
-    let ledger = match &config.ledger {
-        Some(path) => Some(
-            Ledger::open_with(
-                path,
-                crate::ledger::DEFAULT_CAPACITY,
-                config.decision_retention_days,
-            )
-            .await
-            .map_err(|e| e.to_string())?,
-        ),
-        None => None,
-    };
+    let ledger = open_ledger(&config).await?;
     let (overrides, drains) = open_overrides(ledger.as_ref(), &clock).await?;
     let tracker = (!config.keys.is_empty())
         .then(|| Arc::new(BudgetTracker::new(clock.clone(), &config.budget)));
@@ -696,6 +709,7 @@ async fn build(config: Config, options: Options, fingerprint: String) -> Result<
     let snapshot = Snapshot::build(config, &clock, &extra_policy, &drains, None, fingerprint)?;
     let (hard_stop_tx, hard_stop) = watch::channel(false);
     let state = Arc::new(AppState {
+        heavy: options.heavy_reads.unwrap_or_default(),
         snapshot: RwLock::new(Arc::new(snapshot)),
         hard_stop,
         accounting: accounting.clone(),

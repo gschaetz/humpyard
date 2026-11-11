@@ -12,6 +12,7 @@ use axum::response::{IntoResponse, Response};
 use serde_json::{Value, json};
 use switchyard_protocol::WireFormat;
 
+use super::heavy::{Busy, Surface};
 use super::stats::{DEFAULT_WINDOW_MS, ROW_CAP, longest_window, parse_window, tokens_json};
 use super::{AppState, GatewayError, Snapshot, authenticate};
 use crate::ledger::{SessionQuery, SessionScan, SessionStats, Switch};
@@ -59,20 +60,22 @@ pub(super) async fn sessions_view(
     key: Option<String>,
     params: &HashMap<String, String>,
     longest_ms: i64,
-) -> Response {
+) -> Result<Response, Busy> {
     for name in params.keys() {
         if !["window", "group_by", "limit", "order_by"].contains(&name.as_str()) {
-            return bad(format!("unknown parameter `{name}` for group_by=session"));
+            return Ok(bad(format!(
+                "unknown parameter `{name}` for group_by=session"
+            )));
         }
     }
     let window = match window_ms(params, longest_ms) {
         Ok(window) => window,
-        Err(message) => return bad(message),
+        Err(message) => return Ok(bad(message)),
     };
     let limit = match params.get("limit").map(|l| l.parse::<usize>()) {
         None => DEFAULT_LIMIT,
         Some(Ok(n)) if (1..=MAX_LIMIT).contains(&n) => n,
-        Some(_) => return bad(format!("`limit` must be 1 to {MAX_LIMIT}")),
+        Some(_) => return Ok(bad(format!("`limit` must be 1 to {MAX_LIMIT}"))),
     };
     let order = match params.get("order_by").map(String::as_str) {
         None | Some("cost") => Order::Cost,
@@ -80,13 +83,13 @@ pub(super) async fn sessions_view(
         Some("switches") => Order::Switches,
         Some("recent") => Order::Recent,
         Some(other) => {
-            return bad(format!(
+            return Ok(bad(format!(
                 "`order_by` must be cost, requests, switches or recent, not `{other}`"
-            ));
+            )));
         }
     };
     let Some(ledger) = state.accounting.ledger() else {
-        return no_ledger();
+        return Ok(no_ledger());
     };
     ledger.flush().await;
     let now = state.clock.now_ms();
@@ -100,9 +103,11 @@ pub(super) async fn sessions_view(
         .await
     {
         Ok(scan) => scan,
+        Err(error) if error.is_busy() => return Err(Busy),
         Err(error) => {
-            return GatewayError::Internal(error.to_string())
-                .into_response_for(WireFormat::OpenAiChat);
+            return Ok(
+                GatewayError::Internal(error.to_string()).into_response_for(WireFormat::OpenAiChat)
+            );
         }
     };
     let sessions_total = scan.sessions.len();
@@ -116,8 +121,9 @@ pub(super) async fn sessions_view(
         };
         key(b).cmp(&key(a)).then_with(|| a.session.cmp(&b.session))
     });
-    axum::Json(json!({
+    Ok(axum::Json(json!({
         "object": "stats",
+        "computed_at_ms": now,
         "group_by": "session",
         "order_by": params.get("order_by").map_or("cost", String::as_str),
         "window": {"since_ms": since_ms, "seconds": window / 1000},
@@ -126,7 +132,7 @@ pub(super) async fn sessions_view(
         "answered_without_session": scan.answered.saturating_sub(scan.answered_with_session),
         "data": sessions.into_iter().take(limit).map(session_json).collect::<Vec<_>>(),
     }))
-    .into_response()
+    .into_response())
 }
 
 fn session_json(s: &SessionStats) -> Value {
@@ -169,26 +175,51 @@ pub(super) async fn get_switches(
         Ok(window) => window,
         Err(message) => return bad(message),
     };
+    let key = caller.map(|k| k.id);
+    // Heavy: at most one at a time per surface, and identical reads share one result (ADR 0036).
+    state
+        .heavy
+        .run(
+            Surface::Client,
+            "switches",
+            key.as_deref(),
+            &params,
+            switches_answer(&state, &snap, key.clone(), window),
+        )
+        .await
+}
+
+async fn switches_answer(
+    state: &AppState,
+    snap: &Snapshot,
+    key: Option<String>,
+    window: i64,
+) -> Result<Response, Busy> {
     let Some(ledger) = state.accounting.ledger() else {
-        return no_ledger();
+        return Ok(no_ledger());
     };
     ledger.flush().await;
-    let since_ms = state.clock.now_ms().saturating_sub(window);
+    let now = state.clock.now_ms();
+    let since_ms = now.saturating_sub(window);
     let scan = match ledger
         .session_scan(&SessionQuery {
-            key: caller.map(|k| k.id),
+            key,
             since_ms,
             row_cap: ROW_CAP,
         })
         .await
     {
         Ok(scan) => scan,
+        Err(error) if error.is_busy() => return Err(Busy),
         Err(error) => {
-            return GatewayError::Internal(error.to_string())
-                .into_response_for(WireFormat::OpenAiChat);
+            return Ok(
+                GatewayError::Internal(error.to_string()).into_response_for(WireFormat::OpenAiChat)
+            );
         }
     };
-    axum::Json(switches_json(&snap, &scan, since_ms, window)).into_response()
+    let mut body = switches_json(snap, &scan, since_ms, window);
+    body["computed_at_ms"] = json!(now);
+    Ok(axum::Json(body).into_response())
 }
 
 /// The fresh and cached input prices (USD per million tokens) of each `provider/model` endpoint that

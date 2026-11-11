@@ -358,7 +358,14 @@ async fn stats(
         return denied.into_response();
     }
     let key = params.remove("key");
-    super::stats::stats_view(&state, &state.snapshot(), &params, key).await
+    super::stats::stats_view(
+        &state,
+        &state.snapshot(),
+        &params,
+        key,
+        super::Surface::Admin,
+    )
+    .await
 }
 
 /// Every admin credential: id, scopes and expiry, never a hash.

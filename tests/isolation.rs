@@ -18,7 +18,8 @@
 //! that, an unloaded-against-unloaded check shows the machine is quiet enough to decide: if two unloaded halves
 //! differ by more than the threshold the test says it is too noisy, after three attempts, instead of passing.
 //!
-//! The load asks for a different window each time, so a cache of identical reads cannot make it cheap.
+//! The load asks for a different window each time, so the shared results of identical reads cannot make it cheap.
+//! The gate means at most one of its reads computes at a time; the rest are shed with 503, which it counts.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // test scaffolding
 #![allow(clippy::cast_precision_loss, clippy::cast_possible_truncation)] // reporting only
 
@@ -46,6 +47,9 @@ const UPSTREAM_DELAY: Duration = Duration::from_millis(5);
 const ALLOWED_RISE_FRACTION: f64 = 0.10;
 const ALLOWED_RISE_FLOOR_MS: f64 = 1.0;
 const NOISE_ATTEMPTS: usize = 3;
+/// Windows the load cycles through (700 to 2,099 hours, inside the 90-day retention). A shared result is kept for ten
+/// seconds, so the load has to ask for more distinct reads than can finish in that time, or the cache answers it.
+const DISTINCT_WINDOWS: u64 = 1_400;
 
 fn env_usize(name: &str, default: usize) -> usize {
     std::env::var(name)
@@ -184,11 +188,17 @@ struct LoadCounts {
 }
 
 fn target_query(n: u64) -> String {
-    format!("/admin/v1/stats?group_by=target&window={}h", 700 + n % 24)
+    format!(
+        "/admin/v1/stats?group_by=target&window={}h",
+        700 + n % DISTINCT_WINDOWS
+    )
 }
 
 fn session_query(n: u64) -> String {
-    format!("/admin/v1/stats?group_by=session&window={}h", 700 + n % 24)
+    format!(
+        "/admin/v1/stats?group_by=session&window={}h",
+        700 + n % DISTINCT_WINDOWS
+    )
 }
 
 fn start_load(client: &reqwest::Client, base: &str, key: &str) -> Load {
@@ -811,10 +821,14 @@ fn the_median_of_an_odd_and_an_even_count() {
 
 #[test]
 fn the_load_asks_for_a_different_window_each_time() {
-    let seen: std::collections::HashSet<String> = (0..24).map(target_query).collect();
-    assert_eq!(seen.len(), 24);
+    let seen: std::collections::HashSet<String> = (0..DISTINCT_WINDOWS).map(target_query).collect();
+    assert_eq!(seen.len(), usize::try_from(DISTINCT_WINDOWS).unwrap());
     assert!(target_query(0).contains("group_by=target"));
     assert!(session_query(0).contains("group_by=session"));
+    assert!(
+        (0..DISTINCT_WINDOWS).all(|n| 700 + n < 24 * 90),
+        "every window stays inside the default retention"
+    );
 }
 
 fn passing() -> Findings {

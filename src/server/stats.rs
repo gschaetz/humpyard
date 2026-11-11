@@ -10,6 +10,7 @@ use axum::response::{IntoResponse, Response};
 use serde_json::{Value, json};
 use switchyard_protocol::WireFormat;
 
+use super::heavy::{Busy, Surface};
 use super::{AppState, GatewayError, authenticate};
 use crate::ledger::{GroupBy, GroupStats, StatsQuery, TokenTotals};
 
@@ -29,7 +30,14 @@ pub(super) async fn get_stats(
         Ok(caller) => caller,
         Err(error) => return error.into_response_for(format),
     };
-    stats_view(&state, &snap, &params, caller.map(|k| k.id)).await
+    stats_view(
+        &state,
+        &snap,
+        &params,
+        caller.map(|k| k.id),
+        Surface::Client,
+    )
+    .await
 }
 
 /// Statistics for `key` (every key when `None`): the client endpoint passes the caller's own id, the admin
@@ -39,13 +47,34 @@ pub(super) async fn stats_view(
     snap: &super::Snapshot,
     params: &HashMap<String, String>,
     key: Option<String>,
+    surface: Surface,
 ) -> Response {
+    // Heavy: at most one at a time per surface, and identical reads share one result (ADR 0036).
+    state
+        .heavy
+        .run(
+            surface,
+            "stats",
+            key.as_deref(),
+            params,
+            stats_answer(state, snap, params, key.clone()),
+        )
+        .await
+}
+
+/// The statistics answer itself, computed once for however many identical reads wait on it.
+async fn stats_answer(
+    state: &AppState,
+    snap: &super::Snapshot,
+    params: &HashMap<String, String>,
+    key: Option<String>,
+) -> Result<Response, Busy> {
     let format = WireFormat::OpenAiChat;
     let Some(ledger) = state.accounting.ledger() else {
-        return GatewayError::ModelNotFound(
+        return Ok(GatewayError::ModelNotFound(
             "no ledger is configured, so statistics are not available".into(),
         )
-        .into_response_for(format);
+        .into_response_for(format));
     };
     let longest = longest_window(snap);
     if params.get("group_by").is_some_and(|g| g == "session") {
@@ -53,12 +82,15 @@ pub(super) async fn stats_view(
     }
     let query = match parse(params, key, state.clock.now_ms(), longest) {
         Ok(query) => query,
-        Err(message) => return GatewayError::BadRequest(message).into_response_for(format),
+        Err(message) => {
+            return Ok(GatewayError::BadRequest(message).into_response_for(format));
+        }
     };
     ledger.flush().await;
     match ledger.stats(&query).await {
-        Ok(summary) => axum::Json(json!({
+        Ok(summary) => Ok(axum::Json(json!({
             "object": "stats",
+            "computed_at_ms": state.clock.now_ms(),
             "group_by": params.get("group_by").map_or("route", String::as_str),
             "window": {"since_ms": query.since_ms, "seconds": (state.clock.now_ms() - query.since_ms) / 1000},
             "truncated": summary.truncated,
@@ -70,8 +102,9 @@ pub(super) async fn stats_view(
                 row
             }).collect::<Vec<_>>(),
         }))
-        .into_response(),
-        Err(error) => GatewayError::Internal(error.to_string()).into_response_for(format),
+        .into_response()),
+        Err(error) if error.is_busy() => Err(Busy),
+        Err(error) => Ok(GatewayError::Internal(error.to_string()).into_response_for(format)),
     }
 }
 
