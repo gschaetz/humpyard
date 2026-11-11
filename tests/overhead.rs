@@ -10,11 +10,13 @@
 //!
 //! It also reports each absolute budget of `docs/performance.md` as met, exceeded or not checked. A run fails on an
 //! exceeded budget only when `HUMPYARD_BUDGET_ENFORCE=1` (the release check on the reference machine); shared CI
-//! runners are too noisy for absolute numbers, so CI relies on the relative isolation test instead.
+//! runners are too noisy for absolute numbers, so CI relies on the relative isolation test instead. A budget that
+//! could not be checked fails an enforced run rather than pass without having been enforced.
 //!
-//! - `OVERHEAD_BASELINE_RPS`: the throughput recorded on this machine at the highest concurrency against the
-//!   instant upstream; without it the throughput budget is reported as not checked, and an enforced run fails
-//!   rather than pass without having checked it.
+//! Throughput is not a budget of this harness: one run compared with a recorded figure cannot resolve a 10%
+//! tolerance (`docs/performance.md`, Run 3). `scripts/compare-throughput.sh` compares it with the previous
+//! release's harness in alternating runs, reading the gateway's requests per second from the table this prints.
+//!
 //! - `OVERHEAD_BUDGET_P50_MS`, `OVERHEAD_BUDGET_P99_MS`: replace a recorded limit, to check the failing path with a
 //!   tightened one. The recorded values are the constants below, and they change only with the documentation.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // test scaffolding
@@ -77,12 +79,9 @@ targets = ["t"]
 }
 
 /// Budgets of `docs/performance.md`: the gateway's added latency over a direct call with a 50 ms upstream at up to
-/// 64 concurrent requests, and throughput no more than 10% below the baseline recorded on the same machine.
+/// 64 concurrent requests.
 const BUDGET_ADDED_P50_MS: f64 = 2.0;
 const BUDGET_ADDED_P99_MS: f64 = 10.0;
-const BUDGET_THROUGHPUT_FLOOR: f64 = 0.90;
-/// The concurrency at which throughput is compared with the baseline.
-const THROUGHPUT_CONCURRENCY: usize = 64;
 
 /// What one cell of the 50 ms table added over the direct call.
 struct Cell {
@@ -119,12 +118,7 @@ fn enforcing(value: Option<&str>) -> bool {
 }
 
 /// Compares the measurements with the budgets. The worst cell decides the latency budgets.
-fn evaluate(
-    cells: &[Cell],
-    peak_rps: Option<f64>,
-    baseline_rps: Option<f64>,
-    (p50_limit, p99_limit): (f64, f64),
-) -> Vec<BudgetLine> {
+fn evaluate(cells: &[Cell], (p50_limit, p99_limit): (f64, f64)) -> Vec<BudgetLine> {
     let worst = |value: fn(&Cell) -> f64| {
         cells
             .iter()
@@ -149,35 +143,6 @@ fn evaluate(
             verdict: Verdict::NotChecked("the 50 ms cells were not run"),
         },
     };
-    let throughput = match (peak_rps, baseline_rps) {
-        (Some(rps), Some(baseline)) => {
-            let floor = baseline * BUDGET_THROUGHPUT_FLOOR;
-            BudgetLine {
-                name: "throughput against the recorded baseline",
-                limit: format!(">= {floor:.0} req/s (baseline {baseline:.0})"),
-                measured: format!("{rps:.0} req/s"),
-                verdict: if rps >= floor {
-                    Verdict::Met
-                } else {
-                    Verdict::Exceeded
-                },
-            }
-        }
-        (Some(rps), None) => BudgetLine {
-            name: "throughput against the recorded baseline",
-            limit: "90% of the baseline".into(),
-            measured: format!("{rps:.0} req/s"),
-            verdict: Verdict::NotChecked(
-                "set OVERHEAD_BASELINE_RPS to this machine's recorded figure",
-            ),
-        },
-        (None, _) => BudgetLine {
-            name: "throughput against the recorded baseline",
-            limit: "90% of the baseline".into(),
-            measured: "no measurement".into(),
-            verdict: Verdict::NotChecked("the instant-upstream cells were not run"),
-        },
-    };
     vec![
         latency(
             "gateway-added p50 latency, 50 ms upstream",
@@ -189,7 +154,6 @@ fn evaluate(
             p99_limit,
             worst(|c| c.added_p99),
         ),
-        throughput,
     ]
 }
 
@@ -244,7 +208,6 @@ async fn gateway_overhead() {
 
     println!("\n=== gateway overhead: direct to a mock upstream versus through the gateway ===");
     let mut cells = Vec::new();
-    let mut peak_rps = None;
     println!(
         "{:<12}{:>5}  {:<8}{:>9}{:>9}{:>9}{:>11}   overhead p50 / p99 (ms)",
         "upstream", "conc", "path", "p50 ms", "p90 ms", "p99 ms", "req/s"
@@ -277,9 +240,6 @@ async fn gateway_overhead() {
                     added_p99: through.p99 - direct.p99,
                 });
             }
-            if delay_ms == 0 && concurrency == THROUGHPUT_CONCURRENCY {
-                peak_rps = Some(through.rps);
-            }
             let label = if delay_ms == 0 {
                 "instant".to_string()
             } else {
@@ -304,15 +264,12 @@ async fn gateway_overhead() {
     }
     let _ = std::fs::remove_dir_all(&dir);
 
-    let baseline = std::env::var("OVERHEAD_BASELINE_RPS")
-        .ok()
-        .and_then(|v| v.parse().ok());
     let limits = (
         limit_from_env("OVERHEAD_BUDGET_P50_MS", BUDGET_ADDED_P50_MS),
         limit_from_env("OVERHEAD_BUDGET_P99_MS", BUDGET_ADDED_P99_MS),
     );
     let enforced = enforcing(std::env::var("HUMPYARD_BUDGET_ENFORCE").ok().as_deref());
-    let exceeded = report(&evaluate(&cells, peak_rps, baseline, limits), enforced);
+    let exceeded = report(&evaluate(&cells, limits), enforced);
     if enforced {
         assert!(exceeded.is_empty(), "{}", exceeded.join("\n"));
     }
@@ -336,14 +293,14 @@ fn the_recorded_run_meets_every_latency_budget() {
         cell(16, 0.41, 0.64),
         cell(64, 1.22, 5.72),
     ];
-    let lines = evaluate(&cells, Some(48_437.0), Some(46_000.0), RECORDED);
+    let lines = evaluate(&cells, RECORDED);
     assert!(lines.iter().all(|l| l.verdict == Verdict::Met));
 }
 
 #[test]
 fn an_exceeded_budget_names_the_budget_the_value_and_the_worst_cell() {
     let cells = [cell(1, 0.5, 0.6), cell(64, 2.5, 4.0)];
-    let lines = evaluate(&cells, Some(50_000.0), Some(46_000.0), RECORDED);
+    let lines = evaluate(&cells, RECORDED);
     assert_eq!(lines[0].verdict, Verdict::Exceeded);
     assert_eq!(lines[1].verdict, Verdict::Met);
     let messages = report(&lines, true);
@@ -361,37 +318,30 @@ fn an_exceeded_budget_names_the_budget_the_value_and_the_worst_cell() {
 #[test]
 fn a_tightened_limit_is_exceeded_by_the_recorded_run() {
     let cells = [cell(64, 1.22, 5.72)];
-    let lines = evaluate(&cells, None, None, (1.0, 5.0));
+    let lines = evaluate(&cells, (1.0, 5.0));
     assert_eq!(lines[0].verdict, Verdict::Exceeded);
     assert_eq!(lines[1].verdict, Verdict::Exceeded);
 }
 
 #[test]
-fn throughput_is_judged_against_ninety_percent_of_the_baseline_or_not_at_all() {
-    let cells = [cell(64, 0.1, 0.1)];
-    let below = evaluate(&cells, Some(40_000.0), Some(46_000.0), RECORDED);
-    assert_eq!(below[2].verdict, Verdict::Exceeded);
-    let at_floor = evaluate(&cells, Some(41_400.0), Some(46_000.0), RECORDED);
-    assert_eq!(at_floor[2].verdict, Verdict::Met);
-    let unchecked = evaluate(&cells, Some(1.0), None, RECORDED);
-    assert!(matches!(unchecked[2].verdict, Verdict::NotChecked(_)));
-}
-
-#[test]
 fn an_unchecked_budget_fails_an_enforced_run_and_only_an_enforced_run() {
-    let cells = [cell(64, 0.1, 0.1)];
-    let lines = evaluate(&cells, Some(46_000.0), None, RECORDED);
-    assert!(matches!(lines[2].verdict, Verdict::NotChecked(_)));
+    // No 50 ms cells were run, so neither latency budget could be checked.
+    let lines = evaluate(&[], RECORDED);
+    assert!(
+        lines
+            .iter()
+            .all(|l| matches!(l.verdict, Verdict::NotChecked(_)))
+    );
     assert_eq!(report(&lines, false), Vec::<String>::new());
     let messages = report(&lines, true);
-    assert_eq!(messages.len(), 1);
+    assert_eq!(messages.len(), 2);
     assert!(
         messages[0].contains("budget not checked"),
         "{}",
         messages[0]
     );
     assert!(
-        messages[0].contains("OVERHEAD_BASELINE_RPS"),
+        messages[0].contains("the 50 ms cells were not run"),
         "{}",
         messages[0]
     );
