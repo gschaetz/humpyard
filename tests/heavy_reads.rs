@@ -301,3 +301,38 @@ async fn with_no_freshness_every_read_is_computed_and_sees_new_requests() {
     assert_eq!(two["data"][0]["requests"], 2);
     assert_eq!(f.heavy.computations(), 2);
 }
+
+async fn explain(base: &str, key: &str) -> (u16, Value) {
+    let response = reqwest::Client::new()
+        .post(format!("{base}/v1/route/explain"))
+        .bearer_auth(key)
+        .json(&serde_json::json!({"model": "r"}))
+        .send()
+        .await
+        .unwrap();
+    (response.status().as_u16(), response.json().await.unwrap())
+}
+
+#[tokio::test]
+async fn the_route_explain_rations_its_recent_numbers_with_the_client_gate() {
+    let f = fixture("explain", HeavyReads::with_ttl(Duration::ZERO)).await;
+    ask(&f.base, &f.keys.alice, 2).await;
+
+    // Gate free: the recent numbers are there (and the read is counted as a heavy one).
+    let (status, free) = explain(&f.base, &f.keys.alice).await;
+    assert_eq!(status, 200, "{free}");
+    assert_eq!(free["targets"][0]["recent"]["attempts"], 2, "{free}");
+    assert_eq!(f.heavy.computations(), 1);
+
+    // Gate held by another heavy read: explain still answers, without them, and does not wait or refuse.
+    let _held = f.heavy.hold(Surface::Client).unwrap();
+    let started = Instant::now();
+    let (status, busy) = explain(&f.base, &f.keys.alice).await;
+    assert_eq!(status, 200, "explain is not refused: {busy}");
+    assert!(busy["targets"][0]["recent"].is_null(), "{busy}");
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "it must not wait for the gate"
+    );
+    assert_eq!(busy["targets"][0]["target"], free["targets"][0]["target"]);
+}
