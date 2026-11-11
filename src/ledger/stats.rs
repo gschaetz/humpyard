@@ -141,6 +141,9 @@ struct Accumulator {
     latencies: Vec<u64>,
 }
 
+/// Reads the decisions and the usage sums in the window, then folds them into per-group statistics on a blocking
+/// thread (ADR 0036): the fold parses up to `row_cap` rows of JSON and must never hold a worker of the runtime that
+/// serves requests. Only this function is visible outside the module.
 pub(super) async fn compute(pool: &SqlitePool, q: &StatsQuery) -> Result<Stats, LedgerError> {
     let rows = sqlx::query(
         "SELECT route, attempts FROM decisions WHERE ts_ms >= ?1 AND (?2 IS NULL OR key_id = ?2) \
@@ -152,6 +155,18 @@ pub(super) async fn compute(pool: &SqlitePool, q: &StatsQuery) -> Result<Stats, 
     .bind(i64::from(q.row_cap) + 1)
     .fetch_all(pool)
     .await?;
+    let costs = cost_by_group(pool, q).await?;
+    let query = q.clone();
+    super::off_runtime(move || fold(&rows, &costs, &query)).await
+}
+
+/// The synchronous, CPU-bound half of [`compute`]: counts each request once per group it touched, and turns the
+/// accumulators and the usage sums into the groups.
+fn fold(
+    rows: &[sqlx::sqlite::SqliteRow],
+    costs: &HashMap<String, UsageSums>,
+    q: &StatsQuery,
+) -> Stats {
     let truncated = rows.len() > q.row_cap as usize;
 
     let mut acc: HashMap<String, Accumulator> = HashMap::new();
@@ -193,7 +208,6 @@ pub(super) async fn compute(pool: &SqlitePool, q: &StatsQuery) -> Result<Stats, 
         }
     }
 
-    let costs = cost_by_group(pool, q).await?;
     let mut groups: Vec<GroupStats> = acc
         .into_iter()
         .map(|(group, mut a)| {
@@ -229,7 +243,7 @@ pub(super) async fn compute(pool: &SqlitePool, q: &StatsQuery) -> Result<Stats, 
             .cmp(&a.requests)
             .then_with(|| a.group.cmp(&b.group))
     });
-    Ok(Stats { groups, truncated })
+    Stats { groups, truncated }
 }
 
 fn add_attempt(entry: &mut Accumulator, attempt: &Attempt) {
