@@ -42,6 +42,17 @@ The pruning runs inside the ledger's writer, so while it deletes, queued writes 
 prune removes about a day of rows and is short; the first prune after a long gap, or after lowering the setting,
 removes many at once (see the run below).
 
+## The ledger's connections
+
+The ledger opens two pools of two connections each on the same database file (WAL mode). The **writer's pool** serves
+the writer task, the override tables, `flush` and shutdown: a write waits at most 5 seconds for the database's
+write lock and 5 seconds for a connection. The **read pool** serves statistics, sessions, decisions, quota history
+and the other reads: its connections refuse writes (`PRAGMA query_only = ON`) and a read waits at most 1 second
+for the lock and 2 seconds for a connection, then fails as busy, so a read never takes a connection the writer needs
+and never holds a request for the library defaults of 5 and 30 seconds. Under WAL, readers and the writer do not
+block each other; the contention that remains is writer against writer (Run 5). The values are constants of the
+ledger module (`WRITER_BUSY_TIMEOUT`, `READ_BUSY_TIMEOUT` and their acquire counterparts), not settings.
+
 ## Budgets
 
 What "performance" means for humpyard, and what a change must stay under ([ADR 0036](adr/0036-admin-and-ui-work-must-not-change-the-request-paths-performance.md)).

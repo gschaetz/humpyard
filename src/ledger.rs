@@ -40,6 +40,19 @@ pub const DEFAULT_DECISION_RETENTION_DAYS: u64 = 90;
 const BATCH: usize = 100;
 pub const DEFAULT_CAPACITY: usize = 10_000;
 
+/// How long a write waits for the database's write lock before it fails with "database is locked". Writes come from
+/// the writer task and from the admin API's override calls, which share the writer's pool.
+pub const WRITER_BUSY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+/// How long a write waits for a connection from the writer's pool.
+pub const WRITER_ACQUIRE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+/// Reads fail fast: a read that cannot get the lock or a connection in this time gives up, so a caller can answer
+/// "busy" instead of holding a request, and a gate permit, for the library defaults of five and thirty seconds.
+pub const READ_BUSY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(1);
+pub const READ_ACQUIRE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+/// Connections of the read pool. The writer's pool has two of its own, so a read never takes a connection the
+/// writer needs.
+const READ_CONNECTIONS: u32 = 2;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
     /// The call whose response went to the client.
@@ -115,6 +128,24 @@ pub enum LedgerError {
     Query(#[from] sqlx::Error),
 }
 
+impl LedgerError {
+    /// Whether the ledger was busy rather than broken: the read gave up waiting for a connection or for the
+    /// database's lock, so the caller can say "busy, retry" instead of reporting a failure.
+    #[must_use]
+    pub fn is_busy(&self) -> bool {
+        let (Self::Query(error) | Self::Open { source: error, .. }) = self;
+        match error {
+            sqlx::Error::PoolTimedOut => true,
+            // SQLite's primary codes 5 (busy) and 6 (locked), whatever their extended code.
+            sqlx::Error::Database(database) => database
+                .code()
+                .and_then(|code| code.parse::<i32>().ok())
+                .is_some_and(|code| matches!(code & 0xff, 5 | 6)),
+            _ => false,
+        }
+    }
+}
+
 /// What the writer task receives: entries, and markers that ask it to catch up.
 enum Message {
     Entry(Box<Entry>),
@@ -127,7 +158,11 @@ enum Message {
 
 pub struct Ledger {
     tx: mpsc::Sender<Message>,
+    /// The writer's pool: the writer task, the override tables, `flush` and shutdown.
     pool: SqlitePool,
+    /// The read pool: statistics, sessions, decisions and the other reads. Its connections refuse writes
+    /// (`query_only`) and wait little (see [`READ_BUSY_TIMEOUT`]).
+    read_pool: SqlitePool,
     /// Entries dropped because the writer's queue was full.
     dropped: Arc<AtomicU64>,
     /// Entries the writer failed to store.
@@ -174,7 +209,18 @@ impl Ledger {
         migrated.map_err(open_error)?;
         let pool = SqlitePoolOptions::new()
             .max_connections(2)
-            .connect_with(options)
+            .acquire_timeout(WRITER_ACQUIRE_TIMEOUT)
+            .connect_with(options.clone().busy_timeout(WRITER_BUSY_TIMEOUT))
+            .await
+            .map_err(open_error)?;
+        let read_pool = SqlitePoolOptions::new()
+            .max_connections(READ_CONNECTIONS)
+            .acquire_timeout(READ_ACQUIRE_TIMEOUT)
+            .connect_with(
+                options
+                    .busy_timeout(READ_BUSY_TIMEOUT)
+                    .pragma("query_only", "ON"),
+            )
             .await
             .map_err(open_error)?;
 
@@ -217,6 +263,7 @@ impl Ledger {
         Ok(Self {
             tx,
             pool,
+            read_pool,
             dropped: Arc::new(AtomicU64::new(0)),
             failed,
             writer: Some(writer),
@@ -256,12 +303,12 @@ impl Ledger {
 
     /// Quota samples matching `query`, oldest first.
     pub async fn quota_history(&self, query: &QuotaQuery) -> Result<Vec<QuotaPoint>, LedgerError> {
-        Ok(quota::history(&self.pool, query).await?)
+        Ok(quota::history(&self.read_pool, query).await?)
     }
 
     /// Decisions matching `query`, newest first.
     pub async fn decisions(&self, query: &DecisionQuery) -> Result<Vec<Decision>, LedgerError> {
-        decisions::query(&self.pool, query).await
+        decisions::query(&self.read_pool, query).await
     }
 
     /// The response signals of the answer call of each request in `request_ids`. A request whose answer row is
@@ -279,7 +326,7 @@ impl Ledger {
              WHERE kind = 'answer' AND request_id IN (SELECT value FROM json_each(?1))",
         )
         .bind(ids)
-        .fetch_all(&self.pool)
+        .fetch_all(&self.read_pool)
         .await?;
         Ok(rows
             .iter()
@@ -289,12 +336,12 @@ impl Ledger {
 
     /// Sessions, their cache use and the switches between endpoints, from the usage rows (read-only).
     pub async fn session_scan(&self, query: &SessionQuery) -> Result<SessionScan, LedgerError> {
-        sessions::scan(&self.pool, query).await
+        sessions::scan(&self.read_pool, query).await
     }
 
     /// Performance statistics over the decision log and usage rows (read-only).
     pub async fn stats(&self, query: &StatsQuery) -> Result<Stats, LedgerError> {
-        stats::compute(&self.pool, query).await
+        stats::compute(&self.read_pool, query).await
     }
 
     /// Messages queued for the writer and not yet taken by it.
@@ -324,7 +371,7 @@ impl Ledger {
              FROM usage WHERE ts_ms >= ?1 AND key_id IS NOT NULL GROUP BY key_id",
         )
         .bind(since_ms)
-        .fetch_all(&self.pool)
+        .fetch_all(&self.read_pool)
         .await?;
         Ok(rows
             .into_iter()
@@ -344,7 +391,7 @@ impl Ledger {
     pub async fn entries_since(&self, since_ms: i64) -> Result<Vec<Entry>, LedgerError> {
         let rows = sqlx::query("SELECT * FROM usage WHERE ts_ms >= ?1 ORDER BY id")
             .bind(since_ms)
-            .fetch_all(&self.pool)
+            .fetch_all(&self.read_pool)
             .await?;
         Ok(rows
             .into_iter()
@@ -399,6 +446,12 @@ impl Ledger {
     #[doc(hidden)]
     pub fn pool(&self) -> &SqlitePool {
         &self.pool
+    }
+
+    /// The read pool, for tests that hold its connections or check that it refuses writes.
+    #[doc(hidden)]
+    pub fn read_pool(&self) -> &SqlitePool {
+        &self.read_pool
     }
 }
 
