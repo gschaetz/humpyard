@@ -463,9 +463,11 @@ async fn admin_reads_do_not_move_the_request_path() {
 
 // ---- Write contention: a large prune and an override write under load -------------------------------------------
 
-/// How long a write may wait for the lock: the ledger writer pool's busy timeout (`sqlx`'s default of 5 seconds
-/// today; the ledger states it explicitly from task 2.1 of `define-performance-budget`).
-const WRITER_BUSY_TIMEOUT_MS: f64 = 5_000.0;
+/// How long a write may wait for the lock: the ledger writer pool's busy timeout, read from the ledger so the two
+/// cannot drift apart.
+fn writer_busy_timeout_ms() -> f64 {
+    humpyard::ledger::WRITER_BUSY_TIMEOUT.as_secs_f64() * 1000.0
+}
 /// The decision retention of the pruning half; the other half keeps everything (retention 0), so the two halves
 /// differ in nothing but the prune.
 const RETENTION_DAYS: u64 = 7;
@@ -668,10 +670,11 @@ fn contention_failures(f: &ContentionFindings) -> Vec<String> {
     if f.override_failures > 0 {
         out.push(format!("{} override writes failed", f.override_failures));
     }
-    if f.slowest_override_ms > WRITER_BUSY_TIMEOUT_MS {
+    if f.slowest_override_ms > writer_busy_timeout_ms() {
         out.push(format!(
-            "an override write took {:.0} ms, longer than the writer's busy timeout of {WRITER_BUSY_TIMEOUT_MS:.0} ms",
-            f.slowest_override_ms
+            "an override write took {:.0} ms, longer than the writer's busy timeout of {:.0} ms",
+            f.slowest_override_ms,
+            writer_busy_timeout_ms()
         ));
     }
     out
