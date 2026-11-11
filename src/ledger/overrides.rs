@@ -310,16 +310,20 @@ fn row_to_record(r: &sqlx::sqlite::SqliteRow) -> Result<OverrideRecord, sqlx::Er
 
 /// Deletes audit rows older than `before_ms`, and the overrides that ended before it. An override still in
 /// force is never deleted.
-pub(super) async fn prune(pool: &SqlitePool, before_ms: i64) -> Result<u64, sqlx::Error> {
-    let audit = sqlx::query("DELETE FROM override_audit WHERE at_ms < ?1")
-        .bind(before_ms)
-        .execute(pool)
-        .await?
-        .rows_affected();
-    let ended = sqlx::query("DELETE FROM overrides WHERE COALESCE(revoked_ms, expires_ms) < ?1")
-        .bind(before_ms)
-        .execute(pool)
-        .await?
-        .rows_affected();
+pub(super) async fn prune(
+    pool: &SqlitePool,
+    before_ms: i64,
+    batching: super::Batching,
+) -> Result<u64, sqlx::Error> {
+    let audit =
+        super::delete_in_batches(pool, "override_audit", "at_ms < ?1", before_ms, batching).await?;
+    let ended = super::delete_in_batches(
+        pool,
+        "overrides",
+        "COALESCE(revoked_ms, expires_ms) < ?1",
+        before_ms,
+        batching,
+    )
+    .await?;
     Ok(audit + ended)
 }

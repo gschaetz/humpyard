@@ -80,12 +80,12 @@ pub(super) async fn insert_batch(
     tx.commit().await
 }
 
-pub(super) async fn prune(pool: &SqlitePool, before_ms: i64) -> Result<u64, sqlx::Error> {
-    Ok(sqlx::query("DELETE FROM quota_samples WHERE ts_ms < ?1")
-        .bind(before_ms)
-        .execute(pool)
-        .await?
-        .rows_affected())
+pub(super) async fn prune(
+    pool: &SqlitePool,
+    before_ms: i64,
+    batching: super::Batching,
+) -> Result<u64, sqlx::Error> {
+    super::delete_in_batches(pool, "quota_samples", "ts_ms < ?1", before_ms, batching).await
 }
 
 /// Samples matching `query`, oldest first, newest `row_cap` of them. Each carries the cost of the

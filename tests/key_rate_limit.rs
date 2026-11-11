@@ -67,6 +67,8 @@ async fn rig() -> Rig {
     let (metrics_credential, metrics_hash) = humpyard::auth::generate_key().unwrap();
     let toml = format!(
         r#"listen = "127.0.0.1:0"
+# The test clock sits in 1970; retention would prune each decision once it is written.
+decision_retention_days = 0
 [ledger]
 path = "{db}"
 [metrics]
