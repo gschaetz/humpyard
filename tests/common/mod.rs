@@ -10,6 +10,7 @@
 )]
 
 pub mod load;
+pub mod mock;
 pub mod seed;
 
 use std::net::SocketAddr;

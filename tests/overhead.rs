@@ -24,35 +24,13 @@
 
 mod common;
 
-use std::sync::Arc;
 use std::time::Duration;
 
-use axum::Router;
-use axum::extract::State;
-use axum::response::IntoResponse;
-use axum::routing::post;
-use common::load::run;
-use common::{chat_completion, serve, usage};
+use common::load::{run, run_stream};
+use common::mock::{STREAM_CHUNKS, STREAM_GAP, mock_upstream};
+use common::serve;
 use humpyard::config::Config;
 use humpyard::server;
-
-struct Mock {
-    delay: Duration,
-}
-
-async fn completions(State(mock): State<Arc<Mock>>) -> axum::response::Response {
-    if !mock.delay.is_zero() {
-        tokio::time::sleep(mock.delay).await;
-    }
-    axum::Json(chat_completion("m", "ok", Some(usage(20, 5)))).into_response()
-}
-
-async fn mock_upstream(delay: Duration) -> String {
-    let app = Router::new()
-        .route("/chat/completions", post(completions))
-        .with_state(Arc::new(Mock { delay }));
-    format!("http://{}", serve(app).await)
-}
 
 async fn gateway(upstream: &str, dir: &std::path::Path) -> String {
     let toml = format!(
@@ -82,6 +60,13 @@ targets = ["t"]
 /// 64 concurrent requests.
 const BUDGET_ADDED_P50_MS: f64 = 2.0;
 const BUDGET_ADDED_P99_MS: f64 = 10.0;
+/// Streaming (20 chunks 5 ms apart, up to 64 concurrent streams): what the gateway adds to the time to the first
+/// chunk, and to the whole stream. The whole-stream figures are noisy (Run 7 of `docs/performance.md`), so their
+/// limits are looser.
+const BUDGET_STREAM_FIRST_P50_MS: f64 = 2.0;
+const BUDGET_STREAM_FIRST_P99_MS: f64 = 10.0;
+const BUDGET_STREAM_TOTAL_P50_MS: f64 = 15.0;
+const BUDGET_STREAM_TOTAL_P99_MS: f64 = 30.0;
 
 /// What one cell of the 50 ms table added over the direct call.
 struct Cell {
@@ -117,15 +102,14 @@ fn enforcing(value: Option<&str>) -> bool {
     value == Some("1")
 }
 
-/// Compares the measurements with the budgets. The worst cell decides the latency budgets.
-fn evaluate(cells: &[Cell], (p50_limit, p99_limit): (f64, f64)) -> Vec<BudgetLine> {
-    let worst = |value: fn(&Cell) -> f64| {
-        cells
-            .iter()
-            .max_by(|a, b| value(a).total_cmp(&value(b)))
-            .map(|c| (value(c), c.concurrency))
-    };
-    let latency = |name, limit: f64, found: Option<(f64, usize)>| match found {
+/// One latency budget against the worst cell found (its value and concurrency), if any cell was run.
+fn latency_line(
+    name: &'static str,
+    limit: f64,
+    found: Option<(f64, usize)>,
+    missing: &'static str,
+) -> BudgetLine {
+    match found {
         Some((ms, concurrency)) => BudgetLine {
             name,
             limit: format!("{limit:.2} ms"),
@@ -140,19 +124,78 @@ fn evaluate(cells: &[Cell], (p50_limit, p99_limit): (f64, f64)) -> Vec<BudgetLin
             name,
             limit: format!("{limit:.2} ms"),
             measured: "no measurement".into(),
-            verdict: Verdict::NotChecked("the 50 ms cells were not run"),
+            verdict: Verdict::NotChecked(missing),
         },
-    };
+    }
+}
+
+/// The largest of `value` over the cells, with the concurrency it came at.
+fn worst<T>(
+    cells: &[T],
+    value: fn(&T) -> f64,
+    concurrency: fn(&T) -> usize,
+) -> Option<(f64, usize)> {
+    cells
+        .iter()
+        .max_by(|a, b| value(a).total_cmp(&value(b)))
+        .map(|c| (value(c), concurrency(c)))
+}
+
+/// Compares the measurements with the budgets. The worst cell decides the latency budgets.
+fn evaluate(cells: &[Cell], (p50_limit, p99_limit): (f64, f64)) -> Vec<BudgetLine> {
+    let missing = "the 50 ms cells were not run";
     vec![
-        latency(
+        latency_line(
             "gateway-added p50 latency, 50 ms upstream",
             p50_limit,
-            worst(|c| c.added_p50),
+            worst(cells, |c| c.added_p50, |c| c.concurrency),
+            missing,
         ),
-        latency(
+        latency_line(
             "gateway-added p99 latency, 50 ms upstream",
             p99_limit,
-            worst(|c| c.added_p99),
+            worst(cells, |c| c.added_p99, |c| c.concurrency),
+            missing,
+        ),
+    ]
+}
+
+/// What one cell of the streaming table added over the direct stream, in milliseconds.
+struct StreamCell {
+    concurrency: usize,
+    first_p50: f64,
+    first_p99: f64,
+    total_p50: f64,
+    total_p99: f64,
+}
+
+/// The four streaming budgets against the worst cell of each.
+fn evaluate_stream(cells: &[StreamCell], limits: [f64; 4]) -> Vec<BudgetLine> {
+    let missing = "the streaming cells were not run";
+    vec![
+        latency_line(
+            "gateway-added time to the first chunk, p50",
+            limits[0],
+            worst(cells, |c| c.first_p50, |c| c.concurrency),
+            missing,
+        ),
+        latency_line(
+            "gateway-added time to the first chunk, p99",
+            limits[1],
+            worst(cells, |c| c.first_p99, |c| c.concurrency),
+            missing,
+        ),
+        latency_line(
+            "gateway-added time to the whole stream, p50",
+            limits[2],
+            worst(cells, |c| c.total_p50, |c| c.concurrency),
+            missing,
+        ),
+        latency_line(
+            "gateway-added time to the whole stream, p99",
+            limits[3],
+            worst(cells, |c| c.total_p99, |c| c.concurrency),
+            missing,
         ),
     ]
 }
@@ -275,6 +318,83 @@ async fn gateway_overhead() {
     }
 }
 
+/// Streaming overhead: what the gateway adds to the time to the first chunk (what a client sees as the first token)
+/// and to the whole stream, against the same mock streaming 20 chunks 5 ms apart.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "overhead harness; run explicitly with --ignored"]
+async fn gateway_streaming_overhead() {
+    let dir = std::env::temp_dir().join(format!("humpyard-overhead-stream-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let client = reqwest::Client::builder()
+        .pool_max_idle_per_host(256)
+        .build()
+        .unwrap();
+    let per_worker: usize = std::env::var("OVERHEAD_STREAMS_PER_WORKER")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(50);
+    let mock = mock_upstream(Duration::ZERO).await;
+    let gw = gateway(&mock, &dir).await;
+    let (direct_url, gateway_url) = (
+        format!("{mock}/chat/completions"),
+        format!("{gw}/v1/chat/completions"),
+    );
+    run_stream(&client, &direct_url, 8, 80).await;
+    run_stream(&client, &gateway_url, 8, 80).await;
+    let mut cells = Vec::new();
+
+    println!(
+        "\n=== streaming overhead: {STREAM_CHUNKS} chunks, {} ms apart, direct versus through the gateway ===",
+        STREAM_GAP.as_millis()
+    );
+    println!(
+        "{:>5}  {:<8}{:>11}{:>11}{:>12}{:>12}{:>11}   added: first chunk p50 / p99, whole stream p50 / p99 (ms)",
+        "conc", "path", "first p50", "first p99", "total p50", "total p99", "streams/s"
+    );
+    for concurrency in [1usize, 16, 64] {
+        let requests = per_worker * concurrency;
+        let direct = run_stream(&client, &direct_url, concurrency, requests).await;
+        let through = run_stream(&client, &gateway_url, concurrency, requests).await;
+        cells.push(StreamCell {
+            concurrency,
+            first_p50: through.ttfb_p50 - direct.ttfb_p50,
+            first_p99: through.ttfb_p99 - direct.ttfb_p99,
+            total_p50: through.total_p50 - direct.total_p50,
+            total_p99: through.total_p99 - direct.total_p99,
+        });
+        for (path, r) in [("direct", &direct), ("gateway", &through)] {
+            let note = if path == "gateway" {
+                format!(
+                    "   +{:.2} / +{:.2}, +{:.2} / +{:.2}",
+                    through.ttfb_p50 - direct.ttfb_p50,
+                    through.ttfb_p99 - direct.ttfb_p99,
+                    through.total_p50 - direct.total_p50,
+                    through.total_p99 - direct.total_p99
+                )
+            } else {
+                String::new()
+            };
+            println!(
+                "{concurrency:>5}  {path:<8}{:>11.2}{:>11.2}{:>12.2}{:>12.2}{:>11.0}{note}",
+                r.ttfb_p50, r.ttfb_p99, r.total_p50, r.total_p99, r.rps
+            );
+        }
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+
+    let enforced = enforcing(std::env::var("HUMPYARD_BUDGET_ENFORCE").ok().as_deref());
+    let limits = [
+        BUDGET_STREAM_FIRST_P50_MS,
+        BUDGET_STREAM_FIRST_P99_MS,
+        BUDGET_STREAM_TOTAL_P50_MS,
+        BUDGET_STREAM_TOTAL_P99_MS,
+    ];
+    let exceeded = report(&evaluate_stream(&cells, limits), enforced);
+    if enforced {
+        assert!(exceeded.is_empty(), "{}", exceeded.join("\n"));
+    }
+}
+
 fn cell(concurrency: usize, added_p50: f64, added_p99: f64) -> Cell {
     Cell {
         concurrency,
@@ -353,4 +473,65 @@ fn only_the_value_one_enforces() {
     for other in [None, Some(""), Some("0"), Some("true"), Some("yes")] {
         assert!(!enforcing(other), "{other:?}");
     }
+}
+
+fn stream_cell(concurrency: usize, first: (f64, f64), total: (f64, f64)) -> StreamCell {
+    StreamCell {
+        concurrency,
+        first_p50: first.0,
+        first_p99: first.1,
+        total_p50: total.0,
+        total_p99: total.1,
+    }
+}
+
+const STREAM_RECORDED: [f64; 4] = [
+    BUDGET_STREAM_FIRST_P50_MS,
+    BUDGET_STREAM_FIRST_P99_MS,
+    BUDGET_STREAM_TOTAL_P50_MS,
+    BUDGET_STREAM_TOTAL_P99_MS,
+];
+
+#[test]
+fn the_recorded_streaming_runs_meet_every_streaming_budget() {
+    // The worst cells of the three runs of Run 7 in docs/performance.md.
+    let cells = [
+        stream_cell(1, (0.61, 0.75), (1.53, 4.98)),
+        stream_cell(16, (0.86, 1.14), (1.92, 15.46)),
+        stream_cell(64, (1.00, 3.26), (9.82, 12.27)),
+    ];
+    let lines = evaluate_stream(&cells, STREAM_RECORDED);
+    assert_eq!(lines.len(), 4);
+    assert!(
+        lines.iter().all(|l| l.verdict == Verdict::Met),
+        "{:?}",
+        lines.iter().map(|l| &l.verdict).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn an_exceeded_streaming_budget_names_the_budget_the_value_and_the_worst_cell() {
+    let cells = [
+        stream_cell(1, (0.5, 0.7), (1.0, 2.0)),
+        stream_cell(64, (2.4, 3.0), (5.0, 6.0)),
+    ];
+    let lines = evaluate_stream(&cells, STREAM_RECORDED);
+    assert_eq!(lines[0].verdict, Verdict::Exceeded);
+    assert!(lines[1..].iter().all(|l| l.verdict == Verdict::Met));
+    let messages = report(&lines, true);
+    assert_eq!(messages.len(), 1);
+    assert!(
+        messages[0].contains("time to the first chunk, p50"),
+        "{}",
+        messages[0]
+    );
+    assert!(messages[0].contains("2.40 ms"), "{}", messages[0]);
+    assert!(messages[0].contains("concurrency 64"), "{}", messages[0]);
+}
+
+#[test]
+fn streaming_budgets_that_were_not_checked_fail_an_enforced_run() {
+    let lines = evaluate_stream(&[], STREAM_RECORDED);
+    assert_eq!(report(&lines, false), Vec::<String>::new());
+    assert_eq!(report(&lines, true).len(), 4);
 }
