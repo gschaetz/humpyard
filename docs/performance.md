@@ -70,12 +70,12 @@ with the previous release, never with a number written down on another day (Run 
 | Gateway-added latency, p50 (against a direct call, 50 ms upstream, up to 64 concurrent requests) | at most 2 ms | [Run 2](#run-2-gateway-overhead-2026-10-18): +0.41 to +1.22 ms; [Run 3](#run-3-the-current-release-against-095-2026-11-09): +0.21 to +1.73 ms | the overhead harness with `HUMPYARD_BUDGET_ENFORCE=1` on a reference machine, a step of the release | met in both runs |
 | Gateway-added latency, p99 (same cells) | at most 10 ms | Run 2: +0.59 to +5.72 ms; Run 3: +0.41 to +5.14 ms, and one cell of +16.30 ms | the same | met, except one noisy cell in Run 3 (see its limits) |
 | Throughput (64 concurrent requests, instant upstream) | median of current / previous at least 0.90 over three alternating pairs, and neither build's own runs more than 10% apart | [Run 3](#run-3-the-current-release-against-095-2026-11-09) (why it is paired) and [Run 6](#run-6-the-comparison-script-2026-11-10) | `scripts/compare-throughput.sh <previous tag>`, as a step of the release | met in Run 6 against 0.28.0 (median 1.030); inconclusive in Run 3 and in Run 6's comparison of a build with itself (noisy sessions) |
-| Request latency under administrative reads (one-worker gateway, 16 concurrent requests) | loaded p99 at most the unloaded p99 plus the larger of 10% and 1 ms; no ledger entry dropped | [Run 4](#run-4-admin-reads-against-the-request-path-2026-11-09) | the isolation test (it will fail CI once the job is added, which needs the fix first) | **fails today**: 9.67 ms to 34.38 ms |
+| Request latency under administrative reads (one-worker gateway, 16 concurrent requests) | loaded p99 at most the unloaded p99 plus the larger of 10% and 1 ms; no ledger entry dropped | [Run 4](#run-4-admin-reads-against-the-request-path-2026-11-09) (before the fix) and [Run 9](#run-9-the-fix-on-the-host-and-under-a-cpu-limit-2026-11-11) (after) | the isolation test (CI, once the job is added) | **passes on the host**: 8.46 ms unloaded, 6.71 ms loaded (it was 9.67 and 34.38 ms). **Fails under a CPU limit of 1 or less** (Run 9): a known gap |
 | Streaming: gateway-added time to the first chunk (20 chunks 5 ms apart, up to 64 concurrent streams) | p50 at most 2 ms, p99 at most 10 ms | [Run 7](#run-7-streaming-overhead-and-memory-under-load-2026-11-10): the worst of four runs was +1.00 ms and +3.26 ms | the streaming overhead harness with `HUMPYARD_BUDGET_ENFORCE=1`, a step of the release | met |
 | Streaming: gateway-added time to the whole stream (same) | p50 at most 15 ms, p99 at most 30 ms | Run 7: the worst was +9.82 ms and +15.46 ms; the sign flips between runs, so this is a loose bound | the same | met |
 | Resident memory of the gateway process under load (64 concurrent requests, plain and streamed) | peak at most 64 MiB | Run 7: 37.1 to 41.3 MiB (the cluster requests 64 MiB for the container) | the memory harness, enforced at release | met |
 | Memory growth between two identical loads | at most 8 MiB | Run 7: +1.5 to +3.4 MiB | the same | met |
-| Override writes during a large prune | complete within the writer's busy timeout (5 s); request p99 unmoved | [Run 5](#run-5-a-large-prune-against-the-request-path-and-override-writes-2026-11-10) | the write-contention test | passes: the slowest write took 162 ms after the prune was batched ([Run 8](#run-8-the-same-prune-in-batches-2026-11-11)), against 2.4 s before |
+| Override writes during a large prune | complete within 500 ms (the writer's busy timeout, at which a write fails, is 5 s); request p99 unmoved | [Run 5](#run-5-a-large-prune-against-the-request-path-and-override-writes-2026-11-10) | the write-contention test | passes: the slowest write took 162 to 182 ms after the prune was batched ([Run 8](#run-8-the-same-prune-in-batches-2026-11-11), [Run 9](#run-9-the-fix-on-the-host-and-under-a-cpu-limit-2026-11-11)), against 2.4 s before; the test now fails above 500 ms |
 
 Not budgeted yet: **TLS** (every run here is plain HTTP on loopback; a TLS run needs certificates in the harness
 and the number depends on the provider's handshake), **behaviour over a long soak** (Run 7 compares two identical
@@ -387,6 +387,79 @@ writes that complete while the prune is still working: 3 behind one statement an
 Limits: one machine and one ledger size; the writes were made by one client; checkpointing is SQLite's default (the
 smaller write-ahead log is the effect of shorter transactions, not of tuning).
 
+## Run 9: the fix on the host and under a CPU limit (2026-11-11)
+
+Why: task 2.6 of the performance change. With the read pool (2.1), the fold off the runtime (2.2), the gate and shared
+result (2.3) and the batched prune (2.5) in place, the isolation tests are run again, the contention test is tightened,
+and the one thing CI cannot show is checked by hand: what a container CPU limit does.
+
+### On the host
+
+Apple M5 (10 cores), macOS, `--release`, 0.29.0's gateway code with the changes above. `cargo test --release --test
+isolation admin_reads -- --ignored --nocapture` and `... a_large_prune ...`.
+
+| Admin reads, one-worker gateway | unloaded p99 (ms) | loaded p99 (ms) | heavy reads completed | refused |
+|---|---:|---:|---:|---:|
+| round 1 | 8.46 | 7.02 | 118 | 58,890 |
+| round 2 | 8.51 | 6.71 | 296 | 59,409 |
+| round 3 | 8.37 | 6.74 | 311 | 58,964 |
+| round 4 | 8.41 | 6.44 | 303 | 59,340 |
+| round 5 | 11.00 | 6.34 | 313 | 60,277 |
+| **median** | **8.46** | **6.71** | | |
+
+The noise check agreed (8.52 against 8.50 ms) and nothing was dropped: the test **passes**, where Run 4 failed it at 9.67
+against 34.38 ms. The load asks for a different window every time and ignores `Retry-After`, so what it loads is one
+heavy read computing at a time (about 300 a round) and a flood of about 59,000 refusals a round.
+
+| Write contention | request p99, no prune / pruning (ms) | slowest override write (ms) | WAL after (bytes) |
+|---|---|---:|---:|
+| round 1 | 9.94 / 8.55 | 177 | 13,064,552 |
+| round 2 | 10.94 / 8.56 | 182 | 11,371,232 |
+| round 3 | 10.38 / 8.52 | 164 | 12,228,192 |
+
+It passes with the limit now 500 ms. To check that the tightened test can fail, the batch size was set to 10,000,000 (a
+prune back to one statement) for one run: the slowest write took 1,369 to 1,392 ms, the write-ahead log was 102 to 114
+MB, and the test failed naming the 500 ms limit.
+
+### Under a CPU limit
+
+The gateway container in the cluster has a 500m CPU limit, which a thread cannot get around: when a container has used its
+quota for a period, the kernel pauses every thread in it. The test binary was built for Linux (Docker Desktop, 10 CPUs,
+`rust:1.99-bookworm`) and run with `docker run --cpus N`, the same test and seeding (80,000 usage rows, about 53,333
+decisions, past the cap; 2,000 requests per run; three rounds; the gateway on a one-worker runtime):
+
+```sh
+docker run --rm -v "$PWD":/src:ro -v hy-target:/target -e CARGO_TARGET_DIR=/target \
+  -e RUSTUP_TOOLCHAIN=1.99.1-aarch64-unknown-linux-gnu -w /src rust:1.99-bookworm \
+  cargo test --release --test isolation --no-run
+docker run --rm --cpus 0.5 -v hy-target:/target:ro -e ISOLATION_ROWS=80000 -e ISOLATION_REQUESTS=2000 \
+  -e ISOLATION_ROUNDS=3 rust:1.99-bookworm /target/release/deps/isolation-HASH admin_reads --ignored --nocapture
+```
+
+| CPU limit | load | median p99 unloaded (ms) | median p99 loaded (ms) | verdict |
+|---:|---|---:|---:|---|
+| 4 | loops as fast as it can | 11.39 | 6.71 | pass |
+| 2 | loops as fast as it can | 10.59 | 9.92 | pass |
+| 1 | loops as fast as it can | 10.34 | **67.31** | fails |
+| 0.5 | loops as fast as it can | 10.49 | **91.17** | fails |
+| 4 | polite (`ISOLATION_POLITE=1`: waits out `Retry-After`) | 10.78 | 10.83 | pass |
+| 0.5 | polite | 10.71 | **43.82** | fails (rounds of 43.82, 10.35 and 67.95 ms) |
+
+At two CPUs or more the heavy reads do not move the request path; at one or less they do, by tens of milliseconds, even
+when only two to four heavy reads run in a round (the polite load). Moving the work to another thread cannot help once the
+container's quota is spent, because every thread waits.
+
+Limits, which make these figures an overstatement of the cluster's case: the load generator and the mock upstream share the
+container's quota with the gateway (in the cluster only the gateway is limited), and the "as fast as it can" load spends
+quota on tens of thousands of refusals. The polite run is closer to a GUI, and it still fails at 0.5. One machine, three
+rounds, a mock upstream, 16 concurrent requests.
+
+**A known gap, with a cheap mitigation that this change does not make.** The cluster's gateway container asks for 50m and is
+limited to 500m of CPU. Raising the limit (not the request) to two CPUs costs nothing while the gateway is idle (it uses
+about 1m) and gives a heavy read a second core to burst on, which is what the 2-CPU rows show. Short of that, the options
+are the escalation of ADR 0036 (a separate process with its own allowance, reading a local snapshot of the ledger), a
+cheaper fold, or a lower row cap.
+
 ## Open findings
 
 These are recorded here, not fixed, and all are low priority. Each would be its own change with its own spec,
@@ -402,3 +475,6 @@ started on the trigger listed in the [roadmap](roadmap.md#later-and-only-on-a-me
    100 MB). **Resolved:** prunes run in batches of 10,000 rows with a rest between them, on a task of their own
    ([Run 8](#run-8-the-same-prune-in-batches-2026-11-11)): the slowest override write fell to 162 ms and the
    write-ahead log to about 12 MB.
+5. **A CPU limit of one or less lets heavy reads move the request path** (Run 9): p99 rose from about 10 ms to 44 to
+   91 ms at 0.5 CPU and 67 ms at 1 CPU, and not at 2 CPUs. The cluster's gateway container is limited to 500m.
+   Raising its CPU limit to two is the cheap mitigation; the escalation in ADR 0036 is the structural one.
