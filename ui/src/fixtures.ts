@@ -21,7 +21,7 @@ export function group(name: string, over: Partial<StatsGroup> = {}): StatsGroup 
 }
 
 export function stats(...data: StatsGroup[]): Stats {
-  return { object: "stats", group_by: "target", window: {}, truncated: false, data };
+  return { object: "stats", computed_at_ms: 1_700_000_000_000, group_by: "target", window: {}, truncated: false, data };
 }
 
 export function health(...targets: { name: string; states: ("healthy" | "cooling_down" | "probing")[]; latency?: number | null }[]): Health {

@@ -192,7 +192,9 @@ nearest rank, so slow timeouts show in the tail) and, from the usage rows, the `
 known, and how many of them carried `empty_output`, `truncated_output`, `bad_tool_call` and `cut_stream`; divide by
 `observed` for a rate.
 `truncated` is true when the window held more
-than 50,000 decisions and only the newest were summarized. Small samples mislead: look at the counts
+than 50,000 decisions and only the newest were summarized. `computed_at_ms` is when the answer was computed (unix
+milliseconds); the statistics, session views and the switches report are [heavy reads](api.md#heavy-reads), so a
+repeat of the same read within ten seconds is answered from the first and states the same time. Small samples mislead: look at the counts
 before trusting a rate. `POST /v1/route/explain` adds the same recent numbers (last 24 hours: attempts,
 failure rate, p50) to each target it lists.
 

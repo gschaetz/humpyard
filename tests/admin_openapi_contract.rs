@@ -213,6 +213,8 @@ async fn real_decisions_and_statistics_match_the_documented_schemas() {
         "stats",
     );
     assert!(found.is_empty(), "{found:#?}\n{stats}");
+    // The shared result says when it was computed (ADR 0036).
+    assert!(stats["computed_at_ms"].as_i64().unwrap() > 0, "{stats}");
     assert_eq!(
         stats["data"][0]["response_signals"],
         json!({"observed": 2, "empty_output": 0, "truncated_output": 0, "bad_tool_call": 1, "cut_stream": 0})
@@ -288,4 +290,95 @@ async fn the_check_fails_when_a_documented_field_is_missing_from_a_response() {
         found[0].contains("not one of the documented values"),
         "{found:?}"
     );
+}
+
+/// What the document must say about a heavy read (ADR 0036): the time the answer was computed, the busy answer with
+/// its `Retry-After`, and the error code that answer carries.
+fn heavy_read_problems(doc: &Value) -> Vec<String> {
+    let operation = &doc["paths"]["/admin/v1/stats"]["get"];
+    let ok = &operation["responses"]["200"]["content"]["application/json"]["schema"];
+    let mut out = Vec::new();
+    if !ok["required"]
+        .as_array()
+        .is_some_and(|r| r.iter().any(|n| n == "computed_at_ms"))
+    {
+        out.push("200 does not require computed_at_ms".to_string());
+    }
+    if ok["properties"]["computed_at_ms"]["type"] != "integer" {
+        out.push("200 does not describe computed_at_ms as an integer".to_string());
+    }
+    let busy = &operation["responses"]["503"];
+    if busy["headers"]["Retry-After"].is_null() {
+        out.push("503 does not describe Retry-After".to_string());
+    }
+    if busy["content"]["application/json"]["schema"]["$ref"] != "#/components/schemas/Error" {
+        out.push("503 does not return the error shape".to_string());
+    }
+    if !operation["x-error-codes"]
+        .as_array()
+        .is_some_and(|c| c.iter().any(|n| n == "admin_busy"))
+    {
+        out.push("x-error-codes lacks admin_busy".to_string());
+    }
+    out
+}
+
+#[test]
+fn the_document_describes_the_computed_time_and_the_busy_answer() {
+    let doc: Value = serde_json::from_str(DOCUMENT).unwrap();
+    assert_eq!(heavy_read_problems(&doc), Vec::<String>::new());
+}
+
+#[test]
+fn the_check_fails_when_the_heavy_read_fields_are_removed_from_the_document() {
+    let doc: Value = serde_json::from_str(DOCUMENT).unwrap();
+
+    let mut without_field = doc.clone();
+    let ok = &mut without_field["paths"]["/admin/v1/stats"]["get"]["responses"]["200"]["content"]["application/json"]
+        ["schema"];
+    ok["properties"]
+        .as_object_mut()
+        .unwrap()
+        .remove("computed_at_ms");
+    ok["required"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|n| n != "computed_at_ms");
+    assert_eq!(
+        heavy_read_problems(&without_field),
+        [
+            "200 does not require computed_at_ms",
+            "200 does not describe computed_at_ms as an integer"
+        ]
+    );
+
+    let mut without_busy = doc;
+    let operation = &mut without_busy["paths"]["/admin/v1/stats"]["get"];
+    operation["responses"]
+        .as_object_mut()
+        .unwrap()
+        .remove("503");
+    operation["x-error-codes"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|n| n != "admin_busy");
+    let problems = heavy_read_problems(&without_busy);
+    assert_eq!(problems.len(), 3, "{problems:?}");
+    assert!(problems.iter().any(|p| p.contains("Retry-After")));
+    assert!(problems.iter().any(|p| p.contains("admin_busy")));
+}
+
+#[tokio::test]
+async fn the_check_fails_when_the_computed_time_is_missing_from_a_response() {
+    let doc: Value = serde_json::from_str(DOCUMENT).unwrap();
+    let (rig, _dir) = rig().await;
+    let mut stats = rig.get("/admin/v1/stats?group_by=target").await;
+    stats.as_object_mut().unwrap().remove("computed_at_ms");
+    let found = violations(
+        &doc,
+        &response_schema(&doc, "/admin/v1/stats"),
+        &stats,
+        "stats",
+    );
+    assert_eq!(found, ["stats.computed_at_ms: missing"]);
 }

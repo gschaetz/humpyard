@@ -161,7 +161,7 @@ would let read the configuration file. Each request logs the admin id and the ou
 | `GET /admin/v1/health` | what `GET /v1/health` returns: skipped endpoints, latency, the loaded configuration, the last reload |
 | `GET /admin/v1/quota` | what `GET /v1/quota` returns |
 | `GET /admin/v1/decisions` | the decision log of **every key**, newest first, each failed attempt with the provider's `message`; `?key=alice` narrows it to one key, and the usual filters (`limit`, `route`, `outcome`, `since_ms`, ...) apply |
-| `GET /admin/v1/stats` | the [statistics](budgets.md#statistics) of **every key**; `?key=alice` narrows them, and `group_by` and `window` work as on `/v1/stats` |
+| `GET /admin/v1/stats` | the [statistics](budgets.md#statistics) of **every key**; `?key=alice` narrows them, and `group_by` and `window` work as on `/v1/stats`; a [heavy read](#heavy-reads) |
 | `GET /admin/v1/credentials` | every admin credential: `id`, `kind`, `scopes`, `expires`, and `revoked` while a revocation is in force |
 
 The client endpoints keep their rule that a key sees only its own decisions and statistics, and do not accept
@@ -170,6 +170,32 @@ The client endpoints keep their rule that a key sees only its own decisions and 
 ```
 curl -H "Authorization: Bearer $ADMIN_SECRET" "https://gateway.example/admin/v1/decisions?key=alice&limit=20"
 ```
+
+### Heavy reads
+
+Statistics (`GET /v1/stats`, including `group_by=session`, and `GET /admin/v1/stats`) and the switches report
+(`GET /v1/stats/switches`) fold up to 50,000 ledger rows, so they are rationed to keep them from ever slowing the
+requests the gateway serves ([ADR 0036](adr/0036-admin-and-ui-work-must-not-change-the-request-paths-performance.md)):
+
+- **One at a time per surface.** The administrative surface (`/admin/v1`) and the client surface (`/v1`) each
+  allow one heavy read at once; a second is answered `503` with `Retry-After: 5` and never queued. The error code is
+  `admin_busy` on the admin surface and `stats_busy` on the client surface, and the same answer is given when the
+  ledger could not be read in time. A client key reading its own statistics in a loop cannot make the operator's GUI
+  answer busy, because the surfaces have gates of their own.
+- **Identical reads share a result.** While a read is running, an identical one (same surface, same caller, same
+  endpoint and parameters, in any order) waits for it instead of starting another. For ten seconds after, it is
+  answered from that result. A caller never receives another caller's result: a client key's own id, or the admin `key`
+  filter, is part of what makes two reads identical. Only a successful answer within 2 MiB is kept, at most 16 at
+  once; an error or a `503` is never kept.
+- **How old a number is.** Each of these answers carries `computed_at_ms`, the unix time in milliseconds when it was
+  computed. A repeat within the ten seconds states the same time, so a number read from the shared result says
+  how old it is; the figures reflect the ledger as of that time.
+- **Before the gate.** Authentication and the scope check come first, so a credential without `read` is answered
+  `403 admin_scope_required` and cannot occupy the gate or read a result a permitted caller made. Other admin
+  reads (`/admin/v1/whoami`, `health`, `config`, overrides and the rest) are not heavy reads and are never held up by one.
+
+A client that sees a `503` here should wait at least the `Retry-After` seconds before asking again (a tool that
+polls should not shorten that), and can ask for the same read again afterwards.
 
 ### The contract
 

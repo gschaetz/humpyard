@@ -86,7 +86,7 @@ pub(super) const ROUTES: &[Route] = &[
         method: "GET",
         path: "/admin/v1/stats",
         scope: Some(AdminScope::Read),
-        codes: &[],
+        codes: &["admin_busy"],
         register: |m| m.get(stats),
     },
     Route {
