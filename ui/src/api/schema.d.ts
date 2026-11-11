@@ -133,7 +133,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Statistics of every key */
+        /**
+         * Statistics of every key
+         * @description A heavy read: it folds up to 50,000 ledger rows, so at most one heavy read runs at a time on the admin surface and another is answered 503 `admin_busy` with `Retry-After`, never queued. Identical reads (same `key`, `group_by`, `window` and filters) share one result for ten seconds; `computed_at_ms` says when it was computed.
+         */
         get: operations["stats"];
         put?: never;
         post?: never;
@@ -791,6 +794,8 @@ export interface operations {
                     "application/json": {
                         /** @enum {string} */
                         object: "stats";
+                        /** @description When the answer was computed, in unix milliseconds. A repeat of the same read within ten seconds states the same time. */
+                        computed_at_ms: number;
                         group_by: string;
                         window: Record<string, never>;
                         truncated: boolean;
@@ -820,6 +825,17 @@ export interface operations {
             /** @description A valid credential without the scope the operation needs; `error.scope` names it. */
             403: {
                 headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Another heavy read is running on the admin surface (`admin_busy`), or the ledger could not be read in time. Nothing was queued; retry after the `Retry-After` seconds. */
+            503: {
+                headers: {
+                    /** @description Seconds to wait before asking again. */
+                    "Retry-After"?: number;
                     [name: string]: unknown;
                 };
                 content: {
