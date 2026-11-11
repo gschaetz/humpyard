@@ -170,6 +170,25 @@ async fn off_runtime<T: Send + 'static>(
         .map_err(|error| LedgerError::Cancelled(error.to_string()))
 }
 
+/// What a prune did: the rows it deleted and the statements it took to do it (a test can tell a prune in batches
+/// from one statement without a clock).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Pruned {
+    pub rows: u64,
+    pub statements: u64,
+}
+
+impl std::ops::Add for Pruned {
+    type Output = Self;
+
+    fn add(self, other: Self) -> Self {
+        Self {
+            rows: self.rows + other.rows,
+            statements: self.statements + other.statements,
+        }
+    }
+}
+
 /// How a prune is cut up: statements of at most `size` rows, with `pause` between them.
 #[derive(Clone, Copy)]
 struct Batching {
@@ -194,12 +213,12 @@ async fn delete_in_batches(
     condition: &'static str,
     cutoff: i64,
     batching: Batching,
-) -> Result<u64, sqlx::Error> {
+) -> Result<Pruned, sqlx::Error> {
     let sql = format!(
         "DELETE FROM {table} WHERE id IN (SELECT id FROM {table} WHERE {condition} LIMIT ?2)"
     );
     let limit = i64::try_from(batching.size).unwrap_or(i64::MAX);
-    let mut total = 0;
+    let mut done = Pruned::default();
     loop {
         let deleted = sqlx::query(sqlx::AssertSqlSafe(sql.clone()))
             .bind(cutoff)
@@ -207,9 +226,10 @@ async fn delete_in_batches(
             .execute(pool)
             .await?
             .rows_affected();
-        total += deleted;
+        done.rows += deleted;
+        done.statements += 1;
         if deleted < batching.size {
-            return Ok(total);
+            return Ok(done);
         }
         tokio::time::sleep(batching.pause).await;
     }
@@ -532,8 +552,13 @@ impl Ledger {
     /// Prunes what is older than `retention_days` now, in statements of at most `batch` rows with `pause` between
     /// them. The writer does this itself, once an hour; this lets a test do it at a chosen moment and size.
     #[doc(hidden)]
-    pub async fn prune_expired(&self, retention_days: u64, batch: u64, pause: std::time::Duration) {
-        prune_decisions(&self.pool, retention_days, Batching { size: batch, pause }).await;
+    pub async fn prune_expired(
+        &self,
+        retention_days: u64,
+        batch: u64,
+        pause: std::time::Duration,
+    ) -> Pruned {
+        prune_decisions(&self.pool, retention_days, Batching { size: batch, pause }).await
     }
 
     /// The read pool, for tests that hold its connections or check that it refuses writes.
@@ -585,30 +610,33 @@ async fn write_quota(pool: &SqlitePool, failed: &AtomicU64, batch: &[QuotaSample
     }
 }
 
-async fn prune_decisions(pool: &SqlitePool, retention_days: u64, batching: Batching) {
+async fn prune_decisions(pool: &SqlitePool, retention_days: u64, batching: Batching) -> Pruned {
     let now_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .ok()
         .and_then(|d| i64::try_from(d.as_millis()).ok())
         .unwrap_or(0);
     let window_ms = i64::try_from(retention_days.saturating_mul(86_400_000)).unwrap_or(i64::MAX);
-    match decisions::prune(pool, now_ms.saturating_sub(window_ms), batching).await {
-        Ok(0) => {}
-        Ok(removed) => tracing::info!(removed, "pruned decisions past their retention"),
-        Err(error) => tracing::warn!(%error, "could not prune decisions"),
-    }
+    let cutoff = now_ms.saturating_sub(window_ms);
+    let mut total = Pruned::default();
+    let mut count = |what: &str, result: Result<Pruned, sqlx::Error>| match result {
+        Ok(done) => {
+            if done.rows > 0 {
+                tracing::info!(removed = done.rows, "pruned {what} past their retention");
+            }
+            total = total + done;
+        }
+        Err(error) => tracing::warn!(%error, "could not prune {what}"),
+    };
+    count("decisions", decisions::prune(pool, cutoff, batching).await);
     // Override history follows the decision retention; an override in force is never pruned.
-    match overrides::prune(pool, now_ms.saturating_sub(window_ms), batching).await {
-        Ok(0) => {}
-        Ok(removed) => tracing::info!(removed, "pruned override history past its retention"),
-        Err(error) => tracing::warn!(%error, "could not prune override history"),
-    }
+    count(
+        "override history",
+        overrides::prune(pool, cutoff, batching).await,
+    );
     // Quota samples follow the decision retention.
-    match quota::prune(pool, now_ms.saturating_sub(window_ms), batching).await {
-        Ok(0) => {}
-        Ok(removed) => tracing::info!(removed, "pruned quota samples past their retention"),
-        Err(error) => tracing::warn!(%error, "could not prune quota samples"),
-    }
+    count("quota samples", quota::prune(pool, cutoff, batching).await);
+    total
 }
 
 async fn migrate(pool: &SqlitePool) -> Result<(), sqlx::Error> {

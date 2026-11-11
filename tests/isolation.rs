@@ -10,6 +10,9 @@
 //! measured with and without two clients reading statistics and session views back to back, in alternating rounds
 //! so that drift in the machine reaches both halves, and the verdict is on the median p99 of the rounds.
 //!
+//! `ISOLATION_POLITE=1` makes the load clients honor `Retry-After` (they wait out a 503) and pause a second after an
+//! answer, as a well-behaved GUI would, instead of looping as fast as they can; the recorded verdict is the default.
+//!
 //! `ISOLATION_WORKERS` (default 1) changes the gateway's worker count, to see how much of a result depends on it;
 //! the recorded verdict is always the default.
 //!
@@ -202,6 +205,7 @@ fn session_query(n: u64) -> String {
 }
 
 fn start_load(client: &reqwest::Client, base: &str, key: &str) -> Load {
+    let polite = std::env::var("ISOLATION_POLITE").is_ok_and(|v| v == "1");
     let load = Load {
         stop: Arc::new(AtomicBool::new(false)),
         ok: Arc::new(AtomicU64::new(0)),
@@ -236,6 +240,10 @@ fn start_load(client: &reqwest::Client, base: &str, key: &str) -> Load {
                             503 => refused.fetch_add(1, Ordering::Relaxed),
                             _ => failed.fetch_add(1, Ordering::Relaxed),
                         };
+                        if polite {
+                            let wait = if status == 503 { 5 } else { 1 };
+                            tokio::time::sleep(Duration::from_secs(wait)).await;
+                        }
                     }
                     Err(_) => {
                         failed.fetch_add(1, Ordering::Relaxed);
@@ -473,11 +481,17 @@ async fn admin_reads_do_not_move_the_request_path() {
 
 // ---- Write contention: a large prune and an override write under load -------------------------------------------
 
-/// How long a write may wait for the lock: the ledger writer pool's busy timeout, read from the ledger so the two
-/// cannot drift apart.
+/// The ledger writer pool's busy timeout, read from the ledger so the two cannot drift apart: a write that waits this
+/// long for the lock fails.
 fn writer_busy_timeout_ms() -> f64 {
     humpyard::ledger::WRITER_BUSY_TIMEOUT.as_secs_f64() * 1000.0
 }
+
+/// The longest an override write may wait while a prune works through its backlog. Batches of 10,000 rows keep the
+/// wait to about 160 ms (`docs/performance.md`, Run 8); one statement over the same backlog took 1.8 to 2.4 s, so
+/// this fails if the prune goes back to holding the lock for its whole backlog, which the busy timeout alone (5 s)
+/// would let pass.
+const OVERRIDE_WRITE_LIMIT_MS: f64 = 500.0;
 /// The decision retention of the pruning half; the other half keeps everything (retention 0), so the two halves
 /// differ in nothing but the prune.
 const RETENTION_DAYS: u64 = 7;
@@ -680,9 +694,10 @@ fn contention_failures(f: &ContentionFindings) -> Vec<String> {
     if f.override_failures > 0 {
         out.push(format!("{} override writes failed", f.override_failures));
     }
-    if f.slowest_override_ms > writer_busy_timeout_ms() {
+    if f.slowest_override_ms > OVERRIDE_WRITE_LIMIT_MS {
         out.push(format!(
-            "an override write took {:.0} ms, longer than the writer's busy timeout of {:.0} ms",
+            "an override write waited {:.0} ms behind the prune, longer than the {OVERRIDE_WRITE_LIMIT_MS:.0} ms it may \
+             (the writer's busy timeout, at which it fails, is {:.0} ms)",
             f.slowest_override_ms,
             writer_busy_timeout_ms()
         ));
@@ -922,8 +937,29 @@ fn each_way_a_prune_can_hurt_is_reported_on_its_own() {
         ..calm()
     });
     assert!(
-        stuck.len() == 1 && stuck[0].contains("busy timeout"),
+        stuck.len() == 1 && stuck[0].contains("6000 ms") && stuck[0].contains("busy timeout"),
         "{stuck:?}"
+    );
+}
+
+#[test]
+fn a_prune_that_holds_the_lock_for_its_whole_backlog_fails_even_inside_the_busy_timeout() {
+    // The wait seen before batching (Run 5): under the 5 s timeout, over the limit.
+    let before_batching = contention_failures(&ContentionFindings {
+        slowest_override_ms: 2_410.0,
+        ..calm()
+    });
+    assert!(
+        before_batching.len() == 1 && before_batching[0].contains("2410 ms"),
+        "{before_batching:?}"
+    );
+    // The wait after batching (Run 8) passes.
+    assert_eq!(
+        contention_failures(&ContentionFindings {
+            slowest_override_ms: 162.0,
+            ..calm()
+        }),
+        Vec::<String>::new()
     );
 }
 
