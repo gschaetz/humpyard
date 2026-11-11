@@ -358,12 +358,12 @@ pub(super) async fn insert_batch(pool: &SqlitePool, batch: &[Decision]) -> Resul
 }
 
 /// Deletes decisions older than `cutoff_ms`.
-pub(super) async fn prune(pool: &SqlitePool, cutoff_ms: i64) -> Result<u64, sqlx::Error> {
-    Ok(sqlx::query("DELETE FROM decisions WHERE ts_ms < ?1")
-        .bind(cutoff_ms)
-        .execute(pool)
-        .await?
-        .rows_affected())
+pub(super) async fn prune(
+    pool: &SqlitePool,
+    cutoff_ms: i64,
+    batching: super::Batching,
+) -> Result<u64, sqlx::Error> {
+    super::delete_in_batches(pool, "decisions", "ts_ms < ?1", cutoff_ms, batching).await
 }
 
 pub(super) async fn query(

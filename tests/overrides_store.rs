@@ -268,14 +268,17 @@ async fn history_is_pruned_but_an_override_in_force_never_is() {
         .await
         .unwrap();
 
-    // The writer prunes on its first pass; a flush makes it take one.
+    // The writer starts a prune after its first pass (a flush makes it take one), on a task of its own, so wait
+    // for the old override's history to go.
     ledger.flush().await;
-    ledger.flush().await;
-
-    assert!(
-        ledger.override_db().audit(old).await.unwrap().is_empty(),
-        "an ended override's history is pruned"
-    );
+    let started = std::time::Instant::now();
+    while !ledger.override_db().audit(old).await.unwrap().is_empty() {
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(5),
+            "an ended override's history is pruned"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
     assert_eq!(ledger.override_db().audit(live).await.unwrap().len(), 1);
     let active = ledger.override_db().active(real_now).await.unwrap();
     assert_eq!(active.iter().map(|o| o.id).collect::<Vec<_>>(), [live]);

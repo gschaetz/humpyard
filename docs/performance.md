@@ -38,9 +38,13 @@ use the defaults.
 | `decisions` | one row per request: routing, attempts, outcome (read by `/v1/stats`, `explain`, the decision log) | Yes | `decision_retention_days` (default 90, 0 keeps everything) |
 | `quota_samples` | provider quota readings | Yes, with the decisions | `decision_retention_days` |
 
-The pruning runs inside the ledger's writer, so while it deletes, queued writes wait. At steady state each
-prune removes about a day of rows and is short; the first prune after a long gap, or after lowering the setting,
-removes many at once (see the run below).
+The ledger starts a prune after the first batch its writer handles after a start, and then hourly, on a task of
+its own, so the writer keeps taking messages while it works. A prune deletes in statements of at most 10,000 rows
+(each its own transaction) and rests 20 ms between them, so the database's write lock is never held for long and a
+writer waiting for it gets in between statements. At steady state each prune removes about a day of rows; the first
+prune after a long gap, or after lowering the setting, removes many, in as many batches as it takes (Run 5 shows what
+one statement cost, Run 8 what batches cost). A prune cut short, by the gateway stopping, leaves the rest for the next
+one.
 
 ## The ledger's connections
 
@@ -71,7 +75,7 @@ with the previous release, never with a number written down on another day (Run 
 | Streaming: gateway-added time to the whole stream (same) | p50 at most 15 ms, p99 at most 30 ms | Run 7: the worst was +9.82 ms and +15.46 ms; the sign flips between runs, so this is a loose bound | the same | met |
 | Resident memory of the gateway process under load (64 concurrent requests, plain and streamed) | peak at most 64 MiB | Run 7: 37.1 to 41.3 MiB (the cluster requests 64 MiB for the container) | the memory harness, enforced at release | met |
 | Memory growth between two identical loads | at most 8 MiB | Run 7: +1.5 to +3.4 MiB | the same | met |
-| Override writes during a large prune | complete within the writer's busy timeout (5 s); request p99 unmoved | [Run 5](#run-5-a-large-prune-against-the-request-path-and-override-writes-2026-11-10) | the write-contention test | passes, but the slowest write took 2.4 s |
+| Override writes during a large prune | complete within the writer's busy timeout (5 s); request p99 unmoved | [Run 5](#run-5-a-large-prune-against-the-request-path-and-override-writes-2026-11-10) | the write-contention test | passes: the slowest write took 162 ms after the prune was batched ([Run 8](#run-8-the-same-prune-in-batches-2026-11-11)), against 2.4 s before |
 
 Not budgeted yet: **TLS** (every run here is plain HTTP on loopback; a TLS run needs certificates in the harness
 and the number depends on the provider's handshake), **behaviour over a long soak** (Run 7 compares two identical
@@ -261,7 +265,7 @@ target no route uses. Three rounds.
 The test passes: request p99 is unmoved by the prune, nothing was dropped and every override write succeeded
 inside the writer's 5 s busy timeout. **But an override write waited 1.8 to 2.4 seconds** behind the single long
 delete (against 5 to 20 ms with nothing to prune), so a ledger about twice as large would reach the timeout and
-fail the write, and the write-ahead log grew to about 100 MB. Prunes in short batches are the planned fix.
+fail the write, and the write-ahead log grew to about 100 MB. Prunes in short batches were the fix (Run 8).
 
 Limits: one machine and one ledger size; the writes were made by one client; checkpointing is SQLite's default and
 was not tuned.
@@ -357,6 +361,32 @@ providers send chunks of uneven size and timing, and long answers have far more 
 only the gateway process, with a small ledger (it grows by the run's own rows), and run for seconds: whether
 memory stops growing over hours is the soak, which is not measured.
 
+## Run 8: the same prune, in batches (2026-11-11)
+
+Why: task 2.5 of the performance change cut the decision, override and quota prunes into statements of at most 10,000
+rows, with a 20 ms rest between them, run on a task of their own instead of inside the writer. Same machine, toolchain,
+test and settings as Run 5 (450,000 usage rows and 300,000 expired decisions, three rounds, a fresh one-worker gateway
+per half), after the change: `cargo test --release --test isolation a_large_prune -- --ignored --nocapture`.
+
+| Round | p99, no prune (ms) | p99, pruning (ms) | slowest override write, pruning (ms) | slowest, no prune (ms) | WAL after (bytes) |
+|---:|---:|---:|---:|---:|---:|
+| 1 | 9.04 | 7.87 | 161 | 6 | 11,865,632 |
+| 2 | 9.19 | 7.85 | 152 | 11 | 12,051,032 |
+| 3 | 9.20 | 7.82 | 162 | 5 | 12,430,072 |
+| **median / max** | **9.19** | **7.85** | **162** | | |
+
+Against Run 5 the slowest override write fell from 1,802 to 2,410 ms to 152 to 162 ms (about fifteen times shorter)
+and the write-ahead log from about 100 MB to about 12 MB, with request p99 unmoved as before (9.19 ms against 7.85
+ms), no entry dropped and every override write successful. The 150 ms that remains is what a write waits for the
+lock between statements: one batch of 10,000 rows plus the busy handler's polling. The test passes at either wait, so
+it cannot catch a regression of the lock time; task 2.6 tightens it.
+
+A test of the batching itself (`tests/ledger_prune.rs`, 60,000 expired rows, batches of 2,000) counts the override
+writes that complete while the prune is still working: 3 behind one statement and 58 behind batches.
+
+Limits: one machine and one ledger size; the writes were made by one client; checkpointing is SQLite's default (the
+smaller write-ahead log is the effect of shorter transactions, not of tuning).
+
 ## Open findings
 
 These are recorded here, not fixed, and all are low priority. Each would be its own change with its own spec,
@@ -367,6 +397,8 @@ started on the trigger listed in the [roadmap](roadmap.md#later-and-only-on-a-me
 2. **`spend_since` cannot use an index on the timestamp.** An index on the timestamp, or a different query shape,
    would make restarts fast on very large ledgers.
 3. **The request-id lookup scans.** Rewriting the optional filters so SQLite can use the `request_id` index fixes it.
-4. **A prune after a long gap blocks writes** for as long as it runs (1.3 s for 511,112 rows here). In Run 5 an
+4. ~~A prune after a long gap blocks writes~~ for as long as it runs (1.3 s for 511,112 rows in Run 1; in Run 5 an
    override write waited 1.8 to 2.4 s behind a prune of 300,000 decisions and the write-ahead log reached about
-   100 MB; the planned fix is to prune in short batches.
+   100 MB). **Resolved:** prunes run in batches of 10,000 rows with a rest between them, on a task of their own
+   ([Run 8](#run-8-the-same-prune-in-batches-2026-11-11)): the slowest override write fell to 162 ms and the
+   write-ahead log to about 12 MB.

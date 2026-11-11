@@ -45,6 +45,14 @@ pub const DEFAULT_CAPACITY: usize = 10_000;
 pub const WRITER_BUSY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 /// How long a write waits for a connection from the writer's pool.
 pub const WRITER_ACQUIRE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+/// The most rows one prune statement deletes. A single `DELETE` of a large backlog holds the database's write lock
+/// until it is done (1.3 s for 511,112 rows, `docs/performance.md`), and an override written meanwhile waits for it;
+/// batches keep each hold short.
+pub const PRUNE_BATCH: u64 = 10_000;
+/// How long the pruning task rests between batches, so a writer waiting for the lock can take it: SQLite's busy
+/// handler polls, and without a rest the next batch would take the lock back before a waiter looked.
+pub const PRUNE_PAUSE: std::time::Duration = std::time::Duration::from_millis(20);
+
 /// Reads fail fast: a read that cannot get the lock or a connection in this time gives up, so a caller can answer
 /// "busy" instead of holding a request, and a gate permit, for the library defaults of five and thirty seconds.
 pub const READ_BUSY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(1);
@@ -162,6 +170,51 @@ async fn off_runtime<T: Send + 'static>(
         .map_err(|error| LedgerError::Cancelled(error.to_string()))
 }
 
+/// How a prune is cut up: statements of at most `size` rows, with `pause` between them.
+#[derive(Clone, Copy)]
+struct Batching {
+    size: u64,
+    pause: std::time::Duration,
+}
+
+impl Batching {
+    const DEFAULT: Self = Self {
+        size: PRUNE_BATCH,
+        pause: PRUNE_PAUSE,
+    };
+}
+
+/// Deletes the rows of `table` that `condition` selects (it binds the cutoff as `?1`), at most `batching.size` per
+/// statement, resting between statements, until a statement deletes fewer than that. Each statement is its own
+/// transaction, so a prune cut short (the gateway stopping) leaves the rest for the next one, and no row the
+/// condition does not select is ever touched. `table` and `condition` are constants of the ledger, never input.
+async fn delete_in_batches(
+    pool: &SqlitePool,
+    table: &'static str,
+    condition: &'static str,
+    cutoff: i64,
+    batching: Batching,
+) -> Result<u64, sqlx::Error> {
+    let sql = format!(
+        "DELETE FROM {table} WHERE id IN (SELECT id FROM {table} WHERE {condition} LIMIT ?2)"
+    );
+    let limit = i64::try_from(batching.size).unwrap_or(i64::MAX);
+    let mut total = 0;
+    loop {
+        let deleted = sqlx::query(sqlx::AssertSqlSafe(sql.clone()))
+            .bind(cutoff)
+            .bind(limit)
+            .execute(pool)
+            .await?
+            .rows_affected();
+        total += deleted;
+        if deleted < batching.size {
+            return Ok(total);
+        }
+        tokio::time::sleep(batching.pause).await;
+    }
+}
+
 /// What the writer task receives: entries, and markers that ask it to catch up.
 enum Message {
     Entry(Box<Entry>),
@@ -247,6 +300,7 @@ impl Ledger {
         let writer = tokio::spawn(async move {
             let mut messages = Vec::with_capacity(BATCH);
             let mut last_prune: Option<std::time::Instant> = None;
+            let mut pruning: Option<JoinHandle<()>> = None;
             while rx.recv_many(&mut messages, BATCH).await > 0 {
                 let mut entries = Vec::with_capacity(messages.len());
                 let mut decided = Vec::new();
@@ -270,10 +324,21 @@ impl Ledger {
                 write(&writer_pool, &writer_failed, &entries).await;
                 write_decisions(&writer_pool, &writer_failed, &decided).await;
                 write_quota(&writer_pool, &writer_failed, &quota_rows).await;
-                if retention_days > 0 && last_prune.is_none_or(|t| t.elapsed() >= PRUNE_EVERY) {
+                let due = last_prune.is_none_or(|t| t.elapsed() >= PRUNE_EVERY);
+                if retention_days > 0 && due && pruning.as_ref().is_none_or(JoinHandle::is_finished)
+                {
                     last_prune = Some(std::time::Instant::now());
-                    prune_decisions(&writer_pool, retention_days).await;
+                    // On a task of its own: the writer keeps taking messages while the prune works through its
+                    // batches, so a long prune cannot fill the queue and drop entries.
+                    let pool = writer_pool.clone();
+                    pruning = Some(tokio::spawn(async move {
+                        prune_decisions(&pool, retention_days, Batching::DEFAULT).await;
+                    }));
                 }
+            }
+            // A prune cut short here resumes at the next one: each batch is its own transaction.
+            if let Some(pruning) = pruning {
+                pruning.abort();
             }
         });
         Ok(Self {
@@ -464,6 +529,13 @@ impl Ledger {
         &self.pool
     }
 
+    /// Prunes what is older than `retention_days` now, in statements of at most `batch` rows with `pause` between
+    /// them. The writer does this itself, once an hour; this lets a test do it at a chosen moment and size.
+    #[doc(hidden)]
+    pub async fn prune_expired(&self, retention_days: u64, batch: u64, pause: std::time::Duration) {
+        prune_decisions(&self.pool, retention_days, Batching { size: batch, pause }).await;
+    }
+
     /// The read pool, for tests that hold its connections or check that it refuses writes.
     #[doc(hidden)]
     pub fn read_pool(&self) -> &SqlitePool {
@@ -513,26 +585,26 @@ async fn write_quota(pool: &SqlitePool, failed: &AtomicU64, batch: &[QuotaSample
     }
 }
 
-async fn prune_decisions(pool: &SqlitePool, retention_days: u64) {
+async fn prune_decisions(pool: &SqlitePool, retention_days: u64, batching: Batching) {
     let now_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .ok()
         .and_then(|d| i64::try_from(d.as_millis()).ok())
         .unwrap_or(0);
     let window_ms = i64::try_from(retention_days.saturating_mul(86_400_000)).unwrap_or(i64::MAX);
-    match decisions::prune(pool, now_ms.saturating_sub(window_ms)).await {
+    match decisions::prune(pool, now_ms.saturating_sub(window_ms), batching).await {
         Ok(0) => {}
         Ok(removed) => tracing::info!(removed, "pruned decisions past their retention"),
         Err(error) => tracing::warn!(%error, "could not prune decisions"),
     }
     // Override history follows the decision retention; an override in force is never pruned.
-    match overrides::prune(pool, now_ms.saturating_sub(window_ms)).await {
+    match overrides::prune(pool, now_ms.saturating_sub(window_ms), batching).await {
         Ok(0) => {}
         Ok(removed) => tracing::info!(removed, "pruned override history past its retention"),
         Err(error) => tracing::warn!(%error, "could not prune override history"),
     }
     // Quota samples follow the decision retention.
-    match quota::prune(pool, now_ms.saturating_sub(window_ms)).await {
+    match quota::prune(pool, now_ms.saturating_sub(window_ms), batching).await {
         Ok(0) => {}
         Ok(removed) => tracing::info!(removed, "pruned quota samples past their retention"),
         Err(error) => tracing::warn!(%error, "could not prune quota samples"),
