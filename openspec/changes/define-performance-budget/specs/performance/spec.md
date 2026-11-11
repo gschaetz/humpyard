@@ -109,6 +109,21 @@ CI SHALL select the registered checks a pull request triggers from the files it 
 - **WHEN** a heavy job is skipped because nothing selected it
 - **THEN** the required gate still reports a result, so the pull request is not left waiting
 
+### Requirement: A failed weekly run is reported as an issue
+When the weekly run of the registered checks fails, CI SHALL open an issue labelled `performance-regression` that names the failed checks and the run, or add a comment to the open one, SHALL NOT close it, and SHALL NOT open issues for pull-request runs or manual dispatches.
+
+#### Scenario: The first failure
+- **WHEN** the weekly run fails and no `performance-regression` issue is open
+- **THEN** an issue is opened that names each failed check and links the run
+
+#### Scenario: A failure while one is open
+- **WHEN** the weekly run fails again and a `performance-regression` issue is still open
+- **THEN** a comment with the new failures is added and no second issue is opened
+
+#### Scenario: A pull request or a dispatch
+- **WHEN** a check fails in a pull-request run or a manual dispatch
+- **THEN** that run shows the failure and no issue is opened
+
 ### Requirement: A change to the request path or a shared resource carries a measurement
 A change that adds work to the request path, or uses the serving runtime, the ledger pool, the writer's queue or the process's CPU allowance, SHALL include a performance task that records a before and after measurement or passes the isolation test, and `openspec/config.yaml` SHALL require this of every such change's tasks.
 
