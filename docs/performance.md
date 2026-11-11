@@ -13,6 +13,11 @@ cargo test --release --test overhead -- --ignored --nocapture
 # ... and fail on an exceeded latency budget (the release check; see Budgets)
 HUMPYARD_BUDGET_ENFORCE=1 cargo test --release --test overhead -- --ignored --nocapture
 
+# Streaming overhead (the same test file; it runs with the one above unless filtered), and the gateway's memory
+# under load (runs the real binary as a child process and samples its resident set)
+cargo test --release --test overhead gateway_streaming -- --ignored --nocapture
+cargo test --release --test memory -- --ignored --nocapture
+
 # Throughput: the current build against the previous release's, in alternating runs (builds that release in a scratch
 # directory; add HUMPYARD_BUDGET_ENFORCE=1 to fail on a regression or an inconclusive comparison)
 scripts/compare-throughput.sh v0.28.0
@@ -51,12 +56,17 @@ with the previous release, never with a number written down on another day (Run 
 | Gateway-added latency, p99 (same cells) | at most 10 ms | Run 2: +0.59 to +5.72 ms; Run 3: +0.41 to +5.14 ms, and one cell of +16.30 ms | the same | met, except one noisy cell in Run 3 (see its limits) |
 | Throughput (64 concurrent requests, instant upstream) | median of current / previous at least 0.90 over three alternating pairs, and neither build's own runs more than 10% apart | [Run 3](#run-3-the-current-release-against-095-2026-11-09) (why it is paired) and [Run 6](#run-6-the-comparison-script-2026-11-10) | `scripts/compare-throughput.sh <previous tag>`, as a step of the release | met in Run 6 against 0.28.0 (median 1.030); inconclusive in Run 3 and in Run 6's comparison of a build with itself (noisy sessions) |
 | Request latency under administrative reads (one-worker gateway, 16 concurrent requests) | loaded p99 at most the unloaded p99 plus the larger of 10% and 1 ms; no ledger entry dropped | [Run 4](#run-4-admin-reads-against-the-request-path-2026-11-09) | the isolation test (it will fail CI once the job is added, which needs the fix first) | **fails today**: 9.67 ms to 34.38 ms |
+| Streaming: gateway-added time to the first chunk (20 chunks 5 ms apart, up to 64 concurrent streams) | p50 at most 2 ms, p99 at most 10 ms | [Run 7](#run-7-streaming-overhead-and-memory-under-load-2026-11-10): the worst of four runs was +1.00 ms and +3.26 ms | the streaming overhead harness with `HUMPYARD_BUDGET_ENFORCE=1`, a step of the release | met |
+| Streaming: gateway-added time to the whole stream (same) | p50 at most 15 ms, p99 at most 30 ms | Run 7: the worst was +9.82 ms and +15.46 ms; the sign flips between runs, so this is a loose bound | the same | met |
+| Resident memory of the gateway process under load (64 concurrent requests, plain and streamed) | peak at most 64 MiB | Run 7: 37.1 to 41.3 MiB (the cluster requests 64 MiB for the container) | the memory harness, enforced at release | met |
+| Memory growth between two identical loads | at most 8 MiB | Run 7: +1.5 to +3.4 MiB | the same | met |
 | Override writes during a large prune | complete within the writer's busy timeout (5 s); request p99 unmoved | [Run 5](#run-5-a-large-prune-against-the-request-path-and-override-writes-2026-11-10) | the write-contention test | passes, but the slowest write took 2.4 s |
 
-Not budgeted yet, because they have not been measured: **memory under load**, **streaming overhead** (both
-planned as the next run), **TLS** (every run here is plain HTTP on loopback), **behaviour over a long soak**, and
-**restart time on a large ledger** (Run 1 measured it, 1.27 s of budget hydration at 1,000,000 rows, but nothing
-states what is acceptable). A budget for each is set from its first measurement.
+Not budgeted yet: **TLS** (every run here is plain HTTP on loopback; a TLS run needs certificates in the harness
+and the number depends on the provider's handshake), **behaviour over a long soak** (Run 7 compares two identical
+loads minutes apart, which says nothing about hours of use; a soak is its own run of hours), and **restart time on
+a large ledger** (Run 1 measured it, 1.27 s of budget hydration at 1,000,000 rows, but nothing states what is
+acceptable and it depends on the deployment). A budget for each is set from its first measurement.
 
 ## Run 1: the ledger at 100,000 and 1,000,000 usage rows (2026-10-18)
 
@@ -277,6 +287,64 @@ and `scripts/compare-throughput.sh v0.28.0`.
 Three pairs each, one machine, a mock upstream, loopback, no TLS. The spread rule (the range of a build's own runs
 within 10% of the largest) is a range statistic, so it grows with the number of runs; whether 10% over three runs
 is the right bar for a laptop is open, and a noisy comparison is better repeated than trusted in either direction.
+
+## Run 7: streaming overhead and memory under load (2026-11-10)
+
+Why: the two measures the budgets had no figure for. Same machine and toolchain as Run 3, the gateway code of
+0.29.0. Commands: `cargo test --release --test overhead gateway_streaming -- --ignored --nocapture` (four runs,
+the last with `HUMPYARD_BUDGET_ENFORCE=1`) and `cargo test --release --test memory -- --ignored --nocapture` (four
+runs, the last enforced).
+
+### Streaming
+
+The mock upstream streams 20 chunks 5 ms apart and then a final chunk with the usage; the client reads each stream
+to its end. 50 streams per concurrent worker, direct and through the gateway, at concurrency 1, 16 and 64. Direct,
+the first chunk arrives in 0.18 to 0.33 ms (p50) and a whole stream takes about 124 to 127 ms (20 chunks, rounded
+up by the timer). What the gateway adds, in milliseconds:
+
+| Added to the first chunk, p50 / p99 | run 1 | run 2 | run 3 | run 4 |
+|---|---|---|---|---|
+| concurrency 1 | +0.61 / +0.75 | +0.36 / +0.72 | +0.48 / +0.63 | +0.72 / +2.90 |
+| concurrency 16 | +0.52 / +0.91 | +0.86 / +1.14 | +0.66 / -0.54 | +0.64 / +1.48 |
+| concurrency 64 | +0.42 / +3.26 | +1.00 / +2.93 | +0.77 / +1.82 | +0.84 / +2.32 |
+
+| Added to the whole stream, p50 / p99 | run 1 | run 2 | run 3 | run 4 |
+|---|---|---|---|---|
+| concurrency 1 | +1.53 / -2.84 | +0.53 / +4.98 | -0.01 / -4.35 | +1.44 / -5.44 |
+| concurrency 16 | -0.43 / -5.42 | +1.85 / +9.65 | +1.92 / +15.46 | -2.34 / -5.06 |
+| concurrency 64 | +9.82 / +12.27 | -4.00 / -2.84 | -4.85 / -6.21 | -0.64 / -0.64 |
+
+The first chunk is reliably cheap: the gateway adds under a millisecond at the median (at most +1.00 ms) and up to
+3.3 ms at p99, at every concurrency. The whole-stream figures are noise: they change sign between runs, and the
++9.82 ms of run 1 at concurrency 64 did not come back. A stream's end is decided by 20 timer ticks in the mock, so
+this measure resolves about 10 ms; its budget is a loose bound that catches a gateway which makes streams
+materially slower, not a precise one.
+
+### Memory
+
+The real `humpyard serve` binary runs as a child process with a ledger on local disk, against a mock upstream in the
+test process, and its resident set is read with `ps` every 25 ms. Three loads at 64 concurrent requests: 100,000
+plain requests, 3,200 streams, and the 100,000 plain requests again. Each is followed by 2 s of rest.
+
+| MiB resident | run 1 | run 2 | run 3 | run 4 |
+|---|---:|---:|---:|---:|
+| idle after start | 14.7 | 14.7 | 14.6 | 14.5 |
+| after plain requests (peak equals rest) | 37.7 | 37.3 | 37.1 | 37.9 |
+| after streams | 38.8 | 38.4 | 38.5 | 39.7 |
+| after plain requests again | 39.2 | 39.6 | 39.5 | 41.3 |
+| growth between the two plain loads | +1.5 | +2.3 | +2.4 | +3.4 |
+
+The gateway idles at about 15 MiB and peaks at about 40 MiB at 64 concurrent requests, a fraction of the 256 MiB
+the cluster allows the container; the process does not return memory to the system between loads (its resident
+set at rest equals the peak). Each identical load left it a little higher (+1.5 to +3.4 MiB the second time); the
+figure tapers across the phases but two points cannot say whether it plateaus.
+
+### Limits of this run
+
+One machine, a mock upstream, loopback, no TLS. The streaming mock sends small chunks at a fixed gap; real
+providers send chunks of uneven size and timing, and long answers have far more than 20. The memory runs measure
+only the gateway process, with a small ledger (it grows by the run's own rows), and run for seconds: whether
+memory stops growing over hours is the soak, which is not measured.
 
 ## Open findings
 
