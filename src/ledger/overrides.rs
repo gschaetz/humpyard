@@ -314,7 +314,7 @@ pub(super) async fn prune(
     pool: &SqlitePool,
     before_ms: i64,
     batching: super::Batching,
-) -> Result<u64, sqlx::Error> {
+) -> Result<super::Pruned, sqlx::Error> {
     let audit =
         super::delete_in_batches(pool, "override_audit", "at_ms < ?1", before_ms, batching).await?;
     let ended = super::delete_in_batches(

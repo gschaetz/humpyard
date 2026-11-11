@@ -8,10 +8,14 @@ mod common;
 use std::time::{Duration, Instant};
 
 use common::seed::{Rng, make_row};
-use humpyard::ledger::{Ledger, NewOverride, QuotaSample};
+use humpyard::ledger::{Ledger, NewOverride, Pruned, QuotaSample};
 
 const DAY_MS: i64 = 86_400_000;
 const RETENTION_DAYS: u64 = 7;
+
+/// Statements a prune takes beyond the decisions' own when nothing else is old: override history (two tables) and
+/// quota samples each find nothing in one statement.
+const OTHER_TABLES: u64 = 3;
 
 /// The oldest a row may be and be kept, as the ledger computes it.
 fn cutoff_ms() -> i64 {
@@ -81,8 +85,15 @@ async fn a_large_backlog_is_deleted_exactly_across_many_batches() {
     let cutoff = cutoff_ms();
     assert_eq!(decisions_before(&ledger, cutoff).await, 25_000);
 
-    // 13 batches of 2,000: the last one is short, which ends the loop.
-    ledger.prune_expired(RETENTION_DAYS, 2_000, PAUSE).await;
+    // 13 statements of at most 2,000: twelve full ones and a short one of 1,000, which ends the loop.
+    let pruned = ledger.prune_expired(RETENTION_DAYS, 2_000, PAUSE).await;
+    assert_eq!(
+        pruned,
+        Pruned {
+            rows: 25_000,
+            statements: 13 + OTHER_TABLES
+        }
+    );
 
     assert_eq!(
         decisions_before(&ledger, cutoff).await,
@@ -106,7 +117,15 @@ async fn nothing_newer_than_the_cutoff_is_touched_and_a_backlog_that_fits_one_ba
             .fetch_all(ledger.pool())
             .await
             .unwrap();
-    ledger.prune_expired(RETENTION_DAYS, 10_000, PAUSE).await;
+    let pruned = ledger.prune_expired(RETENTION_DAYS, 10_000, PAUSE).await;
+    assert_eq!(
+        pruned,
+        Pruned {
+            rows: 50,
+            statements: 1 + OTHER_TABLES
+        },
+        "a backlog that fits one batch is one statement"
+    );
     let after: Vec<String> = sqlx::query_scalar("SELECT request_id FROM decisions ORDER BY id")
         .fetch_all(ledger.pool())
         .await
@@ -117,7 +136,15 @@ async fn nothing_newer_than_the_cutoff_is_touched_and_a_backlog_that_fits_one_ba
     // A batch that is exactly full ends with one more statement that deletes nothing.
     let ledger = self::ledger("exactly-full").await;
     seed_decisions(&ledger, 300, 5).await;
-    ledger.prune_expired(RETENTION_DAYS, 100, PAUSE).await;
+    let pruned = ledger.prune_expired(RETENTION_DAYS, 100, PAUSE).await;
+    assert_eq!(
+        pruned,
+        Pruned {
+            rows: 300,
+            statements: 4 + OTHER_TABLES
+        },
+        "three full statements, then one that finds nothing left and ends the loop"
+    );
     assert_eq!(decisions_total(&ledger).await, 5);
 }
 
@@ -319,6 +346,9 @@ async fn writes_make_progress_while_a_large_backlog_is_pruned() {
         "the backlog was deleted"
     );
 
+    // The control is printed for the record and not asserted: how many writes a single statement lets through
+    // depends on the machine (67 on a fast CI runner, 3 on a laptop). That the prune is in batches is shown
+    // deterministically above, by the statements it takes; this checks that writes do get through meanwhile.
     println!(
         "override writes while the backlog was deleted: one statement: {} completed, slowest {:?}; batches: {} completed, slowest {:?}",
         one_statement.during_prune,
@@ -327,14 +357,8 @@ async fn writes_make_progress_while_a_large_backlog_is_pruned() {
         in_batches.slowest
     );
     assert!(
-        in_batches.during_prune >= 10,
+        in_batches.during_prune >= 5,
         "writes should get through between batches: {} completed during the prune",
-        in_batches.during_prune
-    );
-    assert!(
-        in_batches.during_prune > 3 * one_statement.during_prune,
-        "a single statement lets almost none through: {} against {}",
-        one_statement.during_prune,
         in_batches.during_prune
     );
     assert!(

@@ -362,7 +362,7 @@ pub(super) async fn prune(
     pool: &SqlitePool,
     cutoff_ms: i64,
     batching: super::Batching,
-) -> Result<u64, sqlx::Error> {
+) -> Result<super::Pruned, sqlx::Error> {
     super::delete_in_batches(pool, "decisions", "ts_ms < ?1", cutoff_ms, batching).await
 }
 
