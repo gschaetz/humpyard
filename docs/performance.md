@@ -13,6 +13,10 @@ cargo test --release --test overhead -- --ignored --nocapture
 # ... and fail on an exceeded latency budget (the release check; see Budgets)
 HUMPYARD_BUDGET_ENFORCE=1 cargo test --release --test overhead -- --ignored --nocapture
 
+# Throughput: the current build against the previous release's, in alternating runs (builds that release in a scratch
+# directory; add HUMPYARD_BUDGET_ENFORCE=1 to fail on a regression or an inconclusive comparison)
+scripts/compare-throughput.sh v0.28.0
+
 # Isolation: do administrative reads, or a large prune, move the request path? (a one-worker gateway)
 cargo test --release --test isolation -- --ignored --nocapture
 ```
@@ -45,7 +49,7 @@ with the previous release, never with a number written down on another day (Run 
 |---|---|---|---|---|
 | Gateway-added latency, p50 (against a direct call, 50 ms upstream, up to 64 concurrent requests) | at most 2 ms | [Run 2](#run-2-gateway-overhead-2026-10-18): +0.41 to +1.22 ms; [Run 3](#run-3-the-current-release-against-095-2026-11-09): +0.21 to +1.73 ms | the overhead harness with `HUMPYARD_BUDGET_ENFORCE=1` on a reference machine, a step of the release | met in both runs |
 | Gateway-added latency, p99 (same cells) | at most 10 ms | Run 2: +0.59 to +5.72 ms; Run 3: +0.41 to +5.14 ms, and one cell of +16.30 ms | the same | met, except one noisy cell in Run 3 (see its limits) |
-| Throughput (64 concurrent requests, instant upstream) | at least 90% of the previous release's, measured alongside it | Run 3 (45,667 and 40,980 req/s against 47,787 and 44,560 for 0.9.5) | a paired comparison with the previous release's binary (`scripts/compare-throughput.sh`, not yet written) | inconclusive in Run 3: two pairs, and one build's own pairs differed by 10.3% |
+| Throughput (64 concurrent requests, instant upstream) | median of current / previous at least 0.90 over three alternating pairs, and neither build's own runs more than 10% apart | [Run 3](#run-3-the-current-release-against-095-2026-11-09) (why it is paired) and [Run 6](#run-6-the-comparison-script-2026-11-10) | `scripts/compare-throughput.sh <previous tag>`, as a step of the release | met in Run 6 against 0.28.0 (median 1.030); inconclusive in Run 3 and in Run 6's comparison of a build with itself (noisy sessions) |
 | Request latency under administrative reads (one-worker gateway, 16 concurrent requests) | loaded p99 at most the unloaded p99 plus the larger of 10% and 1 ms; no ledger entry dropped | [Run 4](#run-4-admin-reads-against-the-request-path-2026-11-09) | the isolation test (it will fail CI once the job is added, which needs the fix first) | **fails today**: 9.67 ms to 34.38 ms |
 | Override writes during a large prune | complete within the writer's busy timeout (5 s); request p99 unmoved | [Run 5](#run-5-a-large-prune-against-the-request-path-and-override-writes-2026-11-10) | the write-contention test | passes, but the slowest write took 2.4 s |
 
@@ -240,6 +244,39 @@ fail the write, and the write-ahead log grew to about 100 MB. Prunes in short ba
 
 Limits: one machine and one ledger size; the writes were made by one client; checkpointing is SQLite's default and
 was not tuned.
+
+## Run 6: the comparison script (2026-11-10)
+
+Why: to check `scripts/compare-throughput.sh` on real runs, and to see how often a laptop session is quiet enough
+for its verdict. Same machine and toolchain as Run 3. The script builds the previous harness in a scratch
+directory, alternates it with the current one for three pairs (previous first in pairs 1 and 3, current first in
+pair 2), and reads the gateway's requests per second at 64 concurrent requests against an instant upstream, 5,000
+requests per cell. The current build is 0.29.0's gateway code. Commands: `scripts/compare-throughput.sh HEAD`
+and `scripts/compare-throughput.sh v0.28.0`.
+
+| Pair | HEAD (previous) | current | ratio | | v0.28.0 (previous) | current | ratio |
+|---:|---:|---:|---:|---|---:|---:|---:|
+| 1 | 45,188 | 44,057 | 0.975 | | 48,004 | 50,309 | 1.048 |
+| 2 | 42,442 | 49,074 | 1.156 | | 49,267 | 50,756 | 1.030 |
+| 3 | 49,519 | 51,573 | 1.041 | | 50,368 | 50,784 | 1.008 |
+| **median ratio** | | | **1.041** | | | | **1.030** |
+| spread within one build | 14.3% | 14.6% | | | 4.7% | 0.9% | |
+| **verdict** | | | **inconclusive** | | | | **ok** |
+
+### What it shows
+
+- Against v0.28.0 the current build is level (a median ratio of 1.030, and runs within 5% of each other): no
+  regression in the request path since the last release. The figures of about 48,000 to 51,000 req/s are in line
+  with Run 2.
+- The comparison of a build with itself came out at a median of 1.041, within 10% of 1 as it should, but the
+  session was noisy: one build's runs ranged from 42,442 to 49,519 req/s, so the script called it inconclusive,
+  which is its purpose. The two invocations were minutes apart on the same machine and the first was far noisier.
+
+### Limits of this run
+
+Three pairs each, one machine, a mock upstream, loopback, no TLS. The spread rule (the range of a build's own runs
+within 10% of the largest) is a range statistic, so it grows with the number of runs; whether 10% over three runs
+is the right bar for a laptop is open, and a noisy comparison is better repeated than trusted in either direction.
 
 ## Open findings
 
