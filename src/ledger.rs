@@ -126,6 +126,9 @@ pub enum LedgerError {
     Open { path: String, source: sqlx::Error },
     #[error("ledger query failed: {0}")]
     Query(#[from] sqlx::Error),
+    /// The blocking thread that folds rows was cancelled or panicked.
+    #[error("a ledger read was cancelled: {0}")]
+    Cancelled(String),
 }
 
 impl LedgerError {
@@ -133,7 +136,9 @@ impl LedgerError {
     /// database's lock, so the caller can say "busy, retry" instead of reporting a failure.
     #[must_use]
     pub fn is_busy(&self) -> bool {
-        let (Self::Query(error) | Self::Open { source: error, .. }) = self;
+        let (Self::Query(error) | Self::Open { source: error, .. }) = self else {
+            return false;
+        };
         match error {
             sqlx::Error::PoolTimedOut => true,
             // SQLite's primary codes 5 (busy) and 6 (locked), whatever their extended code.
@@ -144,6 +149,17 @@ impl LedgerError {
             _ => false,
         }
     }
+}
+
+/// Runs a synchronous, CPU-bound fold over rows that were already read on a blocking thread, so it never holds a
+/// worker of the runtime that serves requests (ADR 0036). The folds of statistics and sessions are private to their
+/// modules and are reached only through this.
+async fn off_runtime<T: Send + 'static>(
+    work: impl FnOnce() -> T + Send + 'static,
+) -> Result<T, LedgerError> {
+    tokio::task::spawn_blocking(work)
+        .await
+        .map_err(|error| LedgerError::Cancelled(error.to_string()))
 }
 
 /// What the writer task receives: entries, and markers that ask it to catch up.
@@ -936,5 +952,63 @@ mod tests {
             .err()
             .unwrap();
         assert!(error.to_string().contains("cannot open ledger"));
+    }
+
+    /// Ticks every 10 ms on the runtime until aborted, counting, so a test can see whether the runtime's only
+    /// worker is free.
+    fn start_ticker(ticks: &Arc<AtomicU64>) -> tokio::task::JoinHandle<()> {
+        let ticks = ticks.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                ticks.fetch_add(1, Ordering::Relaxed);
+            }
+        })
+    }
+
+    /// The work is done in spawned tasks, as a request handler is: the body of a test runs on the calling thread,
+    /// not on a worker, so blocking it would prove nothing about the worker.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+    async fn a_fold_runs_off_the_runtime_so_the_only_worker_stays_free() {
+        let ticks = Arc::new(AtomicU64::new(0));
+        let ticker = start_ticker(&ticks);
+
+        // On a blocking thread: the worker keeps running the ticker for the whole 400 ms.
+        let value = tokio::spawn(async {
+            off_runtime(|| {
+                std::thread::sleep(std::time::Duration::from_millis(400));
+                7
+            })
+            .await
+            .unwrap()
+        })
+        .await
+        .unwrap();
+        assert_eq!(value, 7);
+        let during = ticks.swap(0, Ordering::Relaxed);
+        assert!(
+            during >= 20,
+            "the worker was held while the fold ran: {during} ticks in 400 ms"
+        );
+
+        // The control: the same wait done inline in a task holds the only worker, and the ticker cannot run.
+        tokio::spawn(async {
+            std::thread::sleep(std::time::Duration::from_millis(400));
+        })
+        .await
+        .unwrap();
+        let inline = ticks.load(Ordering::Relaxed);
+        assert!(
+            inline <= 2,
+            "the control should block the worker, but the ticker ran {inline} times"
+        );
+        ticker.abort();
+    }
+
+    #[tokio::test]
+    async fn a_fold_that_panics_is_an_error_and_not_busy() {
+        let error = off_runtime(|| -> u32 { panic!("boom") }).await.unwrap_err();
+        assert!(matches!(error, LedgerError::Cancelled(_)), "{error}");
+        assert!(!error.is_busy());
     }
 }

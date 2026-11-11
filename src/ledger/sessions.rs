@@ -93,11 +93,22 @@ pub(super) async fn scan(pool: &SqlitePool, q: &SessionQuery) -> Result<SessionS
     .bind(i64::from(q.row_cap) + 1)
     .fetch_all(pool)
     .await?;
-    let truncated = rows.len() > q.row_cap as usize;
+    let cap = q.row_cap as usize;
+    super::off_runtime(move || fold(&totals, &rows, cap)).await
+}
+
+/// The synchronous, CPU-bound half of [`scan`] (ADR 0036): groups the newest rows by session, puts each session's
+/// calls in time order and summarizes them. Run on a blocking thread, and private to this module.
+fn fold(
+    totals: &sqlx::sqlite::SqliteRow,
+    rows: &[sqlx::sqlite::SqliteRow],
+    cap: usize,
+) -> SessionScan {
+    let truncated = rows.len() > cap;
 
     // Newest rows were read; group them by session and put each session's calls in time order.
     let mut by_session: HashMap<String, Vec<Call>> = HashMap::new();
-    for row in rows.iter().take(q.row_cap as usize) {
+    for row in rows.iter().take(cap) {
         by_session
             .entry(row.get("session_id"))
             .or_default()
@@ -131,14 +142,14 @@ pub(super) async fn scan(pool: &SqlitePool, q: &SessionQuery) -> Result<SessionS
         switches.extend(found);
     }
 
-    Ok(SessionScan {
+    SessionScan {
         sessions,
         switches,
         answered: from_i64(totals.get::<i64, _>("answered")),
         answered_with_session: from_i64(totals.get::<i64, _>("with_session")),
         total_cost_micro_usd: from_i64(totals.get::<i64, _>("cost")),
         truncated,
-    })
+    }
 }
 
 /// A session's figures from its calls in time order, and the switches between them.
