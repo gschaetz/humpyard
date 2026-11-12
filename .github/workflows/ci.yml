@@ -2,7 +2,18 @@ name: ci
 on:
   push:
     branches: [main]
+    # A release tag runs every registered check (fitness/register.toml); the release workflow does not wait for it.
+    tags: ["v[0-9]+.[0-9]+.[0-9]+"]
   pull_request:
+  # Weekly on main (Monday, 05:17 UTC): a path map misses a dependency's behaviour and slow drift.
+  schedule:
+    - cron: "17 5 * * 1"
+  workflow_dispatch:
+    inputs:
+      rehearse_failure:
+        description: "Make the isolation job fail after it has run and report as the weekly run would (opens or comments on a performance-regression issue; close it afterwards)"
+        type: boolean
+        default: false
 permissions:
   contents: read
 jobs:
@@ -157,3 +168,114 @@ jobs:
           docker create --name humpyard-ci humpyard:ci
           docker cp humpyard-ci:/usr/local/bin/humpyard ./humpyard-from-image
           scripts/smoke-ui.sh ./humpyard-from-image
+
+  # Which registered checks (fitness/register.toml, docs/fitness-functions.md) this run needs. A pull request or a
+  # push to main gets the checks its changed files trigger; the weekly run, a manual dispatch and a release tag get
+  # every check that runs on a hosted runner.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      checks: ${{ steps.select.outputs.checks }}
+      jobs: ${{ steps.select.outputs.jobs }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - id: select
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+          REF: ${{ github.ref }}
+        run: |
+          base=""
+          if [ "$EVENT" = pull_request ]; then
+            base="$PR_BASE"
+          elif [ "$EVENT" = push ] && [ "${REF#refs/tags/}" = "$REF" ] && ! echo "$PUSH_BEFORE" | grep -Eq '^0+$'; then
+            base="$PUSH_BEFORE"
+          fi
+          if [ -n "$base" ]; then
+            checks=$(python3 -I scripts/select-checks.py "$base" | tr '\n' ' ')
+            jobs=$(python3 -I scripts/select-checks.py "$base" --jobs | tr '\n' ' ')
+          else
+            checks=$(python3 -I scripts/select-checks.py --all | tr '\n' ' ')
+            jobs=$(python3 -I scripts/select-checks.py --all --jobs | tr '\n' ' ')
+          fi
+          echo "checks=$checks" >> "$GITHUB_OUTPUT"
+          echo "jobs=$jobs" >> "$GITHUB_OUTPUT"
+          echo "Selected checks: ${checks:-none}" >> "$GITHUB_STEP_SUMMARY"
+
+  # The isolation tests (tests/isolation.rs, ADR 0036) in release mode: administrative reads and a large prune must
+  # not move the request path. Heavy, so only when selected.
+  isolation:
+    needs: changes
+    if: contains(needs.changes.outputs.jobs, 'isolation')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.99"
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --release --test isolation -- --ignored --nocapture
+      - name: Rehearsal of a failed weekly run
+        if: github.event_name == 'workflow_dispatch' && inputs.rehearse_failure
+        run: |
+          echo "::error::rehearsal: failing on purpose so the report step can be checked"
+          exit 1
+
+  # The one required result. It always runs, so a job that selection skipped never leaves a required check
+  # waiting; it fails when a job that ran failed or was cancelled (or the selection itself did not run).
+  performance-gate:
+    if: always()
+    needs: [changes, check, isolation]
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          echo "$RESULTS" | python3 -c '
+          import json, sys
+          needs = json.load(sys.stdin)
+          bad = {n: v["result"] for n, v in needs.items() if v["result"] not in ("success", "skipped")}
+          for name, result in needs.items():
+              print(f"{name}: {result}")
+          if needs["changes"]["result"] != "success":
+              bad["changes"] = needs["changes"]["result"]
+          if bad:
+              print("failed: " + ", ".join(f"{n} ({r})" for n, r in bad.items()))
+              sys.exit(1)
+          '
+
+  # A failed weekly run opens an issue, or comments on the one that is open; it never closes it. Pull-request
+  # runs and ordinary dispatches never get here. The only permission is to write issues.
+  report-weekly-failure:
+    if: always() && needs.performance-gate.result == 'failure' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.rehearse_failure))
+    needs: [performance-gate, changes]
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          CHECKS: ${{ needs.changes.outputs.checks }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          prefix=""
+          [ "$EVENT" = workflow_dispatch ] && prefix="Rehearsal: "
+          body="${prefix}The ${EVENT/schedule/weekly} run of the registered checks failed on main.
+
+          Checks in this run: ${CHECKS}
+          Run: ${RUN_URL}
+
+          See docs/fitness-functions.md for what each check protects. A regression found this way is a reason to widen that check's triggers in fitness/register.toml. Close this issue when the cause is fixed; the workflow never closes it."
+          gh label create performance-regression --color B60205 --description "A scheduled performance or architecture check failed" 2>/dev/null || true
+          open=$(gh issue list --label performance-regression --state open --json number --jq '.[0].number // empty')
+          if [ -n "$open" ]; then
+            gh issue comment "$open" --body "$body"
+          else
+            gh issue create --label performance-regression --title "${prefix}Scheduled performance checks failed" --body "$body"
+          fi

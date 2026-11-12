@@ -177,9 +177,13 @@ configuration error the gateway cannot make up for.
 Releases are made only by pushing a version tag (ADR
 [0010](adr/0010-tag-only-native-releases.md)); nothing publishes from branches or pull requests.
 
-1. In a PR, bump `version` in `Cargo.toml` and merge it.
-2. From an up-to-date `main`: `git tag vX.Y.Z && git push origin vX.Y.Z`.
-3. The `release` workflow verifies that the tag equals the `Cargo.toml` version and that the commit
+1. On the reference machine, run the release checks the weekly CI run cannot (they are `where = "reference"` in
+   `fitness/register.toml`; [Fitness functions](fitness-functions.md)) and record the results in
+   [Performance and scale](performance.md): the overhead harness and the memory harness with
+   `HUMPYARD_BUDGET_ENFORCE=1`, and `scripts/compare-throughput.sh <previous tag>`.
+2. In a PR, bump `version` in `Cargo.toml` and merge it.
+3. From an up-to-date `main`: `git tag vX.Y.Z && git push origin vX.Y.Z`.
+4. The `release` workflow verifies that the tag equals the `Cargo.toml` version and that the commit
    is on `main`, builds each target on a runner of its own architecture, builds the two image
    architectures, and only when all of that has succeeded creates the GitHub release
    (pre-release while the version is 0.x) and the multi-architecture image manifest.
