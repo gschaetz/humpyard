@@ -51,6 +51,7 @@ export function LineChart(props: { series: Series; metric: Metric; focus: string
             <text class="axis" x={LEFT - 6} y={t.y + 4} text-anchor="end">{formatMetric(metric, t.value)}</text>
           </g>
         ))}
+        <text class="axis" x={WIDTH - RIGHT} y={HEIGHT - 2} text-anchor="end">times are UTC</text>
         {drawn.xTicks.map((t) => (
           <text key={t.x} class="axis" x={t.x} y={HEIGHT - BOTTOM + 16} text-anchor="middle">{t.label}</text>
         ))}
@@ -78,8 +79,8 @@ export function LineChart(props: { series: Series; metric: Metric; focus: string
                   <title>{pointTitle(line.group, metric, p)}</title>
                 </circle>
               ))}
-              {last?.y !== undefined && last.y !== null && (
-                <text class="label" x={last.x + 8} y={last.y + 4}>{line.group.length > 14 ? `${line.group.slice(0, 13)}…` : line.group}</text>
+              {last !== undefined && line.labelY !== null && (
+                <text class="label" x={last.x + 8} y={line.labelY + 4}>{line.group.length > 14 ? `${line.group.slice(0, 13)}…` : line.group}</text>
               )}
             </g>
           );

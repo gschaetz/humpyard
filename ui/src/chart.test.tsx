@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render } from "@testing-library/preact";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { LineChart } from "./chart";
-import { niceTicks, strokes, utc, type Point } from "./chart-data";
+import { layout, niceTicks, strokes, utc, type Point } from "./chart-data";
 import { BUCKET_MS, T0, bucket, quietBucket, series } from "./fixtures";
 
 afterEach(cleanup);
@@ -110,6 +110,20 @@ describe("the line chart", () => {
     const { container } = render(<LineChart series={series({})} metric="requests" focus="" onFocus={none} />);
     expect(container.textContent).toContain("No requests in this window");
     expect(container.querySelector("svg")).toBeNull();
+  });
+});
+
+describe("the labels at the ends of the lines", () => {
+  it("are pushed apart when the lines end together, so none prints over another, and stay inside the plot", () => {
+    const together = series({ a: [bucket(0), bucket(1)], b: [bucket(0), bucket(1)], c: [bucket(0), bucket(1)], d: [bucket(0), bucket(1)] });
+    const ys = layout(together, "requests").lines.map((l) => l.labelY ?? Number.NaN).sort((x, y) => x - y);
+    for (let i = 1; i < ys.length; i++) expect((ys[i] ?? 0) - (ys[i - 1] ?? 0)).toBeGreaterThanOrEqual(13);
+    expect(Math.min(...ys)).toBeGreaterThanOrEqual(0);
+    expect(Math.max(...ys)).toBeLessThanOrEqual(280);
+  });
+
+  it("have no height for a line with no value at all", () => {
+    expect(layout(series({ a: [quiet(0), quiet(1)] }), "failure_rate").lines[0]?.labelY).toBeNull();
   });
 });
 

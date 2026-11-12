@@ -69,8 +69,8 @@ thead th { color: var(--muted); font-weight: 500; font-size: 0.85rem; }
 .health.probing { color: var(--warn-fg); }
 
 /* The chart (chart.tsx): every colour, stroke and dash comes from a class here, never a style attribute. */
-.chart { margin: 0.75rem 0 0; }
-.chart svg { width: 100%; height: auto; display: block; }
+.chart { margin: 0.75rem 0 0; max-width: 46rem; }
+.chart > svg { width: 100%; height: auto; display: block; }
 .s0 { --c: var(--s0); } .s1 { --c: var(--s1); } .s2 { --c: var(--s2); } .s3 { --c: var(--s3); }
 .s4 { --c: var(--s4); } .s5 { --c: var(--s5); } .s6 { --c: var(--s6); } .s7 { --c: var(--s7); }
 .chart .grid { stroke: var(--line); stroke-width: 1; }

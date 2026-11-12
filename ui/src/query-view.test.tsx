@@ -203,6 +203,28 @@ describe("the chart and the table together", () => {
   });
 });
 
+describe("heavy reads", () => {
+  it("asks for the series and the statistics one after the other, never together", async () => {
+    // The gateway allows one heavy read at a time on this surface and refuses a second as busy.
+    let heavy = 0;
+    let overlapped = false;
+    const slow = <T,>(value: T) => {
+      heavy += 1;
+      if (heavy > 1) overlapped = true;
+      return new Promise<T>((resolve) => {
+        setTimeout(() => {
+          heavy -= 1;
+          resolve(value);
+        }, 5);
+      });
+    };
+    show(client({ stats: () => slow(stats(group("fast"))), series: () => slow(series({ fast: [bucket(0), bucket(1)] })) }));
+    await screen.findByRole("table");
+    expect(overlapped).toBe(false);
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+});
+
 describe("failures and refreshing", () => {
   it("shows the error and no table when the first read fails", async () => {
     show(client({ stats: () => Promise.reject(new ApiError(0, null, "The admin API could not be reached.")) }));

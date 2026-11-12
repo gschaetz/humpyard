@@ -64,11 +64,14 @@ export function QueryView(props: { client: Client; onRefused: () => void }) {
         load: async (signal) => {
           const q = current.current;
           const filters = { route: q.route === "" ? undefined : q.route, target: q.target === "" ? undefined : q.target };
-          const [series, stats, health] = await Promise.all([
+          // The series and the statistics are both heavy reads and the gateway allows one at a time on this surface,
+          // so they are asked one after the other (a parallel pair would have the second refused as busy). Health is a
+          // light read and goes with the first.
+          const [series, health] = await Promise.all([
             client.series({ window: q.window, interval: INTERVALS[q.window], groupBy: q.group, limit: SERIES_LIMIT, ...filters }, { signal }),
-            client.stats({ window: q.window, groupBy: q.group, ...filters }, { signal }),
             client.health({ signal }),
           ]);
+          const stats = await client.stats({ window: q.window, groupBy: q.group, ...filters }, { signal });
           return { series, stats, health };
         },
         onData: (next, at) => {

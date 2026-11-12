@@ -68,7 +68,11 @@ export interface Point {
 export interface Line {
   group: string;
   points: Point[];
+  /** Where the label at the end of the line is drawn: its last value's height, nudged so labels do not overlap. */
+  labelY: number | null;
 }
+
+const LABEL_GAP = 13;
 
 export interface Layout {
   lines: Line[];
@@ -97,13 +101,15 @@ export function layout(series: Series, metric: Metric): Layout {
   const yMax = ticks.at(-1) ?? 1;
   const y = (value: number) => TOP + plotHeight - (value / yMax) * plotHeight;
 
-  const lines = groups.map((g) => ({
+  const lines: Line[] = groups.map((g) => ({
     group: g.group,
     points: g.buckets.map((b) => {
       const value = bucketValue(b, metric);
       return { start_ms: b.start_ms, requests: b.requests, value, x: x(b.start_ms), y: value === null ? null : y(value) };
     }),
+    labelY: null,
   }));
+  spreadLabels(lines);
 
   const every = Math.max(1, Math.ceil(starts.length / 5));
   const long = last - first > 36 * 3_600_000;
@@ -117,6 +123,28 @@ export function layout(series: Series, metric: Metric): Layout {
   const covered = series.covered_since_ms;
   const unreadTo = series.truncated && covered !== null && covered > first ? Math.min(x(covered), LEFT + plotWidth) : null;
   return { lines, yTicks: ticks.map((value) => ({ value, y: y(value) })), xTicks, unreadTo };
+}
+
+/**
+ * Sets each line's label height: the height of its last value, then pushed apart (top to bottom, then back up from the
+ * bottom edge) so that labels of lines that end close together stay readable instead of printing over one another.
+ */
+function spreadLabels(lines: Line[]): void {
+  const ends = lines
+    .map((line) => ({ line, y: line.points.filter((p) => p.y !== null).at(-1)?.y ?? null }))
+    .filter((e): e is { line: Line; y: number } => e.y !== null)
+    .sort((a, b) => a.y - b.y);
+  let previous = TOP - LABEL_GAP;
+  for (const e of ends) {
+    previous = Math.max(e.y, previous + LABEL_GAP);
+    e.line.labelY = previous;
+  }
+  const floor = HEIGHT - BOTTOM + 4;
+  let next = floor;
+  for (const e of ends.reverse()) {
+    if (e.line.labelY !== null && e.line.labelY > next) e.line.labelY = next;
+    next = (e.line.labelY ?? next) - LABEL_GAP;
+  }
 }
 
 const path = (points: Point[]) => points.map((p, i) => `${i === 0 ? "M" : "L"}${p.x.toFixed(1)} ${(p.y ?? 0).toFixed(1)}`).join(" ");
