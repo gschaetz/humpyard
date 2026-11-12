@@ -27,3 +27,9 @@ export function tokens(value: number): string {
   if (value >= 1_000) return `${(value / 1_000).toFixed(1)}k`;
   return value.toString();
 }
+
+/** The local time of day as hh:mm:ss. */
+export function clock(atMs: number): string {
+  const d = new Date(atMs);
+  return [d.getHours(), d.getMinutes(), d.getSeconds()].map((n) => n.toString().padStart(2, "0")).join(":");
+}

@@ -95,3 +95,14 @@ thead th { color: var(--muted); font-weight: 500; font-size: 0.85rem; }
 .bars .bar.dim { opacity: 0.35; }
 .bars .bar-name, .bars .bar-value { font-size: 12px; }
 .bars .bar:focus-visible { outline: 2px solid var(--accent); }
+.query-bar { margin-bottom: 0.5rem; }
+.query-bar input[type="search"] { width: 9rem; padding: 0.3rem 0.4rem; border: 1px solid var(--line); border-radius: 6px; background: transparent; }
+.refresh-status p { margin: 0.25rem 0; }
+.stale { opacity: 0.6; }
+button.sort { border: 0; padding: 0; background: none; color: inherit; font-weight: inherit; }
+button.expand { border: 0; padding: 0 0.3rem; }
+.default-order { margin: 0.5rem 0 0; }
+tr.detail td { border-left: 3px solid var(--line); white-space: normal; }
+tr.detail dl { display: grid; grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr)); gap: 0.2rem 1rem; margin: 0; }
+tr.detail dt { color: var(--muted); font-size: 0.8rem; }
+tr.detail dd { margin: 0 0 0.3rem; }

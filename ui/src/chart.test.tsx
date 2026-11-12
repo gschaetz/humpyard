@@ -1,46 +1,13 @@
 import { cleanup, fireEvent, render } from "@testing-library/preact";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { Series, SeriesBucket } from "./api/client";
 import { LineChart } from "./chart";
 import { niceTicks, strokes, utc, type Point } from "./chart-data";
+import { BUCKET_MS, T0, bucket, quietBucket, series } from "./fixtures";
 
 afterEach(cleanup);
 
-const MINUTE = 900_000;
-const T0 = Date.UTC(2026, 10, 12, 12, 0);
-
-function bucket(i: number, over: Partial<SeriesBucket> = {}): SeriesBucket {
-  return {
-    start_ms: T0 + i * MINUTE,
-    requests: 10,
-    attempts: 10,
-    failures: 1,
-    failure_rate: 0.1,
-    fallbacks: 0,
-    fallback_rate: 0,
-    latency_ms: { p50: 100, p90: 300, p99: 900 },
-    ...over,
-  };
-}
-
-const quiet = (i: number): SeriesBucket =>
-  bucket(i, { requests: 0, attempts: 0, failures: 0, failure_rate: null, fallback_rate: null, latency_ms: { p50: null, p90: null, p99: null } });
-
-function series(groups: Record<string, SeriesBucket[]>, over: Partial<Series> = {}): Series {
-  return {
-    object: "stats_series",
-    computed_at_ms: T0,
-    group_by: "target",
-    interval_ms: MINUTE,
-    window: {},
-    now_ms: T0,
-    truncated: false,
-    covered_since_ms: null,
-    omitted_groups: 0,
-    data: Object.entries(groups).map(([group, buckets]) => ({ group, buckets })),
-    ...over,
-  };
-}
+const MINUTE = BUCKET_MS;
+const quiet = quietBucket;
 
 const none = () => undefined;
 

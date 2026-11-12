@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { ApiError, createClient, type Client, type Principal } from "./api/client";
 import { clearCredential, loadCredential } from "./api/session";
 import { contractNotice } from "./api/version";
-import { ModelsView } from "./models-view";
+import { QueryView } from "./query-view";
 import { SignIn } from "./signin";
 import { TokenEntry } from "./token";
 
@@ -107,7 +107,13 @@ export function App(props: { client?: Client }) {
           </header>
           {notice !== null && <p role="status" class="notice">{notice}</p>}
           <main>
-            <ModelsView client={client} />
+            <QueryView
+              client={client}
+              onRefused={() => {
+                // The gateway refused the credential: back through the checks that decide between sign-in and token.
+                setAttempt((n) => n + 1);
+              }}
+            />
           </main>
         </div>
       );
