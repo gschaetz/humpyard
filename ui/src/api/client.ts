@@ -2,6 +2,9 @@ import type { components, paths } from "./schema";
 
 export type Stats = paths["/admin/v1/stats"]["get"]["responses"][200]["content"]["application/json"];
 export type StatsGroup = components["schemas"]["StatsGroup"];
+export type Series = paths["/admin/v1/stats/series"]["get"]["responses"][200]["content"]["application/json"];
+export type SeriesGroup = components["schemas"]["SeriesGroup"];
+export type SeriesBucket = components["schemas"]["SeriesBucket"];
 export type Health = components["schemas"]["Health"];
 export type EndpointHealth = components["schemas"]["EndpointHealth"];
 export type Principal = components["schemas"]["Principal"];
@@ -24,11 +27,28 @@ export interface StatsQuery {
   groupBy?: "route" | "target" | "endpoint";
 }
 
+export interface SeriesRequest {
+  /** How far back, for example `24h`. */
+  window: string;
+  /** The bucket width, for example `15m`. */
+  interval: string;
+  groupBy: "route" | "target" | "endpoint";
+  route?: string;
+  target?: string;
+  /** The most groups returned (the gateway's own default applies when unset). */
+  limit?: number;
+}
+
 export interface Client {
   whoami(): Promise<Principal>;
   /** `info.version` of the admin API's published contract. */
   contractVersion(): Promise<string>;
   stats(query?: StatsQuery): Promise<Stats>;
+  /**
+   * Statistics over time, or `null` when the gateway has no series endpoint (it is older than this page): the
+   * caller shows the table without a chart rather than an error.
+   */
+  series(request: SeriesRequest): Promise<Series | null>;
   health(): Promise<Health>;
   /**
    * Exchanges the access token `humpyard ui --credential-env` printed at start for a session cookie (the only call
@@ -88,6 +108,21 @@ export function createClient(
       return version;
     },
     stats: (query = {}) => getJson<Stats>("/admin/v1/stats", { window: query.window, group_by: query.groupBy }),
+    series: async (request) => {
+      try {
+        return await getJson<Series>("/admin/v1/stats/series", {
+          window: request.window,
+          interval: request.interval,
+          group_by: request.groupBy,
+          route: request.route,
+          target: request.target,
+          limit: request.limit?.toString(),
+        });
+      } catch (failure) {
+        if (failure instanceof ApiError && failure.status === 404) return null;
+        throw failure;
+      }
+    },
     health: () => getJson<Health>("/admin/v1/health"),
     exchangeToken: async (token) => {
       let response: Response;

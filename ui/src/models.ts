@@ -1,7 +1,6 @@
 import type { EndpointHealth, Health, Stats, StatsGroup } from "./api/client";
 
-export const WINDOWS = ["1h", "6h", "24h", "7d", "30d"] as const;
-export type Window = (typeof WINDOWS)[number];
+export { WINDOWS, type Window } from "./query";
 
 export const SIGNALS = ["empty_output", "truncated_output", "bad_tool_call", "cut_stream"] as const;
 export type Signal = (typeof SIGNALS)[number];

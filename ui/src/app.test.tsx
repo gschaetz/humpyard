@@ -11,6 +11,7 @@ function fake(overrides: Partial<Client> = {}): Client {
     whoami: () => Promise.resolve(principal),
     contractVersion: () => Promise.resolve("1"),
     stats: () => Promise.reject(new Error("not used")),
+    series: () => Promise.reject(new Error("not used")),
     health: () => Promise.reject(new Error("not used")),
     exchangeToken: () => Promise.reject(new Error("not used")),
     ...overrides,

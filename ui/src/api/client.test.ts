@@ -30,6 +30,39 @@ describe("the admin API client", () => {
     expect(fetchImpl.mock.calls[1]?.[0]).toBe("/admin/v1/stats");
   });
 
+  describe("the series call", () => {
+    const request = { window: "24h", interval: "15m", groupBy: "target" as const };
+
+    it("asks /admin/v1/stats/series with the credential as before, and leaves out what is not set", async () => {
+      const body = { object: "stats_series", data: [] };
+      const fetchImpl = vi.fn<typeof fetch>().mockImplementation(() => Promise.resolve(respond(200, body)));
+      const client = createClient(() => "secret", fetchImpl);
+      await expect(client.series({ ...request, target: "a b&c", limit: 8 })).resolves.toEqual(body);
+      await client.series(request);
+      const [url, init] = fetchImpl.mock.calls[0] ?? [];
+      expect(url).toBe("/admin/v1/stats/series?window=24h&interval=15m&group_by=target&target=a+b%26c&limit=8");
+      expect((init?.headers as Record<string, string>).Authorization).toBe("Bearer secret");
+      expect(fetchImpl.mock.calls[1]?.[0]).toBe("/admin/v1/stats/series?window=24h&interval=15m&group_by=target");
+    });
+
+    it("maps a 404 to null, meaning the gateway cannot draw a series, not to an error", async () => {
+      const gone = { error: { code: "not_found", message: "no such route" } };
+      const client = createClient(() => "k", vi.fn<typeof fetch>().mockResolvedValue(respond(404, gone)));
+      await expect(client.series(request)).resolves.toBeNull();
+    });
+
+    it("still reports a refused credential, a busy gateway and an unreachable one as errors", async () => {
+      const refused = { error: { code: "admin_scope_required", message: "needs read" } };
+      const forbidden = createClient(() => "k", vi.fn<typeof fetch>().mockResolvedValue(respond(403, refused)));
+      await expect(forbidden.series(request)).rejects.toMatchObject({ status: 403, code: "admin_scope_required" });
+      const busy = { error: { code: "admin_busy", message: "busy" } };
+      const loaded = createClient(() => "k", vi.fn<typeof fetch>().mockResolvedValue(respond(503, busy)));
+      await expect(loaded.series(request)).rejects.toMatchObject({ status: 503, code: "admin_busy" });
+      const offline = createClient(() => "k", vi.fn<typeof fetch>().mockRejectedValue(new TypeError("offline")));
+      await expect(offline.series(request)).rejects.toMatchObject({ status: 0 });
+    });
+  });
+
   it("reports a refusal in the API's own words, with its status and code", async () => {
     const error = { error: { code: "admin_credential_invalid", message: "Invalid admin credential." } };
     const client = createClient(() => "bad", vi.fn<typeof fetch>().mockResolvedValue(respond(401, error)));
