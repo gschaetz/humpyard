@@ -1,0 +1,132 @@
+# The fitness-function register (ADR 0036, spec: performance). For every performance or architecture check:
+# what it protects, what can move it, when it runs, where, what it costs and whether it blocks. Read as a table
+# with the reasons in docs/fitness-functions.md; tests/architecture.rs keeps the two and src/ in step, and
+# scripts/select-checks.py picks the checks a change triggers.
+#
+# [modules] gives every module under src/ a class:
+#   request  on the path of a request (authentication, routing, planning, the pool, metering, the /v1 handlers)
+#   shared   shares something the request path depends on (runtime setup, the ledger and its writer, the admin
+#            and statistics handlers that read it)
+#   off      never in the serving path (commands that run once and exit, the GUI)
+
+[modules]
+auth = "request"
+budget = "request"
+clock = "request"
+error = "request"
+estimate = "request"
+health = "request"
+latency = "request"
+limiter = "request"
+metering = "request"
+metrics = "request"
+num = "request"
+policy = "request"
+pool = "request"
+pricing = "request"
+repair = "request"
+repair_request = "request"
+retry_after = "request"
+routing = "request"
+scrub = "request"
+select = "request"
+server = "request"
+signals = "request"
+
+admin = "shared"
+config = "shared"
+ledger = "shared"
+lib = "shared"
+main = "shared"
+overrides = "shared"
+quota = "shared"
+
+ctl = "off"
+discover = "off"
+init = "off"
+migrate = "off"
+prices = "off"
+retired = "off"
+ui = "off"
+ui_assets = "off"
+
+# A check:
+#   id         short name; docs/fitness-functions.md lists the same ids
+#   protects   the budget or ADR it guards
+#   triggers   module classes, and extra paths (globs, `*` also crosses `/`), whose change selects it
+#   cadence    change (when a trigger changes), weekly (main, on a schedule), release (a tag)
+#   where      ci (a hosted runner) or reference (the maintainer's reference machine; hosted runners are too
+#              noisy for absolute latency or a throughput ratio)
+#   job        the CI job that runs it
+#   cost       rough running time, for reading only
+#   blocks     whether a failure stops a merge (ci) or a release (reference)
+
+[[checks]]
+id = "architecture-rules"
+protects = "The invariants of docs/invariants.md, among them 24: heavy ledger reads stay off the runtime and behind the gate"
+triggers = { classes = ["request", "shared", "off"], paths = ["Cargo.toml", "tests/architecture.rs", "fitness/*", "docs/fitness-functions.md", "docs/invariants.md"] }
+cadence = ["change", "weekly", "release"]
+where = "ci"
+job = "check"
+cost = "seconds"
+blocks = true
+
+[[checks]]
+id = "isolation-admin-reads"
+protects = "ADR 0036: administrative reads do not move request latency (p99 within 10% or 1 ms of the unloaded run, on one worker, no entry dropped)"
+triggers = { classes = ["request", "shared"], paths = ["Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "tests/isolation.rs", "tests/common/*"] }
+cadence = ["change", "weekly", "release"]
+where = "ci"
+job = "isolation"
+cost = "minutes"
+blocks = true
+
+[[checks]]
+id = "isolation-prune-contention"
+protects = "ADR 0036: a large prune holds the write lock only briefly (slowest override write under 500 ms, requests unaffected)"
+triggers = { classes = ["request", "shared"], paths = ["Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "tests/isolation.rs", "tests/common/*"] }
+cadence = ["change", "weekly", "release"]
+where = "ci"
+job = "isolation"
+cost = "minutes"
+blocks = true
+
+[[checks]]
+id = "overhead-budgets"
+protects = "docs/performance.md budgets: added latency p50 at most 2 ms and p99 at most 10 ms at 64 concurrent, streaming first chunk"
+triggers = { classes = ["request", "shared"], paths = ["Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "tests/overhead.rs", "tests/common/*"] }
+cadence = ["release"]
+where = "reference"
+job = ""
+cost = "minutes"
+blocks = true
+
+[[checks]]
+id = "memory-budget"
+protects = "docs/performance.md budgets: resident memory under load at most 64 MiB, growth between two loads at most 8 MiB"
+triggers = { classes = ["request", "shared"], paths = ["Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "tests/memory.rs", "tests/common/*"] }
+cadence = ["release"]
+where = "reference"
+job = ""
+cost = "minutes"
+blocks = true
+
+[[checks]]
+id = "throughput-comparison"
+protects = "docs/performance.md budgets: throughput no more than 10% below the previous release, measured alongside it"
+triggers = { classes = ["request", "shared"], paths = ["Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "scripts/compare-throughput.sh", "tests/overhead.rs", "tests/compare_throughput.rs", "tests/common/*"] }
+cadence = ["release"]
+where = "reference"
+job = ""
+cost = "minutes"
+blocks = true
+
+[[checks]]
+id = "ledger-scale"
+protects = "docs/performance.md: ledger reads and writes at 450,000 rows, the cost of a statistics read at scale"
+triggers = { classes = ["shared"], paths = ["tests/ledger_scale.rs", "tests/common/*"] }
+cadence = ["release"]
+where = "reference"
+job = ""
+cost = "minutes"
+blocks = false

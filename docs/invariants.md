@@ -2,7 +2,8 @@
 
 Rules that must stay true as the code changes. Each names what enforces it, so a violation fails a
 build instead of relying on review. When a rule changes, change it here, in the enforcing test and
-in an ADR (`docs/adr/`) in the same change.
+in an ADR (`docs/adr/`) in the same change. Which checks guard performance, and when each runs, is in
+[Fitness functions](fitness-functions.md).
 
 ## Structure
 
