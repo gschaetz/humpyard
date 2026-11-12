@@ -48,7 +48,7 @@ numbers are monotonic and never reused. Start from [template.md](template.md).
 | [0032](0032-the-admin-gui-runs-as-its-own-process-from-the-same-binary.md) | The admin GUI runs as its own process from the same binary |
 | [0034](0034-a-configuration-patch-is-typed-edits-checked-by-the-reload-path-and-written-by-no-one.md) | A configuration patch is typed edits, checked by the reload path, and written by no one |
 | [0035](0035-the-admin-apis-time-series-are-read-from-the-decision-log-at-query-time.md) | The admin API's time series are read from the decision log at query time (proposed) |
-| [0036](0036-admin-and-ui-work-must-not-change-the-request-paths-performance.md) | Admin and UI work must not change the request path's performance (proposed) |
+| [0036](0036-admin-and-ui-work-must-not-change-the-request-paths-performance.md) | Admin and UI work must not change the request path's performance (accepted) |
 
 How decisions relate to enforcement: invariants that must hold mechanically are listed in
 [../invariants.md](../invariants.md) and checked by tests and CI.

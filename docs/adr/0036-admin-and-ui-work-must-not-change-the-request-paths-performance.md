@@ -1,9 +1,9 @@
 # 0036. Admin and UI work must not change the request path's performance
 
-- Status: proposed
+- Status: accepted
 - Date: 2026-11-09
 - Supersedes: none
-- Change: `openspec/changes/define-performance-budget`
+- Change: `openspec/changes/archive/2026-11-11-define-performance-budget`
 
 ## Context
 
