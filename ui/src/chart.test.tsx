@@ -113,6 +113,39 @@ describe("the line chart", () => {
   });
 });
 
+describe("the chart's width", () => {
+  it("is laid out in the units it is shown in, so a wide page gets a wide plot and not bigger text", () => {
+    const data = series({ a: [bucket(0), bucket(1), bucket(2)] });
+    const narrow = layout(data, "requests", 640).lines[0]?.points.map((p) => p.x) ?? [];
+    const wide = layout(data, "requests", 1600).lines[0]?.points.map((p) => p.x) ?? [];
+    expect(narrow.at(-1)).toBe(640 - 108);
+    expect(wide.at(-1)).toBe(1600 - 108);
+    expect(wide[0]).toBe(narrow[0]); // the left margin does not grow
+  });
+
+  it("never shrinks below a width the plot can live in", () => {
+    const data = series({ a: [bucket(0), bucket(1)] });
+    expect(layout(data, "requests", 100).lines[0]?.points.at(-1)?.x).toBe(360 - 108);
+  });
+
+  it("draws the svg in the measured width", () => {
+    class Observer {
+      constructor(readonly callback: () => void) {}
+      observe() { this.callback(); }
+      disconnect() {}
+    }
+    vi.stubGlobal("ResizeObserver", Observer);
+    Object.defineProperty(HTMLElement.prototype, "clientWidth", { configurable: true, get: () => 1200 });
+    try {
+      const { container } = render(<LineChart series={series({ a: [bucket(0), bucket(1)] })} metric="requests" focus="" onFocus={none} />);
+      expect(container.querySelector("svg")?.getAttribute("viewBox")).toBe("0 0 1200 280");
+    } finally {
+      vi.unstubAllGlobals();
+      Reflect.deleteProperty(HTMLElement.prototype, "clientWidth");
+    }
+  });
+});
+
 describe("the labels at the ends of the lines", () => {
   it("are pushed apart when the lines end together, so none prints over another, and stay inside the plot", () => {
     const together = series({ a: [bucket(0), bucket(1)], b: [bucket(0), bucket(1)], c: [bucket(0), bucket(1)], d: [bucket(0), bucket(1)] });

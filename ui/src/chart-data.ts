@@ -82,11 +82,17 @@ export interface Layout {
   unreadTo: number | null;
 }
 
-const plotWidth = WIDTH - LEFT - RIGHT;
 const plotHeight = HEIGHT - TOP - BOTTOM;
 
-/** Scales for a series and a metric. All geometry is computed here and written as plain SVG attributes. */
-export function layout(series: Series, metric: Metric): Layout {
+/** The narrowest chart drawn; below it the page scrolls rather than squeeze the plot away. */
+export const MIN_WIDTH = 360;
+
+/**
+ * Scales for a series and a metric, for a chart `width` units wide (its width on screen, so text keeps its size).
+ * All geometry is computed here and written as plain SVG attributes.
+ */
+export function layout(series: Series, metric: Metric, width = WIDTH): Layout {
+  const plotWidth = Math.max(MIN_WIDTH, width) - LEFT - RIGHT;
   const groups = series.data.slice(0, MAX_SERIES);
   const starts = groups[0]?.buckets.map((b) => b.start_ms) ?? [];
   const first = starts[0] ?? 0;

@@ -1,5 +1,6 @@
+import { useEffect, useRef, useState } from "preact/hooks";
 import type { Series } from "./api/client";
-import { BOTTOM, HEIGHT, LEFT, MAX_SERIES, METRIC_LABELS, RIGHT, TOP, WIDTH, formatMetric, layout, pointTitle, strokes } from "./chart-data";
+import { BOTTOM, HEIGHT, LEFT, MAX_SERIES, METRIC_LABELS, MIN_WIDTH, RIGHT, TOP, WIDTH, formatMetric, layout, pointTitle, strokes } from "./chart-data";
 import type { Metric } from "./query";
 
 /** A marker whose shape tells a series apart without colour. `shape` runs 0 to 7. */
@@ -37,21 +38,36 @@ export function Marker(props: { shape: number; x: number; y: number }) {
  */
 export function LineChart(props: { series: Series; metric: Metric; focus: string; onFocus: (group: string) => void }) {
   const { series, metric, focus } = props;
-  const drawn = layout(series, metric);
+  // The chart is laid out in the units it is shown in (its width on screen), so it can fill the page without its text
+  // growing with it. Before it is measured (and where nothing can be) it is the default width.
+  const figure = useRef<HTMLElement>(null);
+  const [width, setWidth] = useState(WIDTH);
+  useEffect(() => {
+    const element = figure.current;
+    if (element === null || typeof ResizeObserver === "undefined") return;
+    const measure = () => {
+      if (element.clientWidth > 0) setWidth(Math.max(MIN_WIDTH, Math.round(element.clientWidth)));
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => { observer.disconnect(); };
+  }, []);
+  const drawn = layout(series, metric, width);
   if (drawn.lines.length === 0) return <p class="status">No requests in this window.</p>;
   const choose = (group: string) => {
     props.onFocus(group === focus ? "" : group);
   };
   return (
-    <figure class="chart">
-      <svg viewBox={`0 0 ${WIDTH.toString()} ${HEIGHT.toString()}`} role="img" aria-label={`${METRIC_LABELS[metric]} over time`}>
+    <figure class="chart" ref={figure}>
+      <svg viewBox={`0 0 ${width.toString()} ${HEIGHT.toString()}`} role="img" aria-label={`${METRIC_LABELS[metric]} over time`}>
         {drawn.yTicks.map((t) => (
           <g key={t.value}>
-            <line class="grid" x1={LEFT} x2={WIDTH - RIGHT} y1={t.y} y2={t.y} />
+            <line class="grid" x1={LEFT} x2={width - RIGHT} y1={t.y} y2={t.y} />
             <text class="axis" x={LEFT - 6} y={t.y + 4} text-anchor="end">{formatMetric(metric, t.value)}</text>
           </g>
         ))}
-        <text class="axis" x={WIDTH - RIGHT} y={HEIGHT - 2} text-anchor="end">times are UTC</text>
+        <text class="axis" x={width - RIGHT} y={HEIGHT - 2} text-anchor="end">times are UTC</text>
         {drawn.xTicks.map((t) => (
           <text key={t.x} class="axis" x={t.x} y={HEIGHT - BOTTOM + 16} text-anchor="middle">{t.label}</text>
         ))}
