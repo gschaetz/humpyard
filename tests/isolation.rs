@@ -7,7 +7,7 @@
 //! Administrative statistics reads must not move the request path. The gateway runs on a runtime with ONE worker
 //! thread, the worst case (a 500m container can leave a runtime with one), in a thread of its own, so only the
 //! gateway is constrained. Its ledger is seeded past the statistics row cap. The same request traffic is then
-//! measured with and without two clients reading statistics and session views back to back, in alternating rounds
+//! measured with and without three clients reading statistics, session views and a statistics series back to back, in alternating rounds
 //! so that drift in the machine reaches both halves, and the verdict is on the median p99 of the rounds.
 //!
 //! `ISOLATION_POLITE=1` makes the load clients honor `Retry-After` (they wait out a 503) and pause a second after an
@@ -175,17 +175,21 @@ fn start_gateway(toml: String, workers: usize) -> Gateway {
     }
 }
 
-/// Two clients reading statistics and session views back to back until stopped, each read for a different window.
+/// Three clients reading statistics, session views and a statistics series back to back until stopped, each read for
+/// a different window.
 struct Load {
     stop: Arc<AtomicBool>,
     ok: Arc<AtomicU64>,
     refused: Arc<AtomicU64>,
     failed: Arc<AtomicU64>,
+    /// Successful reads of the series alone, so a gate that always served the others first could not hide it.
+    series_ok: Arc<AtomicU64>,
     tasks: Vec<tokio::task::JoinHandle<()>>,
 }
 
 struct LoadCounts {
     ok: u64,
+    series_ok: u64,
     refused: u64,
     failed: u64,
 }
@@ -204,6 +208,13 @@ fn session_query(n: u64) -> String {
     )
 }
 
+fn series_query(n: u64) -> String {
+    format!(
+        "/admin/v1/stats/series?group_by=target&interval=1d&limit=25&window={}h",
+        700 + n % DISTINCT_WINDOWS
+    )
+}
+
 fn start_load(client: &reqwest::Client, base: &str, key: &str) -> Load {
     let polite = std::env::var("ISOLATION_POLITE").is_ok_and(|v| v == "1");
     let load = Load {
@@ -211,10 +222,18 @@ fn start_load(client: &reqwest::Client, base: &str, key: &str) -> Load {
         ok: Arc::new(AtomicU64::new(0)),
         refused: Arc::new(AtomicU64::new(0)),
         failed: Arc::new(AtomicU64::new(0)),
+        series_ok: Arc::new(AtomicU64::new(0)),
         tasks: Vec::new(),
     };
     let mut load = load;
-    for query in [target_query as fn(u64) -> String, session_query] {
+    let queries = [
+        target_query as fn(u64) -> String,
+        session_query,
+        series_query,
+    ];
+    for (which, query) in queries.into_iter().enumerate() {
+        let is_series = which == 2;
+        let series_ok = load.series_ok.clone();
         let (client, base, key) = (client.clone(), base.to_string(), key.to_string());
         let (stop, ok, refused, failed) = (
             load.stop.clone(),
@@ -236,7 +255,12 @@ fn start_load(client: &reqwest::Client, base: &str, key: &str) -> Load {
                         let status = r.status().as_u16();
                         let _ = r.bytes().await;
                         match status {
-                            200 => ok.fetch_add(1, Ordering::Relaxed),
+                            200 => {
+                                if is_series {
+                                    series_ok.fetch_add(1, Ordering::Relaxed);
+                                }
+                                ok.fetch_add(1, Ordering::Relaxed)
+                            }
                             503 => refused.fetch_add(1, Ordering::Relaxed),
                             _ => failed.fetch_add(1, Ordering::Relaxed),
                         };
@@ -263,6 +287,7 @@ impl Load {
         }
         LoadCounts {
             ok: self.ok.load(Ordering::Relaxed),
+            series_ok: self.series_ok.load(Ordering::Relaxed),
             refused: self.refused.load(Ordering::Relaxed),
             failed: self.failed.load(Ordering::Relaxed),
         }
@@ -368,6 +393,8 @@ struct Findings {
     loaded_p99: f64,
     dropped: u64,
     every_round_read: bool,
+    /// The series read was answered at least once over the run (it goes through the same gate and cache).
+    series_read: bool,
     failed_reads: u64,
 }
 
@@ -390,6 +417,11 @@ fn failures(f: &Findings) -> Vec<String> {
     if !f.every_round_read {
         out.push(
             "a loaded round made no successful admin read, so it did not load the gateway".into(),
+        );
+    }
+    if !f.series_read {
+        out.push(
+            "no series read was answered in any round, so the series was not in the load".into(),
         );
     }
     if f.failed_reads > 0 {
@@ -444,7 +476,7 @@ async fn admin_reads_do_not_move_the_request_path() {
         "round", "unloaded p99 ms", "loaded p99 ms", "reads ok", "refused", "failed"
     );
     let (mut a99, mut b99) = (Vec::new(), Vec::new());
-    let (mut ok_each_round, mut failed_total) = (true, 0);
+    let (mut ok_each_round, mut failed_total, mut series_total) = (true, 0, 0);
     for round in 1..=rounds {
         let a = unloaded(&client, &url, requests).await;
         let (b, counts) = loaded(&client, &url, requests, &base, &admin_key).await;
@@ -454,6 +486,7 @@ async fn admin_reads_do_not_move_the_request_path() {
         );
         ok_each_round &= counts.ok > 0;
         failed_total += counts.failed;
+        series_total += counts.series_ok;
         a99.push(a.p99);
         b99.push(b.p99);
     }
@@ -470,6 +503,7 @@ async fn admin_reads_do_not_move_the_request_path() {
         loaded_p99,
         dropped,
         every_round_read: ok_each_round,
+        series_read: series_total > 0,
         failed_reads: failed_total,
     });
     assert!(
@@ -844,6 +878,10 @@ fn the_load_asks_for_a_different_window_each_time() {
     assert_eq!(seen.len(), usize::try_from(DISTINCT_WINDOWS).unwrap());
     assert!(target_query(0).contains("group_by=target"));
     assert!(session_query(0).contains("group_by=session"));
+    assert!(series_query(0).contains("/stats/series"));
+    let series: std::collections::HashSet<String> =
+        (0..DISTINCT_WINDOWS).map(series_query).collect();
+    assert_eq!(series.len(), usize::try_from(DISTINCT_WINDOWS).unwrap());
     assert!(
         (0..DISTINCT_WINDOWS).all(|n| 700 + n < 24 * 90),
         "every window stays inside the default retention"
@@ -856,6 +894,7 @@ fn passing() -> Findings {
         loaded_p99: 8.5,
         dropped: 0,
         every_round_read: true,
+        series_read: true,
         failed_reads: 0,
     }
 }
@@ -885,6 +924,14 @@ fn each_way_to_fail_is_reported_on_its_own() {
     assert!(
         idle.len() == 1 && idle[0].contains("no successful admin read"),
         "{idle:?}"
+    );
+    let unseen = failures(&Findings {
+        series_read: false,
+        ..passing()
+    });
+    assert!(
+        unseen.len() == 1 && unseen[0].contains("series was not in the load"),
+        "{unseen:?}"
     );
     let broken = failures(&Findings {
         failed_reads: 2,
