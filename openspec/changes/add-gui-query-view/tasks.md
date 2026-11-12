@@ -14,7 +14,7 @@
 
 - [x] 3.1 Add the query module: the query value and its defaults (24h, target, failure rate, refresh every 1m, with off, 30s, 1m and 5m as the only periods), the interval for each window (1h:1m, 6h:5m, 24h:15m, 7d:2h, 30d:6h), and parse and serialise for the URL fragment against fixed lists; verify with unit tests for round trips, unknown and hostile values falling back to the defaults, filters kept as plain strings, an unknown refresh period such as `1ms` falling back to the default, and nothing resembling a credential or token ever serialised
 - [x] 3.2 Add the series call to the typed client, with a 404 mapped to "the gateway cannot draw a series" rather than an error; verify with client tests for success, 404, a 403 and an unreachable gateway, and that the credential is sent as before
-- [ ] 3.3 Rework the row model: rows for target, endpoint and route groupings (health only where the grouping has it), the four headline figures, and the default problems-first order from the spec, with column sorting; confirm the order with the user before this task is applied; verify with unit tests for each scenario of the spec (failing target above a busy one, unrated last, route grouping without health, ties by name)
+- [x] 3.3 Rework the row model: rows for target, endpoint and route groupings (health only where the grouping has it), the four headline figures, and the default problems-first order from the spec, with column sorting; confirm the order with the user before this task is applied; verify with unit tests for each scenario of the spec (failing target above a busy one, unrated last, route grouping without health, ties by name)
 
 ## 4. The query view
 

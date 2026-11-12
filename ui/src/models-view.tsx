@@ -92,7 +92,7 @@ function Table(props: { rows: ModelRow[]; truncated: boolean }) {
         </thead>
         <tbody>
           {props.rows.map((row) => (
-            <Row key={row.target} row={row} />
+            <Row key={row.group} row={row} />
           ))}
         </tbody>
       </table>
@@ -105,7 +105,7 @@ function Row(props: { row: ModelRow }) {
   const g = row.stats;
   return (
     <tr>
-      <th scope="row" class="target">{row.target}</th>
+      <th scope="row" class="target">{row.group}</th>
       <td><Health row={row} /></td>
       <td class="num">{g ? count(g.requests) : "0"}</td>
       <td class="num">{g ? count(g.answered) : "0"}</td>
