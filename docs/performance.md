@@ -495,3 +495,17 @@ on the slowest write is the median over its rounds (a prune that holds the lock 
 a prune back in one statement did, 1.37 to 1.39 s in each), and the job runs the tests once more after a failure and passes only if
 the second run passes, leaving a warning. This makes a flake less likely to block a pull request; a regression that moves
 every run still fails both.
+
+## Run 11: the series in the isolation load (2026-11-12)
+
+The administrative load of the isolation test is now three clients, not two: statistics by target, session views and
+a statistics series (`/admin/v1/stats/series`, a different window each time, one-day buckets, 25 groups), each looping
+as fast as it can against the one-worker gateway and the ledger seeded past the row cap. All three go through the
+admin surface's one gate and the ten-second shared result, so the series is one more heavy read competing for it; the
+test now also fails if no series read was answered in any round, so a gate that always served the others first could
+not hide it (`add-gui-query-view` 5.3).
+
+Two full runs on the host: loaded p99 6.74 ms against 9.27 and 9.37 ms unloaded (allowed rise 1.00 ms), no entry dropped,
+about 300 reads answered and about 90,000 refused per round, none failed. The contention test passed in the same runs
+(slowest override write 220 and 291 ms, median of the rounds). The loaded half is again no slower than the unloaded
+one, as in Run 9: a heavy read answered from another thread leaves the request path alone, and a refusal costs little.
