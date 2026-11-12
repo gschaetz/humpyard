@@ -146,7 +146,7 @@ struct Accumulator {
 /// serves requests. Only this function is visible outside the module.
 pub(super) async fn compute(pool: &SqlitePool, q: &StatsQuery) -> Result<Stats, LedgerError> {
     let rows = sqlx::query(
-        "SELECT route, attempts FROM decisions WHERE ts_ms >= ?1 AND (?2 IS NULL OR key_id = ?2) \
+        "SELECT route, attempts, ts_ms FROM decisions WHERE ts_ms >= ?1 AND (?2 IS NULL OR key_id = ?2) \
          AND (?3 IS NULL OR route = ?3) AND route IS NOT NULL ORDER BY ts_ms DESC LIMIT ?4",
     )
     .bind(q.since_ms)
@@ -168,45 +168,10 @@ fn fold(
     q: &StatsQuery,
 ) -> Stats {
     let truncated = rows.len() > q.row_cap as usize;
-
-    let mut acc: HashMap<String, Accumulator> = HashMap::new();
-    for row in rows.iter().take(q.row_cap as usize) {
-        let attempts: Vec<Attempt> =
-            serde_json::from_str(&row.get::<String, _>("attempts")).unwrap_or_default();
-        let route: String = row.get("route");
-        // Each request counts once per group it touched, however many attempts it made there.
-        let mut touched: HashMap<String, usize> = HashMap::new();
-        let in_scope: Vec<&Attempt> = attempts
-            .iter()
-            .filter(|a| q.target.as_ref().is_none_or(|t| &a.target == t))
-            .collect();
-        match q.group_by {
-            GroupBy::Route => {
-                let entry = acc.entry(route).or_default();
-                entry.requests += 1;
-                entry.fallbacks += u64::from(attempts.len() > 1);
-                for a in &in_scope {
-                    add_attempt(entry, a);
-                }
-            }
-            GroupBy::Target | GroupBy::Endpoint => {
-                for a in &in_scope {
-                    let group = if q.group_by == GroupBy::Target {
-                        a.target.clone()
-                    } else {
-                        format!("{}/{}", a.provider, a.model)
-                    };
-                    *touched.entry(group.clone()).or_default() += 1;
-                    add_attempt(acc.entry(group).or_default(), a);
-                }
-                for (group, n) in touched {
-                    let entry = acc.entry(group).or_default();
-                    entry.requests += 1;
-                    entry.fallbacks += u64::from(n > 1 || attempts.len() > 1);
-                }
-            }
-        }
-    }
+    let acc: HashMap<String, Accumulator> = accumulate(rows, q, None)
+        .into_iter()
+        .map(|((group, _), a)| (group, a))
+        .collect();
 
     let mut groups: Vec<GroupStats> = acc
         .into_iter()
@@ -244,6 +209,60 @@ fn fold(
             .then_with(|| a.group.cmp(&b.group))
     });
     Stats { groups, truncated }
+}
+
+/// Counts the decisions into accumulators keyed by `(group, bucket)`: the one place the counting rules live. A
+/// request counts once per group it touched, however many attempts it made there; it is a fallback when it made more
+/// than one attempt; an attempt counts only when it is on the `target` filter. With no `bucket_ms` the bucket is
+/// `None` and the accumulators are the group totals; with one, the bucket is the request's time floored to a multiple
+/// of it, so a series and the totals cannot count differently.
+fn accumulate(
+    rows: &[sqlx::sqlite::SqliteRow],
+    q: &StatsQuery,
+    bucket_ms: Option<i64>,
+) -> HashMap<(String, Option<i64>), Accumulator> {
+    let mut acc: HashMap<(String, Option<i64>), Accumulator> = HashMap::new();
+    for row in rows.iter().take(q.row_cap as usize) {
+        let attempts: Vec<Attempt> =
+            serde_json::from_str(&row.get::<String, _>("attempts")).unwrap_or_default();
+        let route: String = row.get("route");
+        let bucket = bucket_ms.map(|width| {
+            let ts_ms: i64 = row.get("ts_ms");
+            ts_ms.div_euclid(width) * width
+        });
+        let mut touched: HashMap<String, usize> = HashMap::new();
+        let in_scope: Vec<&Attempt> = attempts
+            .iter()
+            .filter(|a| q.target.as_ref().is_none_or(|t| &a.target == t))
+            .collect();
+        match q.group_by {
+            GroupBy::Route => {
+                let entry = acc.entry((route, bucket)).or_default();
+                entry.requests += 1;
+                entry.fallbacks += u64::from(attempts.len() > 1);
+                for a in &in_scope {
+                    add_attempt(entry, a);
+                }
+            }
+            GroupBy::Target | GroupBy::Endpoint => {
+                for a in &in_scope {
+                    let group = if q.group_by == GroupBy::Target {
+                        a.target.clone()
+                    } else {
+                        format!("{}/{}", a.provider, a.model)
+                    };
+                    *touched.entry(group.clone()).or_default() += 1;
+                    add_attempt(acc.entry((group, bucket)).or_default(), a);
+                }
+                for (group, n) in touched {
+                    let entry = acc.entry((group, bucket)).or_default();
+                    entry.requests += 1;
+                    entry.fallbacks += u64::from(n > 1 || attempts.len() > 1);
+                }
+            }
+        }
+    }
+    acc
 }
 
 fn add_attempt(entry: &mut Accumulator, attempt: &Attempt) {
@@ -331,6 +350,85 @@ async fn cost_by_group(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A fixed window read through the same query the statistics use: three requests on two targets, one of them a
+    /// fallback, two minutes apart, so a one-minute bucket separates them.
+    async fn window() -> Vec<sqlx::sqlite::SqliteRow> {
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query("CREATE TABLE decisions (route TEXT, attempts TEXT, ts_ms INTEGER)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let attempt = |target: &str, outcome: &str, ms: u64| serde_json::json!({"target": target, "provider": "p", "model": target, "outcome": outcome, "ms": ms});
+        let rows = [
+            (60_000, vec![attempt("a", "ok", 100)]),
+            (
+                125_000,
+                vec![attempt("a", "timeout", 900), attempt("b", "ok", 200)],
+            ),
+            (130_000, vec![attempt("b", "ok", 300)]),
+        ];
+        for (ts, attempts) in rows {
+            sqlx::query("INSERT INTO decisions VALUES ('r', ?1, ?2)")
+                .bind(serde_json::Value::Array(attempts).to_string())
+                .bind(ts)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+        sqlx::query("SELECT route, attempts, ts_ms FROM decisions ORDER BY ts_ms DESC")
+            .fetch_all(&pool)
+            .await
+            .unwrap()
+    }
+
+    fn query() -> StatsQuery {
+        StatsQuery {
+            key: None,
+            since_ms: 0,
+            group_by: GroupBy::Target,
+            route: None,
+            target: None,
+            row_cap: 100,
+        }
+    }
+
+    #[tokio::test]
+    async fn the_totals_of_a_fixed_window_are_the_counts_the_rules_give() {
+        let acc = accumulate(&window().await, &query(), None);
+        let a = &acc[&("a".to_string(), None)];
+        assert_eq!((a.requests, a.attempts, a.fallbacks), (2, 2, 1));
+        assert_eq!(a.outcomes.get("timeout"), Some(&1));
+        let b = &acc[&("b".to_string(), None)];
+        assert_eq!((b.requests, b.attempts, b.fallbacks), (2, 2, 1));
+        assert_eq!(acc.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn buckets_are_floors_of_the_interval_and_add_up_to_the_totals() {
+        let rows = window().await;
+        let totals = accumulate(&rows, &query(), None);
+        let buckets = accumulate(&rows, &query(), Some(60_000));
+        let starts: std::collections::BTreeSet<i64> =
+            buckets.keys().filter_map(|(_, b)| *b).collect();
+        assert_eq!(
+            starts.into_iter().collect::<Vec<_>>(),
+            vec![60_000, 120_000],
+            "125 s and 130 s share the bucket at 120 s"
+        );
+        for ((group, _), total) in &totals {
+            let sum = |f: fn(&Accumulator) -> u64| -> u64 {
+                buckets
+                    .iter()
+                    .filter(|((g, _), _)| g == group)
+                    .map(|(_, a)| f(a))
+                    .sum()
+            };
+            assert_eq!(sum(|a| a.requests), total.requests, "{group}");
+            assert_eq!(sum(|a| a.attempts), total.attempts, "{group}");
+            assert_eq!(sum(|a| a.fallbacks), total.fallbacks, "{group}");
+        }
+    }
 
     #[test]
     fn nearest_rank_percentiles_match_the_textbook_definition() {
