@@ -669,12 +669,13 @@ fn an_unknown_module_fails_closed() {
 // text, so a sample that commits the violation can be checked to be caught, as well as the tree being checked clean.
 
 /// The ledger's public reads: each must read through the read pool and never the writer's.
-const LEDGER_READS: [&str; 7] = [
+const LEDGER_READS: [&str; 8] = [
     "quota_history",
     "decisions",
     "answer_signals",
     "session_scan",
     "stats",
+    "series",
     "spend_since",
     "entries_since",
 ];
@@ -747,7 +748,8 @@ fn fold_violations(module: &str, code: &str) -> Vec<String> {
 
 /// A `server` module that calls a heavy ledger read also names the gate.
 fn gate_violations(module: &str, code: &str) -> Vec<String> {
-    let heavy = code.contains(".stats(") || code.contains(".session_scan(");
+    let heavy =
+        code.contains(".stats(") || code.contains(".series(") || code.contains(".session_scan(");
     if heavy && !code.contains(".heavy") {
         vec![format!(
             "{module}: calls a heavy ledger read without going through `state.heavy`, the gate and shared result"
@@ -764,7 +766,7 @@ fn heavy_ledger_reads_stay_off_the_runtime_and_behind_the_gate() {
     let ledger = code("ledger.rs");
     let mut found = read_pool_violations(&ledger);
     found.extend(dispatch_violations(&ledger));
-    for module in ["stats", "sessions"] {
+    for module in ["stats", "series", "sessions"] {
         found.extend(fold_violations(
             module,
             &code(&format!("ledger/{module}.rs")),

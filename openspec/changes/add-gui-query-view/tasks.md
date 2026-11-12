@@ -3,7 +3,7 @@
 ## 1. Counting a series in the ledger
 
 - [x] 1.1 Fold decision rows into accumulators keyed by `(group, bucket)` through one function (`bucket` is `None` for the totals), with `ts_ms` added to the row query; verify the existing statistics tests pass unchanged and a new test shows the totals are the same as before on a fixed set of rows
-- [ ] 1.2 Add the series computation: epoch-aligned buckets from the window's first to the current one, every bucket present with zero counts and null rates and percentiles when quiet, the busiest `limit` groups with `omitted_groups`, and `truncated` with `covered_since_ms`; verify with unit tests for bucket edges, a quiet bucket, the top-N cut, the row-cap cut, the `target` filter and `group_by` for route, target and endpoint, plus a property test that each group's bucket sums equal its totals
+- [x] 1.2 Add the series computation: epoch-aligned buckets from the window's first to the current one, every bucket present with zero counts and null rates and percentiles when quiet, the busiest `limit` groups with `omitted_groups`, and `truncated` with `covered_since_ms`; verify with unit tests for bucket edges, a quiet bucket, the top-N cut, the row-cap cut, the `target` filter and `group_by` for route, target and endpoint, plus a property test that each group's bucket sums equal its totals
 
 ## 2. The endpoint and its contract
 

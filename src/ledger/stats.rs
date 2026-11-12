@@ -133,19 +133,41 @@ pub fn percentile(sorted: &[u64], p: u8) -> Option<u64> {
 
 /// What one request contributes to a group, before aggregation.
 #[derive(Default)]
-struct Accumulator {
-    requests: u64,
-    attempts: u64,
-    outcomes: BTreeMap<String, u64>,
-    fallbacks: u64,
-    latencies: Vec<u64>,
+pub(super) struct Accumulator {
+    pub(super) requests: u64,
+    pub(super) attempts: u64,
+    pub(super) outcomes: BTreeMap<String, u64>,
+    pub(super) fallbacks: u64,
+    pub(super) latencies: Vec<u64>,
+}
+
+impl Accumulator {
+    /// Attempts that did not succeed: every outcome but `ok`.
+    pub(super) fn failures(&self) -> u64 {
+        self.outcomes
+            .iter()
+            .filter(|(k, _)| *k != "ok")
+            .map(|(_, v)| *v)
+            .sum()
+    }
 }
 
 /// Reads the decisions and the usage sums in the window, then folds them into per-group statistics on a blocking
 /// thread (ADR 0036): the fold parses up to `row_cap` rows of JSON and must never hold a worker of the runtime that
 /// serves requests. Only this function is visible outside the module.
 pub(super) async fn compute(pool: &SqlitePool, q: &StatsQuery) -> Result<Stats, LedgerError> {
-    let rows = sqlx::query(
+    let rows = decision_rows(pool, q).await?;
+    let costs = cost_by_group(pool, q).await?;
+    let query = q.clone();
+    super::off_runtime(move || fold(&rows, &costs, &query)).await
+}
+
+/// The newest decisions in the window (one more than the cap, so a cut window is seen), newest first.
+pub(super) async fn decision_rows(
+    pool: &SqlitePool,
+    q: &StatsQuery,
+) -> Result<Vec<sqlx::sqlite::SqliteRow>, LedgerError> {
+    Ok(sqlx::query(
         "SELECT route, attempts, ts_ms FROM decisions WHERE ts_ms >= ?1 AND (?2 IS NULL OR key_id = ?2) \
          AND (?3 IS NULL OR route = ?3) AND route IS NOT NULL ORDER BY ts_ms DESC LIMIT ?4",
     )
@@ -154,10 +176,7 @@ pub(super) async fn compute(pool: &SqlitePool, q: &StatsQuery) -> Result<Stats, 
     .bind(&q.route)
     .bind(i64::from(q.row_cap) + 1)
     .fetch_all(pool)
-    .await?;
-    let costs = cost_by_group(pool, q).await?;
-    let query = q.clone();
-    super::off_runtime(move || fold(&rows, &costs, &query)).await
+    .await?)
 }
 
 /// The synchronous, CPU-bound half of [`compute`]: counts each request once per group it touched, and turns the
@@ -177,12 +196,7 @@ fn fold(
         .into_iter()
         .map(|(group, mut a)| {
             a.latencies.sort_unstable();
-            let failures = a
-                .outcomes
-                .iter()
-                .filter(|(k, _)| *k != "ok")
-                .map(|(_, v)| *v)
-                .sum();
+            let failures = a.failures();
             let sums = costs.get(&group).copied().unwrap_or_default();
             let (answered, cost, tokens) = (sums.answered, sums.cost, sums.tokens);
             GroupStats {
@@ -216,7 +230,7 @@ fn fold(
 /// than one attempt; an attempt counts only when it is on the `target` filter. With no `bucket_ms` the bucket is
 /// `None` and the accumulators are the group totals; with one, the bucket is the request's time floored to a multiple
 /// of it, so a series and the totals cannot count differently.
-fn accumulate(
+pub(super) fn accumulate(
     rows: &[sqlx::sqlite::SqliteRow],
     q: &StatsQuery,
     bucket_ms: Option<i64>,
