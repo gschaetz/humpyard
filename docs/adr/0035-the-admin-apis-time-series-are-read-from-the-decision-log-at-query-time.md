@@ -1,9 +1,9 @@
 # 0035. The admin API's time series are read from the decision log at query time
 
-- Status: proposed
+- Status: accepted
 - Date: 2026-11-09
 - Supersedes: none
-- Change: `openspec/changes/add-gui-query-view`
+- Change: `openspec/changes/archive/2026-11-11-add-gui-query-view`
 
 ## Context
 

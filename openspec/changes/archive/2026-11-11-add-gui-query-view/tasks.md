@@ -26,10 +26,10 @@
 
 ## 5. Wrap-up
 
-- [ ] 5.1 Update `docs/architecture.md` (the module table for the series code and the GUI modules, the status table, the "Last updated" line, and the operator-surface diagram if it changes) and verify its Mermaid diagrams still match the code
-- [ ] 5.2 Check the threat model in `design.md` against what was built (each row still true, each proof exists), record the result in `docs/admin-gui.md`, add the admin read-rate gap (row 10, now with the refresh timer in mind) to `docs/threat-model.md`, accept ADR 0035 and mark it accepted in `docs/adr/README.md`; verify every proof named in the table exists and passes
+- [x] 5.1 Update `docs/architecture.md` (the module table for the series code and the GUI modules, the status table, the "Last updated" line, and the operator-surface diagram if it changes) and verify its Mermaid diagrams still match the code
+- [x] 5.2 Check the threat model in `design.md` against what was built (each row still true, each proof exists), record the result in `docs/admin-gui.md`, add the admin read-rate gap (row 10, now with the refresh timer in mind) to `docs/threat-model.md`, accept ADR 0035 and mark it accepted in `docs/adr/README.md`; verify every proof named in the table exists and passes
 - [x] 5.3 Add the series endpoint and a session view to the load of the isolation test from `define-performance-budget` (which must land first) and pass it, with the series going through that change's gate and cache; verify the isolation test passes with the series in its looping load and records no dropped entries
-- [ ] 5.4 Run fmt, clippy `-D warnings`, `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --document-private-items` (also with `--features ui` once `ui/dist` is built), the full test suite with and without the `ui` feature, the `ui/` checks and `openspec validate --specs`, then archive this change with `openspec archive add-gui-query-view --yes`; verify all gates pass and the spec deltas merge
+- [x] 5.4 Run fmt, clippy `-D warnings`, `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --document-private-items` (also with `--features ui` once `ui/dist` is built), the full test suite with and without the `ui` feature, the `ui/` checks and `openspec validate --specs`, then archive this change with `openspec archive add-gui-query-view --yes`; verify all gates pass and the spec deltas merge
 
 ## Workflow follow-up
 

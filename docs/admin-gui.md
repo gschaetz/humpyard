@@ -204,6 +204,26 @@ it:
 | A release without the GUI | the `ui` feature fails the build; the smoke test rejects the placeholder |
 | A malicious dependency | pinned dependencies, a committed lockfile, `npm ci --ignore-scripts` and `npm audit` in CI |
 
+### The query view
+
+The threat model of `add-gui-query-view` was checked against what was built; each row is held by a test:
+
+| Threat | Where it is held |
+|---|---|
+| A huge window, tiny interval or many groups exhausts the gateway | parameters bounded and refused before any read (`tests/admin_reads.rs`), the 50,000-row cap, the heavy-read gate and shared result (`tests/heavy_reads.rs`), the series in the isolation test's load (`tests/isolation.rs`) |
+| A credential without `read` reads the series; a client key reads cross-key aggregates | the route table scope and the 404 on `/v1/stats/series` (`tests/admin_reads.rs`) |
+| A parameter reaches SQL unescaped | bound parameters, integers parsed from windows and intervals, unknown parameters refused (hostile values in `tests/admin_reads.rs`) |
+| A group name injects script through the chart, legend, tooltip or ranking | text nodes only, the raw-HTML lint rule, hostile-name tests in `chart.test.tsx`, `bars.test.tsx` and `query-view.test.tsx` |
+| A crafted or shared link | fixed lists and text-only filters, nothing credential-like read or written (`query.test.ts`, `query-view.test.tsx`) |
+| A truncated or quiet series read as "quiet" | `truncated` and `covered_since_ms`, the shaded region, gaps for null buckets (`chart.test.tsx`, `series.rs` tests) |
+| The chart weakens the policy | classes and attributes only; `check-dist` in the `ui` job; the header test in `tests/ui.rs` |
+| Open or many tabs refresh forever and load the gateway | `refresh.ts` tests with fake timers for each rule; the series and the statistics asked one after the other because the gate allows one heavy read at a time (a test fails if they overlap) |
+| Stale numbers look current; a refused credential is retried forever | out-of-date marking with the time, late answers dropped, refresh stops on 401 or 403 (`refresh.test.ts`, `query-view.test.tsx`) |
+
+**Not closed:** the admin API has no per-credential rate limit, so a stolen or shared `read` credential can read as fast
+as it likes (bounded cost per call only), and many visible pages add up on the gateway. It is recorded as a gap in the
+[threat model](threat-model.md).
+
 Accepted residual risks: malware running as your user can read the environment and the browser regardless;
 the browser-held credential is a long-lived secret typed into a form with no second factor (sign-in through an
 identity provider is the real fix, [ADR 0027](adr/0027-admin-authority-is-granted-by-configuration-to-named-scoped-principals.md));
