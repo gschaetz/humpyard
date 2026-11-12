@@ -206,6 +206,22 @@ impl HeavyReads {
         }
     }
 
+    /// Runs `compute` only if the surface's gate is free, and not at all otherwise: for a caller that can do without
+    /// the answer (the route explain's recent numbers), so it rations itself with the same gate, never queues and
+    /// never answers 503 for a part of its answer. Nothing is shared or kept.
+    pub(super) async fn try_run<T>(
+        &self,
+        surface: Surface,
+        compute: impl Future<Output = T>,
+    ) -> Option<T> {
+        let permit = self.gate(surface).try_acquire_owned().ok()?;
+        self.wait_unpaused().await;
+        self.computations.fetch_add(1, Ordering::Relaxed);
+        let value = compute.await;
+        drop(permit);
+        Some(value)
+    }
+
     /// The slot for `key`: a fresh or running one if there is one, else a new one.
     fn slot_for(&self, key: &Key) -> Arc<Slot> {
         let mut slots = self
@@ -423,6 +439,24 @@ mod tests {
             .run(Surface::Admin, "stats", None, &two, ok("y"))
             .await;
         assert_eq!(heavy.computations(), 1);
+    }
+
+    #[tokio::test]
+    async fn an_optional_read_runs_when_the_gate_is_free_and_is_skipped_when_it_is_not() {
+        let heavy = HeavyReads::default();
+        assert_eq!(heavy.try_run(Surface::Client, async { 7 }).await, Some(7));
+        assert!(!heavy.gate_taken(Surface::Client), "the gate is given back");
+        let held = heavy.hold(Surface::Client).unwrap();
+        let started = Instant::now();
+        assert_eq!(heavy.try_run(Surface::Client, async { 8 }).await, None);
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "it must not wait"
+        );
+        // The other surface's gate is its own.
+        assert_eq!(heavy.try_run(Surface::Admin, async { 9 }).await, Some(9));
+        drop(held);
+        assert_eq!(heavy.computations(), 2, "the skipped read never started");
     }
 
     #[tokio::test]

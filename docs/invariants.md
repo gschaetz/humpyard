@@ -164,3 +164,19 @@ in an ADR (`docs/adr/`) in the same change.
     `removing_a_provider_shows_its_header_without_the_value`,
     `a_hash_near_an_edit_is_masked_in_the_context`), `server::tests::every_setting_that_needs_a_restart_is_refused_by_the_shared_check`
     and the `config::patch` unit tests; see [ADR-0034](adr/0034-a-configuration-patch-is-typed-edits-checked-by-the-reload-path-and-written-by-no-one.md).
+
+24. **Heavy ledger reads never run on the serving runtime, never take the writer's connections, and never queue.**
+    Statistics, session views, the switches report and the route explain's recent numbers fold up to 50,000 ledger
+    rows. Their per-row work is a private `fold` run on the blocking pool, reached only through
+    `ledger::off_runtime`; they read through the ledger's read pool (connections that refuse writes and give up
+    after one second for the lock and two for a connection), never the writer's; and each is rationed by
+    `server::heavy`: one at a time per surface (the administrative API and the client API have a gate each), a
+    second answered `503` with `Retry-After` and never queued (the route explain skips its recent numbers instead),
+    and identical reads sharing one result for ten seconds. Reason: a fold on a worker stalls every request on a
+    small runtime, a read that takes the writer's connection drops usage entries, and an unrationed loop of reads
+    is a denial of service on the process that serves every request. *Enforced by* `tests/architecture.rs`
+    (`heavy_ledger_reads_stay_off_the_runtime_and_behind_the_gate`, with a sample-source test for each way to break
+    it: a read through the writer's pool, a fold that is public or run inline, a server module that calls a heavy
+    read without the gate), `tests/ledger_read_pool.rs`, `tests/heavy_reads.rs`, and the isolation tests
+    (`tests/isolation.rs`; the budgets and what a CPU limit does are in [Performance and scale](performance.md));
+    see [ADR-0036](adr/0036-admin-and-ui-work-must-not-change-the-request-paths-performance.md).

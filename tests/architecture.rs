@@ -661,3 +661,196 @@ fn an_unknown_module_fails_closed() {
     let found = violations("brand_new", "fn f() {}");
     assert!(found[0].contains("not in the architecture rules"));
 }
+
+// ---- Heavy ledger reads (ADR 0036, invariant 24) -----------------------------------------------------------------
+//
+// Statistics, session views and the route explain's recent numbers fold up to 50,000 ledger rows. These rules keep
+// that work off the serving runtime, off the writer's connections and behind the gate. Each is a function of source
+// text, so a sample that commits the violation can be checked to be caught, as well as the tree being checked clean.
+
+/// The ledger's public reads: each must read through the read pool and never the writer's.
+const LEDGER_READS: [&str; 7] = [
+    "quota_history",
+    "decisions",
+    "answer_signals",
+    "session_scan",
+    "stats",
+    "spend_since",
+    "entries_since",
+];
+
+/// The body of the method `name` in `code`: from its signature to the next method, attribute or end of the impl.
+fn method_body<'a>(code: &'a str, name: &str) -> Option<&'a str> {
+    let start = code.find(&format!("pub async fn {name}("))?;
+    let rest = &code[start + 1..];
+    let end = [
+        "\n    pub ",
+        "\n    #[",
+        "\n    fn ",
+        "\n    async fn ",
+        "\n}",
+    ]
+    .iter()
+    .filter_map(|marker| rest.find(marker))
+    .min()
+    .unwrap_or(rest.len());
+    Some(&rest[..end])
+}
+
+/// `src/ledger.rs`: every public read uses the read pool, none the writer's.
+fn read_pool_violations(ledger: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for name in LEDGER_READS {
+        match method_body(ledger, name) {
+            None => out.push(format!(
+                "the ledger has no `{name}` read (or this rule is stale)"
+            )),
+            Some(body) => {
+                if body.contains("self.pool") {
+                    out.push(format!("`{name}` reads through the writer's pool"));
+                }
+                if !body.contains("read_pool") {
+                    out.push(format!("`{name}` does not read through the read pool"));
+                }
+            }
+        }
+    }
+    out
+}
+
+/// `src/ledger.rs`: the helper that runs a fold hands it to the blocking pool.
+fn dispatch_violations(ledger: &str) -> Vec<String> {
+    if ledger.contains("spawn_blocking(") {
+        Vec::new()
+    } else {
+        vec!["no row fold is dispatched with spawn_blocking".to_string()]
+    }
+}
+
+/// `src/ledger/stats.rs` and `sessions.rs`: the fold is private, and reached only through `off_runtime`.
+fn fold_violations(module: &str, code: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for (at, _) in code.match_indices("fn fold(") {
+        let line_start = code[..at].rfind('\n').map_or(0, |i| i + 1);
+        if code[line_start..at].contains("pub") {
+            out.push(format!("{module}: the row fold is pub, so code outside the module can run it on the runtime"));
+        }
+    }
+    if !code.contains("fn fold(") {
+        out.push(format!("{module}: has no `fold` (or this rule is stale)"));
+    }
+    if !code.contains("off_runtime(move || fold(") {
+        out.push(format!("{module}: the row fold is not run through `off_runtime`, so it can hold a runtime worker"));
+    }
+    out
+}
+
+/// A `server` module that calls a heavy ledger read also names the gate.
+fn gate_violations(module: &str, code: &str) -> Vec<String> {
+    let heavy = code.contains(".stats(") || code.contains(".session_scan(");
+    if heavy && !code.contains(".heavy") {
+        vec![format!(
+            "{module}: calls a heavy ledger read without going through `state.heavy`, the gate and shared result"
+        )]
+    } else {
+        Vec::new()
+    }
+}
+
+#[test]
+fn heavy_ledger_reads_stay_off_the_runtime_and_behind_the_gate() {
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let code = |relative: &str| production_code(&fs::read_to_string(src.join(relative)).unwrap());
+    let ledger = code("ledger.rs");
+    let mut found = read_pool_violations(&ledger);
+    found.extend(dispatch_violations(&ledger));
+    for module in ["stats", "sessions"] {
+        found.extend(fold_violations(
+            module,
+            &code(&format!("ledger/{module}.rs")),
+        ));
+    }
+    for path in rust_files(&src.join("server")) {
+        let name = path.file_name().unwrap().to_string_lossy().to_string();
+        let source = production_code(&fs::read_to_string(&path).unwrap());
+        found.extend(gate_violations(&format!("server/{name}"), &source));
+    }
+    // The gate module itself is part of the rule: it must exist, or the rule above passes by checking nothing.
+    assert!(
+        src.join("server/heavy.rs").exists(),
+        "server/heavy.rs, the gate, is missing"
+    );
+    assert!(found.is_empty(), "{found:#?}");
+}
+
+#[test]
+fn a_ledger_read_through_the_writers_pool_is_caught() {
+    let sample = "impl Ledger {\n    pub async fn stats(&self, q: &Q) -> R {\n        stats::compute(&self.pool, q).await\n    }\n}\n";
+    let found = read_pool_violations(sample);
+    assert!(
+        found
+            .iter()
+            .any(|v| v.contains("`stats` reads through the writer's pool")),
+        "{found:?}"
+    );
+    assert!(
+        found
+            .iter()
+            .any(|v| v.contains("`stats` does not read through the read pool")),
+        "{found:?}"
+    );
+    // A read that is missing altogether is a stale rule, not a pass.
+    assert!(
+        found.iter().any(|v| v.contains("no `decisions` read")),
+        "{found:?}"
+    );
+}
+
+#[test]
+fn a_fold_that_is_public_or_run_on_the_runtime_is_caught() {
+    let public = "pub fn fold(rows: &[Row]) {}\nasync fn compute() { off_runtime(move || fold(&rows)).await }\n";
+    let found = fold_violations("stats", public);
+    assert!(found.iter().any(|v| v.contains("is pub")), "{found:?}");
+
+    let inline = "fn fold(rows: &[Row]) {}\nasync fn compute() { fold(&rows) }\n";
+    let found = fold_violations("stats", inline);
+    assert!(
+        found
+            .iter()
+            .any(|v| v.contains("not run through `off_runtime`")),
+        "{found:?}"
+    );
+
+    let good =
+        "fn fold(rows: &[Row]) {}\nasync fn compute() { off_runtime(move || fold(&rows)).await }\n";
+    assert_eq!(fold_violations("stats", good), Vec::<String>::new());
+    assert_eq!(dispatch_violations("async fn off_runtime() {}").len(), 1);
+    assert_eq!(
+        dispatch_violations("tokio::task::spawn_blocking(work)"),
+        Vec::<String>::new()
+    );
+}
+
+#[test]
+fn a_server_module_that_reads_the_ledger_without_the_gate_is_caught() {
+    let ungated = "async fn view(state: &AppState) { ledger.stats(&query).await }";
+    let found = gate_violations("server/new.rs", ungated);
+    assert!(
+        found
+            .iter()
+            .any(|v| v.contains("without going through `state.heavy`")),
+        "{found:?}"
+    );
+    let sessions = "async fn view() { ledger.session_scan(&q).await }";
+    assert_eq!(gate_violations("server/new.rs", sessions).len(), 1);
+
+    let gated = "async fn view(state: &AppState) { state\n        .heavy\n        .run(a, b, c, d, async { ledger.stats(&q).await })\n        .await }";
+    assert_eq!(
+        gate_violations("server/stats.rs", gated),
+        Vec::<String>::new()
+    );
+    assert_eq!(
+        gate_violations("server/other.rs", "async fn view() {}"),
+        Vec::<String>::new()
+    );
+}

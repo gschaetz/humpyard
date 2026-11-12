@@ -286,8 +286,6 @@ async fn recent_by_target(
     let Some(ledger) = state.accounting.ledger() else {
         return HashMap::new();
     };
-    // Decisions queued a moment ago should count.
-    ledger.flush().await;
     let query = StatsQuery {
         key: caller.map(|k| k.id.clone()),
         since_ms: state.clock.now_ms() - super::stats::DEFAULT_WINDOW_MS,
@@ -296,10 +294,21 @@ async fn recent_by_target(
         target: None,
         row_cap: 50_000,
     };
-    ledger
-        .stats(&query)
+    // A heavy read like the statistics endpoint's: it folds up to 50,000 rows, so it takes the client surface's gate
+    // (ADR 0036). Explain can do without its recent numbers, so when another heavy read holds the gate it answers
+    // without them instead of waiting or being refused.
+    state
+        .heavy
+        .try_run(super::Surface::Client, async {
+            // Decisions queued a moment ago should count.
+            ledger.flush().await;
+            ledger
+                .stats(&query)
+                .await
+                .map(|s| s.groups.into_iter().map(|g| (g.group.clone(), g)).collect())
+                .unwrap_or_default()
+        })
         .await
-        .map(|s| s.groups.into_iter().map(|g| (g.group.clone(), g)).collect())
         .unwrap_or_default()
 }
 
