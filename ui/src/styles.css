@@ -9,6 +9,14 @@
   --warn-fg: #5a4300;
   --bad: #b3261e;
   --ok: #1b7a3a;
+  --s0: #0072b2;
+  --s1: #d55e00;
+  --s2: #009e73;
+  --s3: #cc79a7;
+  --s4: #7a5c00;
+  --s5: #56b4e9;
+  --s6: #6b3fa0;
+  --s7: #555555;
 }
 @media (prefers-color-scheme: dark) {
   :root {
@@ -21,6 +29,14 @@
     --warn-fg: #f2d98a;
     --bad: #ff8a80;
     --ok: #6fd18c;
+    --s0: #56b4e9;
+    --s1: #ff9e4a;
+    --s2: #4fd1a5;
+    --s3: #f0a3cb;
+    --s4: #e6c34a;
+    --s5: #9ad4f5;
+    --s6: #b794f6;
+    --s7: #b8b8c0;
   }
 }
 body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.45 system-ui, sans-serif; }
@@ -51,3 +67,25 @@ thead th { color: var(--muted); font-weight: 500; font-size: 0.85rem; }
 .health.healthy { color: var(--ok); }
 .health.cooling_down { color: var(--bad); }
 .health.probing { color: var(--warn-fg); }
+
+/* The chart (chart.tsx): every colour, stroke and dash comes from a class here, never a style attribute. */
+.chart { margin: 0.75rem 0 0; }
+.chart svg { width: 100%; height: auto; display: block; }
+.s0 { --c: var(--s0); } .s1 { --c: var(--s1); } .s2 { --c: var(--s2); } .s3 { --c: var(--s3); }
+.s4 { --c: var(--s4); } .s5 { --c: var(--s5); } .s6 { --c: var(--s6); } .s7 { --c: var(--s7); }
+.chart .grid { stroke: var(--line); stroke-width: 1; }
+.chart .axis { fill: var(--muted); font-size: 11px; }
+.chart .line .stroke-line { fill: none; stroke: var(--c); stroke-width: 2; }
+.chart .line .partial { stroke-dasharray: 4 3; }
+.chart .line .mark { fill: var(--c); stroke: none; }
+.chart .line .mark.stroke { fill: none; stroke: var(--c); stroke-width: 2; }
+.chart .line .label { fill: var(--c); font-size: 11px; }
+.chart .line .hit { fill: transparent; stroke: none; }
+.chart .line.dim { opacity: 0.2; }
+.chart .unread { fill: var(--line); opacity: 0.45; }
+.legend { list-style: none; margin: 0.4rem 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 0.4rem; }
+.legend-item { display: inline-flex; align-items: center; gap: 0.35rem; padding: 0.2rem 0.55rem; font-size: 0.85rem; overflow-wrap: anywhere; }
+.legend-item[aria-pressed="true"] { border-color: var(--c); background: var(--line); }
+.legend-mark { width: 12px; height: 12px; }
+.legend-mark .mark { fill: var(--c); stroke: none; }
+.legend-mark .mark.stroke { fill: none; stroke: var(--c); stroke-width: 2; }
