@@ -27,9 +27,9 @@
 
 ## 4. Wrap-up
 
-- [ ] 4.1 Update `docs/architecture.md` (the module table for the heavy-read module and the read pool, the status table, the "Last updated" line, and the diagrams if the request or accounting flow changes) and verify its Mermaid diagrams still match the code
-- [ ] 4.2 Check the threat model in `design.md` against what was built (each row still true, each proof exists), add the CPU-quota gap and the unindexed request-id scan to `docs/threat-model.md`, accept ADR 0036 and mark it accepted in `docs/adr/README.md`; verify every proof named in the table exists and passes
-- [ ] 4.3 Run fmt, clippy `-D warnings`, `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --document-private-items` (also with `--features ui` once `ui/dist` is built), the full test suite with and without the `ui` feature, the isolation test, the `ui/` checks and `openspec validate --specs`, then archive this change with `openspec archive define-performance-budget --yes`; verify all gates pass and the spec deltas merge
+- [x] 4.1 Update `docs/architecture.md` (the module table for the heavy-read module and the read pool, the status table, the "Last updated" line, and the diagrams if the request or accounting flow changes) and verify its Mermaid diagrams still match the code
+- [x] 4.2 Check the threat model in `design.md` against what was built (each row still true, each proof exists), add the CPU-quota gap and the unindexed request-id scan to `docs/threat-model.md`, accept ADR 0036 and mark it accepted in `docs/adr/README.md`; verify every proof named in the table exists and passes
+- [x] 4.3 Run fmt, clippy `-D warnings`, `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --document-private-items` (also with `--features ui` once `ui/dist` is built), the full test suite with and without the `ui` feature, the isolation test, the `ui/` checks and `openspec validate --specs`, then archive this change with `openspec archive define-performance-budget --yes`; verify all gates pass and the spec deltas merge
 
 ## Workflow follow-up
 

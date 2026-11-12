@@ -128,6 +128,28 @@ sufficient answer today; they are collected at the end.
 |---|---|---|
 | Metrics disclose or are abused | Own credential, optional own listener, bounded label vocabulary that never carries client strings | [ADR 0016](adr/0016-metrics-are-one-registry-with-bounded-labels.md); `tests/metrics.rs` |
 
+### B9: heavy reads and performance regressions
+
+Administrative and statistics reads share the process, the runtime, the ledger and the CPU allowance with the request
+path ([ADR 0036](adr/0036-admin-and-ui-work-must-not-change-the-request-paths-performance.md)). The threats are to
+availability and to the record, so they are checked by tests and measurements; the checks are in
+[Fitness functions](fitness-functions.md).
+
+| Threat | Mitigation | Enforced by |
+|---|---|---|
+| A heavy read holds a runtime worker and stalls every request | The row fold runs on the blocking pool | Invariant 24; the isolation test (`tests/isolation.rs`, one worker) |
+| Reads take the writer's connections and usage entries are dropped | A read pool of its own; none dropped in the isolation test | `tests/ledger_read_pool.rs`; the isolation test |
+| A flood of distinct heavy reads exhausts CPU and memory | One heavy read per surface, the rest answered 503 and never queued; the shared result is bounded in entries and size | `tests/heavy_reads.rs`; the cache bound tests in `server::heavy` |
+| A client's statistics loop shuts the operator out, or one key reads another's cached result, or a caller without the scope takes the gate | Separate gates per surface; the key is part of the cache key; the scope is checked before the gate | `tests/heavy_reads.rs` (a client cannot hold the administrative gate; two keys get their own results; a refused credential does not take the gate) |
+| A cached number is read as current | `computed_at_ms` in the answer; at most ten seconds old | `tests/heavy_reads.rs`; the OpenAPI contract |
+| A long prune holds the write lock and an override write fails | Prunes delete in batches of 10,000 on a task of their own | `tests/ledger_prune.rs`; the contention isolation test (slowest override write under 500 ms) |
+| A read waits for a connection and holds its gate | Read pool acquire timeout 2 s, busy timeout 1 s; the handlers answer such a timeout 503 with `Retry-After` | `tests/ledger_read_pool.rs` (the pool timeout is busy); the handlers map it by `LedgerError::is_busy` |
+| A change that can move performance is not tested because the path map missed it | Every module is classed; every request or shared module is covered by a blocking check; the weekly and release runs catch the rest | `tests/architecture.rs`; `tests/select_checks.rs` |
+| The gate is skipped or not required, or the thresholds are loosened to pass a change | The gate always runs and is a required status check; the thresholds are in `docs/performance.md` and the spec | The gate on every pull request; review |
+| A failed weekly run goes unnoticed | An issue labelled `performance-regression` is opened or commented on, never closed automatically | Shown on the repository with the *rehearse failure* dispatch |
+| A CPU limit of one core or less lets heavy reads raise request latency | None yet | **Gap:** measured in [Run 9](performance.md#run-9-the-fix-on-the-host-and-under-a-cpu-limit-2026-11-11) (0.5 CPU: 10.5 to 91 ms p99); the cluster gives the gateway 500m. Raising the limit or the separate-process escalation in the ADR closes it |
+| `GET /admin/v1/decisions?request_id=` scans without using the index | Limit-bounded; not a fold | **Gap:** recorded as an open finding in [Performance and scale](performance.md) |
+
 ## Gaps, in the order I would close them
 
 1. **Report channel.** A security policy and private reporting ([SECURITY.md](https://github.com/gschaetz/humpyard/blob/main/SECURITY.md)). Done with this page.
@@ -137,3 +159,5 @@ sufficient answer today; they are collected at the end.
 5. **Release provenance and repository hygiene:** artifact attestations and an SBOM for the binaries and the image; pin CI actions by commit; automated dependency updates for cargo, npm and the actions; secret scanning with push protection on the repository (the pre-commit check is not in CI).
 6. **A test that provider keys are not forwarded on a redirect** in chat calls, and a schema test that no ledger column can hold content.
 7. ~~The admin GUI lands with its own threat model and re-checks it against what was built.~~ Done: [the admin GUI page](admin-gui.md#threat-model-check) records the check.
+8. **Heavy reads under a CPU limit of one core or less.** Raise the gateway container's CPU limit to 2, or move heavy reads to a separate process working from a local snapshot of the ledger (ADR 0036). Until then the isolation test passes on the host and fails in a container limited to 1 CPU or less.
+9. **The decisions lookup by request id** uses a filter pattern that stops SQLite using its index (308 ms at 1M rows); rewrite the optional filters.
