@@ -1,5 +1,5 @@
 import type { EndpointHealth, Health, Stats, StatsGroup } from "./api/client";
-import type { Group } from "./query";
+import type { Group, Metric } from "./query";
 
 export { WINDOWS, type Window } from "./query";
 
@@ -151,4 +151,20 @@ export function sortRows(rows: ModelRow[], sort: Sort): ModelRow[] {
     if (x === null || y === null) return Number(x === null) - Number(y === null) || byName(a, b);
     return direction * (x - y) || byName(a, b);
   });
+}
+
+/** A row's value for the chosen metric; null when the group had no calls (or no latency), never 0. */
+export function metricOf(row: ModelRow, metric: Metric): number | null {
+  const g = row.stats;
+  if (g === null) return null;
+  switch (metric) {
+    case "failure_rate":
+      return g.failure_rate;
+    case "fallback_rate":
+      return g.fallback_rate;
+    case "p90":
+      return g.latency_ms.p90;
+    case "requests":
+      return g.requests;
+  }
 }
