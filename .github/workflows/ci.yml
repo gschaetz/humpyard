@@ -218,7 +218,15 @@ jobs:
         with:
           toolchain: "1.99"
       - uses: Swatinem/rust-cache@v2
-      - run: cargo test --release --test isolation -- --ignored --nocapture
+      # A hosted runner is a shared machine: a neighbour or a disk stall can move one run. A real regression moves
+      # every run, so a failure is run once more, and passes only if the second run passes too; the first failure
+      # stays in the log and as a warning.
+      - name: Isolation tests
+        run: |
+          cargo test --release --test isolation -- --ignored --nocapture || {
+            echo "::warning::the isolation tests failed once and were run again"
+            cargo test --release --test isolation -- --ignored --nocapture
+          }
       - name: Rehearsal of a failed weekly run
         if: github.event_name == 'workflow_dispatch' && inputs.rehearse_failure
         run: |

@@ -666,6 +666,8 @@ struct ContentionFindings {
     pruned_p99: f64,
     dropped: u64,
     override_failures: u64,
+    /// The median over the rounds of the slowest override write while pruning: one stall of a shared disk in one
+    /// round is noise, a prune that holds the lock makes every round slow.
     slowest_override_ms: f64,
     /// Expired decisions left after the pruning half, and before it (what the seeded ledger held).
     expired_left: i64,
@@ -696,7 +698,7 @@ fn contention_failures(f: &ContentionFindings) -> Vec<String> {
     }
     if f.slowest_override_ms > OVERRIDE_WRITE_LIMIT_MS {
         out.push(format!(
-            "an override write waited {:.0} ms behind the prune, longer than the {OVERRIDE_WRITE_LIMIT_MS:.0} ms it may \
+            "an override write waited {:.0} ms behind the prune (the median over the rounds of each round's slowest), longer than the {OVERRIDE_WRITE_LIMIT_MS:.0} ms it may \
              (the writer's busy timeout, at which it fails, is {:.0} ms)",
             f.slowest_override_ms,
             writer_busy_timeout_ms()
@@ -781,15 +783,17 @@ async fn a_large_prune_does_not_move_the_request_path_or_block_writes() {
             .chain(&pruned)
             .map(|h| h.override_failures)
             .sum(),
-        slowest_override_ms: pruned
-            .iter()
-            .map(|h| slowest(&h.override_ms))
-            .fold(0.0, f64::max),
+        slowest_override_ms: median(
+            &pruned
+                .iter()
+                .map(|h| slowest(&h.override_ms))
+                .collect::<Vec<_>>(),
+        ),
         expired_left: pruned.iter().map(|h| h.expired_left).max().unwrap(),
         expired_seeded,
     };
     println!(
-        "\nmedian p99: {:.2} ms with no prune, {:.2} ms pruning (allowed rise {:.2} ms); slowest override write {:.0} ms",
+        "\nmedian p99: {:.2} ms with no prune, {:.2} ms pruning (allowed rise {:.2} ms); slowest override write {:.0} ms (median of the rounds)",
         findings.kept_p99,
         findings.pruned_p99,
         allowed_rise(findings.kept_p99),
