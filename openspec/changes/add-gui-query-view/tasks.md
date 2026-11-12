@@ -2,13 +2,13 @@
 
 ## 1. Counting a series in the ledger
 
-- [ ] 1.1 Fold decision rows into accumulators keyed by `(group, bucket)` through one function (`bucket` is `None` for the totals), with `ts_ms` added to the row query; verify the existing statistics tests pass unchanged and a new test shows the totals are the same as before on a fixed set of rows
-- [ ] 1.2 Add the series computation: epoch-aligned buckets from the window's first to the current one, every bucket present with zero counts and null rates and percentiles when quiet, the busiest `limit` groups with `omitted_groups`, and `truncated` with `covered_since_ms`; verify with unit tests for bucket edges, a quiet bucket, the top-N cut, the row-cap cut, the `target` filter and `group_by` for route, target and endpoint, plus a property test that each group's bucket sums equal its totals
+- [x] 1.1 Fold decision rows into accumulators keyed by `(group, bucket)` through one function (`bucket` is `None` for the totals), with `ts_ms` added to the row query; verify the existing statistics tests pass unchanged and a new test shows the totals are the same as before on a fixed set of rows
+- [x] 1.2 Add the series computation: epoch-aligned buckets from the window's first to the current one, every bucket present with zero counts and null rates and percentiles when quiet, the busiest `limit` groups with `omitted_groups`, and `truncated` with `covered_since_ms`; verify with unit tests for bucket edges, a quiet bucket, the top-N cut, the row-cap cut, the `target` filter and `group_by` for route, target and endpoint, plus a property test that each group's bucket sums equal its totals
 
 ## 2. The endpoint and its contract
 
-- [ ] 2.1 Add `GET /admin/v1/stats/series` to the admin route table with the `read` scope: parse `window`, `interval` (default chosen to give at most 120 buckets), `group_by`, `route`, `target`, `key` and `limit`, reject unknown parameters, an interval under a minute, more than 400 buckets, a window over the retention and a limit over 25 with a 400 that names the parameter, and leave `/v1/stats/series` a 404; verify with handler tests for each bound, hostile parameter values, a missing scope (403 `admin_scope_required`), reads across keys with and without `key`, and an empty window
-- [ ] 2.2 Describe the endpoint, its parameters and every response field in `docs/openapi/admin-v1.json`, regenerate `ui/src/api/schema.d.ts`, and add the section to `docs/api.md`; verify the contract test passes, fails when the route is removed from the document, and `npm run check:generated` is clean
+- [x] 2.1 Add `GET /admin/v1/stats/series` to the admin route table with the `read` scope: parse `window`, `interval` (default chosen to give at most 120 buckets), `group_by`, `route`, `target`, `key` and `limit`, reject unknown parameters, an interval under a minute, more than 400 buckets, a window over the retention and a limit over 25 with a 400 that names the parameter, and leave `/v1/stats/series` a 404; verify with handler tests for each bound, hostile parameter values, a missing scope (403 `admin_scope_required`), reads across keys with and without `key`, and an empty window
+- [x] 2.2 Describe the endpoint, its parameters and every response field in `docs/openapi/admin-v1.json`, regenerate `ui/src/api/schema.d.ts`, and add the section to `docs/api.md`; verify the contract test passes, fails when the route is removed from the document, and `npm run check:generated` is clean
 
 ## 3. The query model in the GUI
 

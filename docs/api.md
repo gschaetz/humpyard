@@ -48,7 +48,7 @@ The code tells it apart from a 429 that a provider sent and the gateway passed t
 | `GET /v1/stats/switches` | what changing endpoint in the middle of a session abandoned: switches, cached tokens left behind, the extra cost at the destination's prices, session coverage ([Cache use and sessions](budgets.md#cache-use-and-sessions)) |
 | `GET /v1/quota` | the latest usage windows (percent used, status, reset time) of each provider that names a `quota_source`, with the age of the data, or why it is unknown ([Provider quota](routing.md#provider-quota)) |
 | `GET /v1/quota/history` | stored quota samples (`window` such as `7d`, optional `provider` and `name`), oldest first, each with the cost of the provider's calls since the previous sample of its window; needs a ledger ([Provider quota](routing.md#provider-quota)) |
-| `GET /admin/v1/whoami`, `/config`, `/health`, `/quota`, `/decisions`, `/stats`, `/credentials`, `/overrides`, the revoke endpoints, `POST /admin/v1/config/patch` and `/openapi.json` | the [admin API](#the-admin-api): who you are, and what the gateway is doing across every key |
+| `GET /admin/v1/whoami`, `/config`, `/health`, `/quota`, `/decisions`, `/stats`, `/stats/series`, `/credentials`, `/overrides`, the revoke endpoints, `POST /admin/v1/config/patch` and `/openapi.json` | the [admin API](#the-admin-api): who you are, and what the gateway is doing across every key |
 | `GET /metrics` | Prometheus metrics, off by default; on a separate listener or behind its own credential ([Metrics and alerts](metrics.md)) |
 | `POST /v1/messages/count_tokens`, `POST /v1/responses/input_tokens` | conservative local estimates: no provider call, no cost |
 
@@ -162,6 +162,7 @@ would let read the configuration file. Each request logs the admin id and the ou
 | `GET /admin/v1/quota` | what `GET /v1/quota` returns |
 | `GET /admin/v1/decisions` | the decision log of **every key**, newest first, each failed attempt with the provider's `message`; `?key=alice` narrows it to one key, and the usual filters (`limit`, `route`, `outcome`, `since_ms`, ...) apply |
 | `GET /admin/v1/stats` | the [statistics](budgets.md#statistics) of **every key**; `?key=alice` narrows them, and `group_by` and `window` work as on `/v1/stats`; a [heavy read](#heavy-reads) |
+| `GET /admin/v1/stats/series` | the same statistics [over time](#statistics-over-time): equal buckets per group; a [heavy read](#heavy-reads) |
 | `GET /admin/v1/credentials` | every admin credential: `id`, `kind`, `scopes`, `expires`, and `revoked` while a revocation is in force |
 
 The client endpoints keep their rule that a key sees only its own decisions and statistics, and do not accept
@@ -171,9 +172,57 @@ The client endpoints keep their rule that a key sees only its own decisions and 
 curl -H "Authorization: Bearer $ADMIN_SECRET" "https://gateway.example/admin/v1/decisions?key=alice&limit=20"
 ```
 
+### Statistics over time
+
+`GET /admin/v1/stats/series` (scope `read`) returns the numbers of `GET /admin/v1/stats` in equal time buckets, for
+the busiest groups, so a chart can show when something changed. It is not offered on the client API (`/v1/stats/series`
+is a 404). It counts by the same rules and from the same decision rows as `/admin/v1/stats`, so each group's bucket
+counts add up to the group's totals.
+
+| Parameter | Meaning |
+|---|---|
+| `window` | How far back, such as `6h` or `7d`; default `24h`; at most the days of decisions kept |
+| `interval` | Bucket width, such as `5m` or `1h`; at least `1m`, and no more than 400 buckets in the window. Default: the finest of 1m, 5m, 15m, 30m, 1h, 2h, 6h, 12h and 1d that gives at most 120 buckets |
+| `group_by` | `route` (default), `target` or `endpoint` |
+| `route`, `target` | Only this route, or only attempts on this target |
+| `key` | Only this client key's requests; omit for every key |
+| `limit` | The most groups returned, from 1 to 25; default 8 |
+
+Any other parameter, and any value outside these bounds, is a `400` whose message names the parameter; nothing is read.
+
+```json
+{
+  "object": "stats_series",
+  "computed_at_ms": 1783000000000,
+  "group_by": "target",
+  "interval_ms": 900000,
+  "window": {"since_ms": 1782913600000, "seconds": 86400},
+  "now_ms": 1783000000000,
+  "truncated": false,
+  "covered_since_ms": null,
+  "omitted_groups": 0,
+  "data": [
+    {"group": "fast", "buckets": [
+      {"start_ms": 1782913200000, "requests": 12, "attempts": 13, "failures": 1, "failure_rate": 0.0769,
+       "fallbacks": 1, "fallback_rate": 0.0833, "latency_ms": {"p50": 410, "p90": 900, "p99": 1450}},
+      {"start_ms": 1782914100000, "requests": 0, "attempts": 0, "failures": 0, "failure_rate": null,
+       "fallbacks": 0, "fallback_rate": null, "latency_ms": {"p50": null, "p90": null, "p99": null}}
+    ]}
+  ]
+}
+```
+
+- **Buckets are aligned to the Unix epoch**: each starts at a whole multiple of `interval_ms` (UTC; a one-day interval
+  starts at UTC midnight), so the same moment is in the same bucket on every read. Every bucket from the one
+  holding the start of the window to the one holding `now_ms` is present, and the last is still filling.
+- **A quiet bucket is not zero**: with no requests the counts are zero and the rates and percentiles are `null`.
+- **`omitted_groups`** counts the groups with requests that `limit` left out; the groups kept are the busiest, by requests.
+- **`truncated`** is true when the window held more than 50,000 decisions, so the oldest were not read;
+  `covered_since_ms` is then the time of the oldest one counted. Buckets before it are unread, not quiet.
+
 ### Heavy reads
 
-Statistics (`GET /v1/stats`, including `group_by=session`, and `GET /admin/v1/stats`) and the switches report
+Statistics (`GET /v1/stats`, including `group_by=session`, `GET /admin/v1/stats` and `GET /admin/v1/stats/series`) and the switches report
 (`GET /v1/stats/switches`) fold up to 50,000 ledger rows, so they are rationed to keep them from ever slowing the
 requests the gateway serves ([ADR 0036](adr/0036-admin-and-ui-work-must-not-change-the-request-paths-performance.md)):
 

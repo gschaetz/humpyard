@@ -748,6 +748,226 @@
         "description": "A heavy read: it folds up to 50,000 ledger rows, so at most one heavy read runs at a time on the admin surface and another is answered 503 `admin_busy` with `Retry-After`, never queued. Identical reads (same `key`, `group_by`, `window` and filters) share one result for ten seconds; `computed_at_ms` says when it was computed."
       }
     },
+    "/admin/v1/stats/series": {
+      "get": {
+        "operationId": "statsSeries",
+        "summary": "Statistics over time",
+        "security": [
+          {
+            "adminBearer": [
+              "read"
+            ]
+          }
+        ],
+        "x-error-codes": [
+          "admin_credential_invalid",
+          "admin_scope_required",
+          "admin_busy"
+        ],
+        "parameters": [
+          {
+            "name": "key",
+            "in": "query",
+            "required": false,
+            "description": "Only the statistics of this client key; omit for every key.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "window",
+            "in": "query",
+            "required": false,
+            "description": "How far back, for example `6h` or `7d`; default `24h`; at most the days of decisions kept. A longer window is a 400 naming `window`.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "group_by",
+            "in": "query",
+            "required": false,
+            "description": "`route` (default), `target` or `endpoint`.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "route",
+            "in": "query",
+            "required": false,
+            "description": "Only this route.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "target",
+            "in": "query",
+            "required": false,
+            "description": "Only this target.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "interval",
+            "in": "query",
+            "required": false,
+            "description": "Bucket width, for example `5m` or `1h`; at least `1m`, and at most 400 buckets in the window. By default the finest of 1m, 5m, 15m, 30m, 1h, 2h, 6h, 12h and 1d that gives at most 120 buckets.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "The most groups returned, busiest first, from 1 to 25; default 8. `omitted_groups` counts the rest.",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 25
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A bucketed series per group.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Statistics over time. Only the fields listed here are part of the contract.",
+                  "required": [
+                    "object",
+                    "computed_at_ms",
+                    "group_by",
+                    "interval_ms",
+                    "window",
+                    "now_ms",
+                    "truncated",
+                    "covered_since_ms",
+                    "omitted_groups",
+                    "data"
+                  ],
+                  "properties": {
+                    "object": {
+                      "type": "string",
+                      "enum": [
+                        "stats_series"
+                      ]
+                    },
+                    "computed_at_ms": {
+                      "type": "integer",
+                      "description": "When the answer was computed, in unix milliseconds. A repeat of the same read within ten seconds states the same time."
+                    },
+                    "group_by": {
+                      "type": "string",
+                      "enum": [
+                        "route",
+                        "target",
+                        "endpoint"
+                      ]
+                    },
+                    "interval_ms": {
+                      "type": "integer",
+                      "description": "The bucket width in milliseconds."
+                    },
+                    "window": {
+                      "type": "object",
+                      "description": "`since_ms` (unix milliseconds) and `seconds`."
+                    },
+                    "now_ms": {
+                      "type": "integer",
+                      "description": "The end of the window; the last bucket is the one containing it."
+                    },
+                    "truncated": {
+                      "type": "boolean",
+                      "description": "The window held more decisions than the row cap, so the oldest were left out."
+                    },
+                    "covered_since_ms": {
+                      "type": "integer",
+                      "nullable": true,
+                      "description": "When truncated, the time of the oldest decision counted: buckets before it are unread, not quiet. Null otherwise."
+                    },
+                    "omitted_groups": {
+                      "type": "integer",
+                      "description": "Groups with requests in the window that `limit` left out."
+                    },
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/SeriesGroup"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, unknown, expired or revoked credential. One shape for every reason.",
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "Bearer"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "A valid credential without the scope the operation needs; `error.scope` names it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A parameter that is unknown or out of its bounds (an interval under a minute or giving more than 400 buckets, a window over the retention, a limit over 25); the message names it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Another heavy read is running on the admin surface (`admin_busy`), or the ledger could not be read in time. Nothing was queued; retry after the `Retry-After` seconds.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before asking again.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "description": "The statistics of `GET /admin/v1/stats` in equal time buckets, for the busiest groups. Buckets start at whole multiples of the interval since the Unix epoch and every bucket from the one holding the start of the window to the one holding now is present; a bucket with no requests has zero counts and null rates and percentiles. The last bucket is still filling. Counted by the same rules and from the same decision rows (at most 50,000, newest first) as `GET /admin/v1/stats`, so a group's bucket counts add up to its totals. A read is one of the heavy reads: one at a time, shared for ten seconds, shed with 503 `admin_busy`."
+      }
+    },
     "/admin/v1/credentials": {
       "get": {
         "operationId": "listCredentials",
@@ -1963,6 +2183,96 @@
               "message": {
                 "type": "string",
                 "nullable": true
+              }
+            }
+          }
+        }
+      },
+      "SeriesGroup": {
+        "type": "object",
+        "description": "One group's buckets.",
+        "required": [
+          "group",
+          "buckets"
+        ],
+        "properties": {
+          "group": {
+            "type": "string"
+          },
+          "buckets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SeriesBucket"
+            }
+          }
+        }
+      },
+      "SeriesBucket": {
+        "type": "object",
+        "description": "One bucket of one group. A bucket with no requests has zero counts and null rates and percentiles, never 0.",
+        "required": [
+          "start_ms",
+          "requests",
+          "attempts",
+          "failures",
+          "failure_rate",
+          "fallbacks",
+          "fallback_rate",
+          "latency_ms"
+        ],
+        "properties": {
+          "start_ms": {
+            "type": "integer",
+            "description": "Start of the bucket, a whole multiple of `interval_ms`, in unix milliseconds."
+          },
+          "requests": {
+            "type": "integer",
+            "description": "Requests that touched the group in the bucket."
+          },
+          "attempts": {
+            "type": "integer"
+          },
+          "failures": {
+            "type": "integer",
+            "description": "Attempts that did not succeed."
+          },
+          "failure_rate": {
+            "type": "number",
+            "nullable": true,
+            "description": "`failures` over `attempts`; null without attempts."
+          },
+          "fallbacks": {
+            "type": "integer",
+            "description": "Requests that needed more than one attempt."
+          },
+          "fallback_rate": {
+            "type": "number",
+            "nullable": true,
+            "description": "`fallbacks` over `requests`; null without requests."
+          },
+          "latency_ms": {
+            "type": "object",
+            "description": "Attempt latency percentiles (nearest rank); null without attempts.",
+            "required": [
+              "p50",
+              "p90",
+              "p99"
+            ],
+            "properties": {
+              "p50": {
+                "type": "integer",
+                "nullable": true,
+                "description": "Median."
+              },
+              "p90": {
+                "type": "integer",
+                "nullable": true,
+                "description": "90th percentile."
+              },
+              "p99": {
+                "type": "integer",
+                "nullable": true,
+                "description": "99th percentile."
               }
             }
           }

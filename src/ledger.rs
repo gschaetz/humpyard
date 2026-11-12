@@ -4,6 +4,7 @@
 mod decisions;
 mod overrides;
 mod quota;
+mod series;
 mod sessions;
 mod stats;
 
@@ -29,6 +30,7 @@ pub use decisions::{
 };
 pub use overrides::{NewOverride, OverrideAudit, OverrideDb, OverrideRecord};
 pub use quota::{QuotaPoint, QuotaQuery, QuotaSample};
+pub use series::{Bucket, GroupSeries, MAX_BUCKETS, Series, SeriesQuery};
 pub use sessions::{SessionQuery, SessionScan, SessionStats, Switch};
 pub use stats::{GroupBy, GroupStats, SignalCounts, Stats, StatsQuery, TokenTotals, percentile};
 
@@ -443,6 +445,11 @@ impl Ledger {
     /// Performance statistics over the decision log and usage rows (read-only).
     pub async fn stats(&self, query: &StatsQuery) -> Result<Stats, LedgerError> {
         stats::compute(&self.read_pool, query).await
+    }
+
+    /// Statistics over time: the same counts as [`Ledger::stats`], bucketed (read-only).
+    pub async fn series(&self, query: &SeriesQuery) -> Result<Series, LedgerError> {
+        series::compute(&self.read_pool, query).await
     }
 
     /// Messages queued for the writer and not yet taken by it.
