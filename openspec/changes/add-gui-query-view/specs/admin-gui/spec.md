@@ -49,11 +49,15 @@ The chart SHALL draw one line per top group for the chosen metric across the win
 - **THEN** the chart marks the time before the earliest covered point as not shown, instead of drawing it as quiet
 
 ### Requirement: The table leads with four figures and puts problems first
-Each row of the table SHALL show the group's endpoint health (for target and endpoint groupings, which have it), its requests with failure rate, its fallback rate and its latency, SHALL keep tokens, cost, answered calls and response-signal rates in an expandable detail row, and SHALL by default order groups whose endpoints are all cooling down first, then those with any endpoint not healthy, then by failure rate, then by fallback rate, then by requests, with groups that had no calls last.
+Each row of the table SHALL show the group's endpoint health (for target and endpoint groupings, which have it), its requests with failure rate, its fallback rate and its latency, SHALL keep tokens, cost, answered calls and response-signal rates in an expandable detail row, and SHALL by default order groups whose endpoints are all cooling down first, then those with any endpoint not healthy, then by failure rate, then by fallback rate, then by requests, with groups that had no calls last, ranking each rate by the lower end of its 95% confidence interval over the attempts or requests behind it, so a rate on few calls ranks below the same rate on many, and showing the raw rate.
 
 #### Scenario: A failing target outranks a busy one
 - **WHEN** one target has a 30% failure rate on 10 requests and another has 1% on 10,000
 - **THEN** the first is listed above the second
+
+#### Scenario: A lone failure does not outrank a well-sampled one
+- **WHEN** one target has failed its only attempt (100%) and another has failed 30 of 100 attempts (30%)
+- **THEN** the second is listed above the first, and both rows show their raw failure rate
 
 #### Scenario: An unrated target
 - **WHEN** a target has endpoints but no calls in the window

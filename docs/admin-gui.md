@@ -5,9 +5,68 @@
 page and gains no setting. The page is built into the `humpyard` binary and the container image, so there is
 nothing else to install.
 
-The first screen is the **models view**: for each target, its requests, failure and fallback rates, tokens,
-cost, latency and endpoint health, drawn from `GET /admin/v1/stats` and `GET /admin/v1/health`. It only reads.
-More views follow as separate changes ([ADR 0032](adr/0032-the-admin-gui-runs-as-its-own-process-from-the-same-binary.md)).
+The first screen is the **query view**: a query bar, a chart of one metric over time (or as a ranking), and a table
+of the groups it covers, drawn from `GET /admin/v1/stats`, `GET /admin/v1/stats/series` and `GET /admin/v1/health`. It
+only reads. More views follow as separate changes ([ADR 0032](adr/0032-the-admin-gui-runs-as-its-own-process-from-the-same-binary.md),
+[ADR 0035](adr/0035-the-admin-apis-time-series-are-read-from-the-decision-log-at-query-time.md)).
+
+## The query view
+
+**The query bar** chooses what is shown: a window (1 hour, 6 hours, 24 hours, 7 days or 30 days), a grouping (route,
+target or endpoint), a metric (failure rate, fallback rate, p90 latency or requests), optional route and target
+filters (applied when you press Enter or leave the field), whether to draw the metric over time or as a ranking, and
+how often to refresh. It starts from 24 hours, by target, on failure rate, refreshing every minute. Changing any of
+them reads again at once.
+
+**The chart** draws one line per group (the eight busiest) across the window. Each bucket is as wide as the window
+needs (a minute for an hour, 15 minutes for 24 hours, two hours for 7 days). A bucket in which a group had no calls is
+a **gap**, not a zero, and its hover text says so; hovering any point gives its time (UTC), value and request count, so a
+spike on three requests is not mistaken for a trend. The last bucket is still filling and is drawn dashed. If the
+gateway read only the newest 50,000 decisions of the window, the part of the chart before the earliest one it counted is
+shaded and labelled, because there it does not know and a quiet line would be wrong. Series are told apart by marker
+shape and a label at the end of the line as well as by colour. Clicking a series in the legend (or a bar in the
+ranking) **filters the table to that group**; clicking it again shows all.
+
+**The ranking** shows the same metric as bars, one per group, from the window's totals, in the table's order. A group
+with nothing to measure shows "no value" and no bar.
+
+**The table** leads with four figures: health (for targets and endpoints; a route has no endpoint state of its own),
+requests, failure rate, fallback rate and p90 latency. The arrow at the left of a row opens the rest: answered calls,
+tokens, average cost, p50 and p99, and the four response-signal rates (a dash where no call was observed, never 0%).
+By default the groups that need attention come first:
+
+1. groups whose endpoints are all cooling down;
+2. then groups with any endpoint that is not healthy;
+3. then by failure rate, then fallback rate, then requests, then name;
+4. groups that had no calls last.
+
+A rate is ranked by the **lower end of its 95% confidence interval**, so a rate on few calls ranks below the same rate
+on many: one failed call out of one does not outrank thirty out of a hundred. The cells show the raw rates, and
+clicking a column header sorts by them; "Default order" returns to the list above.
+
+**The address is the query.** The choices are kept in the part of the page address after `#`, so a view can be
+bookmarked and sent to a colleague, who sees the same query once they have signed in. The fragment never reaches a
+server and holds no credential or token. It is read against fixed lists: an unknown window, grouping, metric or refresh
+period is replaced by the default, and a filter is only ever shown as text.
+
+**Refreshing.** The view re-reads the chart, the table and the health together on the chosen period (off, 30 seconds, 1
+minute or 5 minutes) and shows "Updated hh:mm:ss". It reads only while the page is visible, and once more when you
+return to a page whose data is older than the period. It never starts a request while the previous one is running. After
+a failure it waits the period, then twice that, up to five minutes, and returns to the period after a success; the
+earlier numbers stay on screen but are dimmed and marked out of date with the time they are from. A gateway that is
+busy with another statistics read ([heavy reads](api.md#heavy-reads)) says so, and is not asked again before its
+`Retry-After`. If the gateway refuses the credential, refreshing stops and the sign-in is shown. With the period off,
+nothing is read until you change the query or press "Refresh now".
+
+**Limits.** At most eight series are drawn (the table and the filters reach every group). A window longer than the
+50,000 newest decisions shows the shaded region above. Each open page that is visible refreshes on its own, so many
+open pages add up on the gateway; the statistics reads are limited to one at a time per surface and shared for ten
+seconds, so they cannot slow the requests the gateway serves, but a busy answer is possible. Figures can be up to ten
+seconds old.
+
+**An older gateway.** `humpyard ui` can run at a different version from its gateway. A gateway without the series
+endpoint answers 404; the page then shows the table and a note that the gateway cannot draw a series, with the
+version warning as before.
 
 ## Run it
 

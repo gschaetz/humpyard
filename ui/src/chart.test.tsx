@@ -1,0 +1,250 @@
+import { cleanup, fireEvent, render } from "@testing-library/preact";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { LineChart } from "./chart";
+import { layout, niceTicks, strokes, utc, type Point } from "./chart-data";
+import { BUCKET_MS, T0, bucket, quietBucket, series } from "./fixtures";
+
+afterEach(cleanup);
+
+const MINUTE = BUCKET_MS;
+const quiet = quietBucket;
+
+const none = () => undefined;
+
+describe("the line chart", () => {
+  it("draws one line per group with a hover text for every point", () => {
+    const { container } = render(
+      <LineChart series={series({ a: [0, 1, 2].map((i) => bucket(i)), b: [0, 1, 2].map((i) => bucket(i)) })} metric="failure_rate" focus="" onFocus={none} />,
+    );
+    expect(container.querySelectorAll("g.line")).toHaveLength(2);
+    const titles = [...container.querySelectorAll("circle.hit title")].map((t) => t.textContent);
+    expect(titles).toHaveLength(6);
+    expect(titles[0]).toBe("2026-11-12 12:00 UTC · a: Failure rate 10% (10 requests)");
+  });
+
+  it("leaves a gap, not a zero, for a quiet bucket, and says there were no calls on hover", () => {
+    const { container } = render(
+      <LineChart
+        series={series({ a: [bucket(0), bucket(1), quiet(2), bucket(3), bucket(4), bucket(5)] })}
+        metric="failure_rate"
+        focus=""
+        onFocus={none}
+      />,
+    );
+    const paths = [...container.querySelectorAll("path.stroke-line:not(.partial)")];
+    expect(paths).toHaveLength(2); // before and after the gap
+    const titles = [...container.querySelectorAll("circle.hit title")].map((t) => t.textContent);
+    expect(titles[2]).toBe("2026-11-12 12:30 UTC · a: no calls");
+    expect(container.querySelectorAll(".mark").length).toBeGreaterThan(0);
+  });
+
+  it("draws the last, still filling bucket dashed", () => {
+    const { container } = render(<LineChart series={series({ a: [0, 1, 2, 3].map((i) => bucket(i)) })} metric="requests" focus="" onFocus={none} />);
+    expect(container.querySelectorAll("path.partial")).toHaveLength(1);
+    expect(container.querySelectorAll("path.stroke-line:not(.partial)")).toHaveLength(1);
+  });
+
+  it("shades the part the row cap cut off and says so, and not otherwise", () => {
+    const buckets = [0, 1, 2, 3, 4].map((i) => bucket(i));
+    const cut = render(
+      <LineChart series={series({ a: buckets }, { truncated: true, covered_since_ms: T0 + 2 * MINUTE })} metric="requests" focus="" onFocus={none} />,
+    );
+    expect(cut.container.querySelectorAll("rect.unread")).toHaveLength(1);
+    expect(cut.container.textContent).toContain("not shown");
+    expect(cut.getByRole("status").textContent).toContain("only the newest decisions");
+    cleanup();
+    const whole = render(<LineChart series={series({ a: buckets })} metric="requests" focus="" onFocus={none} />);
+    expect(whole.container.querySelectorAll("rect.unread")).toHaveLength(0);
+  });
+
+  it("tells series apart by marker shape and direct label as well as colour", () => {
+    const { container } = render(
+      <LineChart series={series({ a: [bucket(0), bucket(1)], b: [bucket(0), bucket(1)], c: [bucket(0), bucket(1)] })} metric="requests" focus="" onFocus={none} />,
+    );
+    const shapes = [...container.querySelectorAll("g.line")].map((g) => g.querySelector(".mark")?.tagName);
+    expect(new Set(shapes).size).toBe(3); // circle, rect, polygon
+    expect([...container.querySelectorAll("text.label")].map((t) => t.textContent)).toEqual(["a", "b", "c"]);
+  });
+
+  it("filters to a series when it is chosen in the legend, and back when chosen again", () => {
+    const onFocus = vi.fn();
+    const data = series({ a: [bucket(0), bucket(1)], b: [bucket(0), bucket(1)] });
+    const { getByRole, container, rerender } = render(<LineChart series={data} metric="requests" focus="" onFocus={onFocus} />);
+    fireEvent.click(getByRole("button", { name: "b" }));
+    expect(onFocus).toHaveBeenLastCalledWith("b");
+    rerender(<LineChart series={data} metric="requests" focus="b" onFocus={onFocus} />);
+    expect(container.querySelectorAll("g.line.dim")).toHaveLength(1);
+    expect(getByRole("button", { name: "b" }).getAttribute("aria-pressed")).toBe("true");
+    fireEvent.click(getByRole("button", { name: "b" }));
+    expect(onFocus).toHaveBeenLastCalledWith("");
+  });
+
+  it("renders hostile group names as text and creates no element, attribute or style from them", () => {
+    const hostile = "<img src=x onerror=alert(1)>";
+    const { container, getAllByText } = render(
+      <LineChart series={series({ [hostile]: [bucket(0), bucket(1)] })} metric="requests" focus={hostile} onFocus={none} />,
+    );
+    expect(getAllByText(hostile).length).toBeGreaterThan(0);
+    expect(container.querySelector("img")).toBeNull();
+    expect(container.querySelectorAll("[onerror]")).toHaveLength(0);
+    expect(container.querySelectorAll("title")[0]?.textContent).toContain(hostile);
+    expect(container.querySelectorAll("[style]")).toHaveLength(0);
+  });
+
+  it("writes no style attribute and no script or style element for any metric", () => {
+    for (const metric of ["failure_rate", "fallback_rate", "p90", "requests"] as const) {
+      const { container } = render(
+        <LineChart
+          series={series({ a: [bucket(0), quiet(1), bucket(2)] }, { truncated: true, covered_since_ms: T0 + MINUTE })}
+          metric={metric}
+          focus="a"
+          onFocus={none}
+        />,
+      );
+      expect(container.querySelectorAll("[style], script, style")).toHaveLength(0);
+      cleanup();
+    }
+  });
+
+  it("says so when there is nothing to draw", () => {
+    const { container } = render(<LineChart series={series({})} metric="requests" focus="" onFocus={none} />);
+    expect(container.textContent).toContain("No requests in this window");
+    expect(container.querySelector("svg")).toBeNull();
+  });
+});
+
+/** Moves the pointer over the chart at `x` in its own units (jsdom has no layout, so the box is empty and x is clientX). */
+function pointerAt(container: Element, x: number) {
+  const svg = container.querySelector("svg[role=img]") as SVGSVGElement;
+  fireEvent(svg, new MouseEvent("pointermove", { clientX: x, bubbles: true }));
+}
+
+describe("the hover tooltip", () => {
+  const data = () => series({ a: [bucket(0), bucket(1, { requests: 4, failure_rate: 0.25 }), bucket(2)], b: [bucket(0), quiet(1), bucket(2)] });
+  // Three buckets across the default 640 units: x = 52, 292 and 532.
+
+  it("shows the time and every series' value and request count at the nearest bucket", () => {
+    const { container } = render(<LineChart series={data()} metric="failure_rate" focus="" onFocus={none} />);
+    expect(container.querySelector(".tip")).toBeNull();
+    pointerAt(container, 300);
+    const tip = container.querySelector(".tip");
+    expect(tip?.querySelector(".tip-time")?.textContent).toBe("2026-11-12 12:15 UTC");
+    const rows = [...(tip?.querySelectorAll(".tip-row") ?? [])].map((t) => t.textContent);
+    expect(rows).toEqual(["a  25% · 4 req", "b  no calls"]);
+    expect(container.querySelectorAll("line.cursor")).toHaveLength(1);
+    expect(container.querySelectorAll("circle.hover-dot")).toHaveLength(1); // only a has a value there
+  });
+
+  it("follows the pointer to another bucket and goes away when it leaves", () => {
+    const { container } = render(<LineChart series={data()} metric="failure_rate" focus="" onFocus={none} />);
+    pointerAt(container, 60);
+    expect(container.querySelector(".tip-time")?.textContent).toBe("2026-11-12 12:00 UTC");
+    pointerAt(container, 520);
+    expect(container.querySelector(".tip-time")?.textContent).toBe("2026-11-12 12:30 UTC");
+    fireEvent(container.querySelector("svg[role=img]") as SVGSVGElement, new MouseEvent("pointerleave"));
+    expect(container.querySelector(".tip")).toBeNull();
+  });
+
+  it("shows nothing when the pointer is outside the plot", () => {
+    const { container } = render(<LineChart series={data()} metric="failure_rate" focus="" onFocus={none} />);
+    pointerAt(container, 10);
+    expect(container.querySelector(".tip")).toBeNull();
+    pointerAt(container, 630);
+    expect(container.querySelector(".tip")).toBeNull();
+  });
+
+  it("opens to the left of the cursor near the right edge, so it stays inside the chart", () => {
+    const { container } = render(<LineChart series={data()} metric="failure_rate" focus="" onFocus={none} />);
+    pointerAt(container, 530);
+    const box = container.querySelector("rect.tip-box");
+    const left = Number(box?.getAttribute("x"));
+    const widthOfBox = Number(box?.getAttribute("width"));
+    expect(left + widthOfBox).toBeLessThanOrEqual(640);
+    expect(left).toBeLessThan(532);
+  });
+
+  it("is drawn from attributes and classes only, and shows a hostile name as text", () => {
+    const hostile = "<img src=x onerror=alert(1)>";
+    const { container } = render(<LineChart series={series({ [hostile]: [bucket(0), bucket(1)] })} metric="requests" focus="" onFocus={none} />);
+    pointerAt(container, 60);
+    expect(container.querySelector(".tip-row")?.textContent).toContain("<img src=x");
+    expect(container.querySelector("img")).toBeNull();
+    expect(container.querySelectorAll("[style], [onerror]")).toHaveLength(0);
+  });
+
+  it("leaves the native hover texts to assistive technology, which the pointer never reaches", () => {
+    const { container } = render(<LineChart series={data()} metric="failure_rate" focus="" onFocus={none} />);
+    expect(container.querySelectorAll("circle.hit title")).toHaveLength(6);
+  });
+});
+
+describe("the chart's width", () => {
+  it("is laid out in the units it is shown in, so a wide page gets a wide plot and not bigger text", () => {
+    const data = series({ a: [bucket(0), bucket(1), bucket(2)] });
+    const narrow = layout(data, "requests", 640).lines[0]?.points.map((p) => p.x) ?? [];
+    const wide = layout(data, "requests", 1600).lines[0]?.points.map((p) => p.x) ?? [];
+    expect(narrow.at(-1)).toBe(640 - 108);
+    expect(wide.at(-1)).toBe(1600 - 108);
+    expect(wide[0]).toBe(narrow[0]); // the left margin does not grow
+  });
+
+  it("never shrinks below a width the plot can live in", () => {
+    const data = series({ a: [bucket(0), bucket(1)] });
+    expect(layout(data, "requests", 100).lines[0]?.points.at(-1)?.x).toBe(360 - 108);
+  });
+
+  it("draws the svg in the measured width", () => {
+    class Observer {
+      constructor(readonly callback: () => void) {}
+      observe() { this.callback(); }
+      disconnect() {}
+    }
+    vi.stubGlobal("ResizeObserver", Observer);
+    Object.defineProperty(HTMLElement.prototype, "clientWidth", { configurable: true, get: () => 1200 });
+    try {
+      const { container } = render(<LineChart series={series({ a: [bucket(0), bucket(1)] })} metric="requests" focus="" onFocus={none} />);
+      expect(container.querySelector("svg")?.getAttribute("viewBox")).toBe("0 0 1200 280");
+    } finally {
+      vi.unstubAllGlobals();
+      Reflect.deleteProperty(HTMLElement.prototype, "clientWidth");
+    }
+  });
+});
+
+describe("the labels at the ends of the lines", () => {
+  it("are pushed apart when the lines end together, so none prints over another, and stay inside the plot", () => {
+    const together = series({ a: [bucket(0), bucket(1)], b: [bucket(0), bucket(1)], c: [bucket(0), bucket(1)], d: [bucket(0), bucket(1)] });
+    const ys = layout(together, "requests").lines.map((l) => l.labelY ?? Number.NaN).sort((x, y) => x - y);
+    for (let i = 1; i < ys.length; i++) expect((ys[i] ?? 0) - (ys[i - 1] ?? 0)).toBeGreaterThanOrEqual(13);
+    expect(Math.min(...ys)).toBeGreaterThanOrEqual(0);
+    expect(Math.max(...ys)).toBeLessThanOrEqual(280);
+  });
+
+  it("have no height for a line with no value at all", () => {
+    expect(layout(series({ a: [quiet(0), quiet(1)] }), "failure_rate").lines[0]?.labelY).toBeNull();
+  });
+});
+
+describe("the chart's arithmetic", () => {
+  it("picks round tick values from zero up to at least the data", () => {
+    expect(niceTicks(0)).toEqual([0, 0.5, 1]);
+    expect(niceTicks(0.37)).toEqual([0, 0.1, 0.2, 0.3, 0.4]);
+    for (const max of [0.004, 0.37, 1, 870, 12_345]) {
+      const ticks = niceTicks(max);
+      expect(ticks[0]).toBe(0);
+      expect(Math.max(...ticks)).toBeGreaterThanOrEqual(max);
+      expect(ticks.length).toBeLessThanOrEqual(7);
+    }
+  });
+
+  it("splits strokes at a gap and keeps a lone point as a marker only", () => {
+    const point = (x: number, y: number | null): Point => ({ start_ms: x, requests: 1, value: y, x, y });
+    const { solid, partial } = strokes([point(0, 1), point(1, 2), point(2, null), point(3, 4), point(4, null), point(5, 6)]);
+    expect(solid).toHaveLength(1);
+    expect(partial).toBeNull();
+  });
+
+  it("names a time in UTC to the minute", () => {
+    expect(utc(Date.UTC(2026, 0, 2, 3, 4, 59))).toBe("2026-01-02 03:04 UTC");
+  });
+});

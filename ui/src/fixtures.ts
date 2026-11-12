@@ -1,4 +1,4 @@
-import type { Health, Stats, StatsGroup } from "./api/client";
+import type { Health, Series, SeriesBucket, Stats, StatsGroup } from "./api/client";
 
 export function group(name: string, over: Partial<StatsGroup> = {}): StatsGroup {
   return {
@@ -44,3 +44,41 @@ export function health(...targets: { name: string; states: ("healthy" | "cooling
   };
 }
 
+
+export const BUCKET_MS = 900_000;
+export const T0 = Date.UTC(2026, 10, 12, 12, 0);
+
+export function bucket(i: number, over: Partial<SeriesBucket> = {}): SeriesBucket {
+  return {
+    start_ms: T0 + i * BUCKET_MS,
+    requests: 10,
+    attempts: 10,
+    failures: 1,
+    failure_rate: 0.1,
+    fallbacks: 0,
+    fallback_rate: 0,
+    latency_ms: { p50: 100, p90: 300, p99: 900 },
+    ...over,
+  };
+}
+
+/** A bucket in which the group had no requests: zero counts and null rates and percentiles. */
+export function quietBucket(i: number): SeriesBucket {
+  return bucket(i, { requests: 0, attempts: 0, failures: 0, failure_rate: null, fallback_rate: null, latency_ms: { p50: null, p90: null, p99: null } });
+}
+
+export function series(groups: Record<string, SeriesBucket[]>, over: Partial<Series> = {}): Series {
+  return {
+    object: "stats_series",
+    computed_at_ms: T0,
+    group_by: "target",
+    interval_ms: BUCKET_MS,
+    window: {},
+    now_ms: T0,
+    truncated: false,
+    covered_since_ms: null,
+    omitted_groups: 0,
+    data: Object.entries(groups).map(([group, buckets]) => ({ group, buckets })),
+    ...over,
+  };
+}
