@@ -113,6 +113,71 @@ describe("the line chart", () => {
   });
 });
 
+/** Moves the pointer over the chart at `x` in its own units (jsdom has no layout, so the box is empty and x is clientX). */
+function pointerAt(container: Element, x: number) {
+  const svg = container.querySelector("svg[role=img]") as SVGSVGElement;
+  fireEvent(svg, new MouseEvent("pointermove", { clientX: x, bubbles: true }));
+}
+
+describe("the hover tooltip", () => {
+  const data = () => series({ a: [bucket(0), bucket(1, { requests: 4, failure_rate: 0.25 }), bucket(2)], b: [bucket(0), quiet(1), bucket(2)] });
+  // Three buckets across the default 640 units: x = 52, 292 and 532.
+
+  it("shows the time and every series' value and request count at the nearest bucket", () => {
+    const { container } = render(<LineChart series={data()} metric="failure_rate" focus="" onFocus={none} />);
+    expect(container.querySelector(".tip")).toBeNull();
+    pointerAt(container, 300);
+    const tip = container.querySelector(".tip");
+    expect(tip?.querySelector(".tip-time")?.textContent).toBe("2026-11-12 12:15 UTC");
+    const rows = [...(tip?.querySelectorAll(".tip-row") ?? [])].map((t) => t.textContent);
+    expect(rows).toEqual(["a  25% · 4 req", "b  no calls"]);
+    expect(container.querySelectorAll("line.cursor")).toHaveLength(1);
+    expect(container.querySelectorAll("circle.hover-dot")).toHaveLength(1); // only a has a value there
+  });
+
+  it("follows the pointer to another bucket and goes away when it leaves", () => {
+    const { container } = render(<LineChart series={data()} metric="failure_rate" focus="" onFocus={none} />);
+    pointerAt(container, 60);
+    expect(container.querySelector(".tip-time")?.textContent).toBe("2026-11-12 12:00 UTC");
+    pointerAt(container, 520);
+    expect(container.querySelector(".tip-time")?.textContent).toBe("2026-11-12 12:30 UTC");
+    fireEvent(container.querySelector("svg[role=img]") as SVGSVGElement, new MouseEvent("pointerleave"));
+    expect(container.querySelector(".tip")).toBeNull();
+  });
+
+  it("shows nothing when the pointer is outside the plot", () => {
+    const { container } = render(<LineChart series={data()} metric="failure_rate" focus="" onFocus={none} />);
+    pointerAt(container, 10);
+    expect(container.querySelector(".tip")).toBeNull();
+    pointerAt(container, 630);
+    expect(container.querySelector(".tip")).toBeNull();
+  });
+
+  it("opens to the left of the cursor near the right edge, so it stays inside the chart", () => {
+    const { container } = render(<LineChart series={data()} metric="failure_rate" focus="" onFocus={none} />);
+    pointerAt(container, 530);
+    const box = container.querySelector("rect.tip-box");
+    const left = Number(box?.getAttribute("x"));
+    const widthOfBox = Number(box?.getAttribute("width"));
+    expect(left + widthOfBox).toBeLessThanOrEqual(640);
+    expect(left).toBeLessThan(532);
+  });
+
+  it("is drawn from attributes and classes only, and shows a hostile name as text", () => {
+    const hostile = "<img src=x onerror=alert(1)>";
+    const { container } = render(<LineChart series={series({ [hostile]: [bucket(0), bucket(1)] })} metric="requests" focus="" onFocus={none} />);
+    pointerAt(container, 60);
+    expect(container.querySelector(".tip-row")?.textContent).toContain("<img src=x");
+    expect(container.querySelector("img")).toBeNull();
+    expect(container.querySelectorAll("[style], [onerror]")).toHaveLength(0);
+  });
+
+  it("leaves the native hover texts to assistive technology, which the pointer never reaches", () => {
+    const { container } = render(<LineChart series={data()} metric="failure_rate" focus="" onFocus={none} />);
+    expect(container.querySelectorAll("circle.hit title")).toHaveLength(6);
+  });
+});
+
 describe("the chart's width", () => {
   it("is laid out in the units it is shown in, so a wide page gets a wide plot and not bigger text", () => {
     const data = series({ a: [bucket(0), bucket(1), bucket(2)] });

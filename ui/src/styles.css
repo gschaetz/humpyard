@@ -81,7 +81,7 @@ thead th { color: var(--muted); font-weight: 500; font-size: 0.85rem; }
 .chart .line .mark { fill: var(--c); stroke: none; }
 .chart .line .mark.stroke { fill: none; stroke: var(--c); stroke-width: 2; }
 .chart .line .label { fill: var(--c); font-size: 11px; }
-.chart .line .hit { fill: transparent; stroke: none; }
+.chart .line .hit { fill: transparent; stroke: none; pointer-events: none; }
 .chart .line.dim { opacity: 0.2; }
 .chart .unread { fill: var(--line); opacity: 0.45; }
 .legend { list-style: none; margin: 0.4rem 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 0.4rem; }
@@ -107,3 +107,12 @@ tr.detail td { border-left: 3px solid var(--line); white-space: normal; }
 tr.detail dl { display: grid; grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr)); gap: 0.2rem 1rem; margin: 0; }
 tr.detail dt { color: var(--muted); font-size: 0.8rem; }
 tr.detail dd { margin: 0 0 0.3rem; }
+.chart svg { touch-action: pan-y; }
+.chart .cursor { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 3 3; pointer-events: none; }
+.chart .hover-dot { fill: var(--bg); stroke: var(--c); stroke-width: 2; pointer-events: none; }
+.chart .tip { pointer-events: none; }
+.chart .tip-box { fill: var(--bg); stroke: var(--line); stroke-width: 1; }
+.chart .tip-time { fill: var(--fg); font-size: 12px; font-weight: 600; }
+.chart .tip-row { fill: var(--fg); font-size: 12px; }
+.chart .tip .line .mark { fill: var(--c); stroke: none; }
+.chart .tip .line .mark.stroke { fill: none; stroke: var(--c); stroke-width: 2; }
