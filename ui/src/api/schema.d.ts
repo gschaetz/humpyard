@@ -146,6 +146,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/admin/v1/stats/series": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Statistics over time
+         * @description The statistics of `GET /admin/v1/stats` in equal time buckets, for the busiest groups. Buckets start at whole multiples of the interval since the Unix epoch and every bucket from the one holding the start of the window to the one holding now is present; a bucket with no requests has zero counts and null rates and percentiles. The last bucket is still filling. Counted by the same rules and from the same decision rows (at most 50,000, newest first) as `GET /admin/v1/stats`, so a group's bucket counts add up to its totals. A read is one of the heavy reads: one at a time, shared for ten seconds, shed with 503 `admin_busy`.
+         */
+        get: operations["statsSeries"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/admin/v1/credentials": {
         parameters: {
             query?: never;
@@ -413,6 +433,36 @@ export interface components {
                 at_ms: number | null;
                 ok: boolean | null;
                 message: string | null;
+            };
+        };
+        /** @description One group's buckets. */
+        SeriesGroup: {
+            group: string;
+            buckets: components["schemas"]["SeriesBucket"][];
+        };
+        /** @description One bucket of one group. A bucket with no requests has zero counts and null rates and percentiles, never 0. */
+        SeriesBucket: {
+            /** @description Start of the bucket, a whole multiple of `interval_ms`, in unix milliseconds. */
+            start_ms: number;
+            /** @description Requests that touched the group in the bucket. */
+            requests: number;
+            attempts: number;
+            /** @description Attempts that did not succeed. */
+            failures: number;
+            /** @description `failures` over `attempts`; null without attempts. */
+            failure_rate: number | null;
+            /** @description Requests that needed more than one attempt. */
+            fallbacks: number;
+            /** @description `fallbacks` over `requests`; null without requests. */
+            fallback_rate: number | null;
+            /** @description Attempt latency percentiles (nearest rank); null without attempts. */
+            latency_ms: {
+                /** @description Median. */
+                p50: number | null;
+                /** @description 90th percentile. */
+                p90: number | null;
+                /** @description 99th percentile. */
+                p99: number | null;
             };
         };
     };
@@ -804,6 +854,100 @@ export interface operations {
                 };
             };
             /** @description An unknown parameter or a malformed window. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Missing, unknown, expired or revoked credential. One shape for every reason. */
+            401: {
+                headers: {
+                    "WWW-Authenticate"?: "Bearer";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description A valid credential without the scope the operation needs; `error.scope` names it. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Another heavy read is running on the admin surface (`admin_busy`), or the ledger could not be read in time. Nothing was queued; retry after the `Retry-After` seconds. */
+            503: {
+                headers: {
+                    /** @description Seconds to wait before asking again. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    statsSeries: {
+        parameters: {
+            query?: {
+                /** @description Only the statistics of this client key; omit for every key. */
+                key?: string;
+                /** @description How far back, for example `6h` or `7d`; default `24h`; at most the days of decisions kept. A longer window is a 400 naming `window`. */
+                window?: string;
+                /** @description `route` (default), `target` or `endpoint`. */
+                group_by?: string;
+                /** @description Only this route. */
+                route?: string;
+                /** @description Only this target. */
+                target?: string;
+                /** @description Bucket width, for example `5m` or `1h`; at least `1m`, and at most 400 buckets in the window. By default the finest of 1m, 5m, 15m, 30m, 1h, 2h, 6h, 12h and 1d that gives at most 120 buckets. */
+                interval?: string;
+                /** @description The most groups returned, busiest first, from 1 to 25; default 8. `omitted_groups` counts the rest. */
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A bucketed series per group. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @enum {string} */
+                        object: "stats_series";
+                        /** @description When the answer was computed, in unix milliseconds. A repeat of the same read within ten seconds states the same time. */
+                        computed_at_ms: number;
+                        /** @enum {string} */
+                        group_by: "route" | "target" | "endpoint";
+                        /** @description The bucket width in milliseconds. */
+                        interval_ms: number;
+                        /** @description `since_ms` (unix milliseconds) and `seconds`. */
+                        window: Record<string, never>;
+                        /** @description The end of the window; the last bucket is the one containing it. */
+                        now_ms: number;
+                        /** @description The window held more decisions than the row cap, so the oldest were left out. */
+                        truncated: boolean;
+                        /** @description When truncated, the time of the oldest decision counted: buckets before it are unread, not quiet. Null otherwise. */
+                        covered_since_ms: number | null;
+                        /** @description Groups with requests in the window that `limit` left out. */
+                        omitted_groups: number;
+                        data: components["schemas"]["SeriesGroup"][];
+                    };
+                };
+            };
+            /** @description A parameter that is unknown or out of its bounds (an interval under a minute or giving more than 400 buckets, a window over the retention, a limit over 25); the message names it. */
             400: {
                 headers: {
                     [name: string]: unknown;

@@ -223,6 +223,27 @@ async fn real_decisions_and_statistics_match_the_documented_schemas() {
     assert!(stats["data"][0]["latency_ms"]["p50"].is_u64(), "{stats}");
     assert!(stats["data"][0]["failure_rate"].is_number(), "{stats}");
 
+    // A series: the documented shape, with every quiet bucket's rates null and its counts zero.
+    let series = rig
+        .get("/admin/v1/stats/series?window=1h&interval=5m")
+        .await;
+    let found = violations(
+        &doc,
+        &response_schema(&doc, "/admin/v1/stats/series"),
+        &series,
+        "series",
+    );
+    assert!(found.is_empty(), "{found:#?}\n{series}");
+    assert!(series["computed_at_ms"].as_i64().unwrap() > 0, "{series}");
+    let buckets = series["data"][0]["buckets"].as_array().unwrap();
+    assert!(buckets.iter().any(|b| b["requests"] != 0), "{series}");
+    assert!(
+        buckets
+            .iter()
+            .any(|b| b["requests"] == 0 && b["failure_rate"].is_null()),
+        "{series}"
+    );
+
     let health = rig.get("/admin/v1/health").await;
     let found = violations(
         &doc,

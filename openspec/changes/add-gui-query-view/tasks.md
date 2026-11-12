@@ -8,7 +8,7 @@
 ## 2. The endpoint and its contract
 
 - [x] 2.1 Add `GET /admin/v1/stats/series` to the admin route table with the `read` scope: parse `window`, `interval` (default chosen to give at most 120 buckets), `group_by`, `route`, `target`, `key` and `limit`, reject unknown parameters, an interval under a minute, more than 400 buckets, a window over the retention and a limit over 25 with a 400 that names the parameter, and leave `/v1/stats/series` a 404; verify with handler tests for each bound, hostile parameter values, a missing scope (403 `admin_scope_required`), reads across keys with and without `key`, and an empty window
-- [ ] 2.2 Describe the endpoint, its parameters and every response field in `docs/openapi/admin-v1.json`, regenerate `ui/src/api/schema.d.ts`, and add the section to `docs/api.md`; verify the contract test passes, fails when the route is removed from the document, and `npm run check:generated` is clean
+- [x] 2.2 Describe the endpoint, its parameters and every response field in `docs/openapi/admin-v1.json`, regenerate `ui/src/api/schema.d.ts`, and add the section to `docs/api.md`; verify the contract test passes, fails when the route is removed from the document, and `npm run check:generated` is clean
 
 ## 3. The query model in the GUI
 
