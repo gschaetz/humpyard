@@ -303,3 +303,146 @@ async fn a_credential_without_read_sees_none_of_it_and_a_client_key_is_refused()
     // Whoever it is, `whoami` needs no scope.
     assert_eq!(rig.json("/admin/v1/whoami", &rig.sam).await["id"], "sam");
 }
+
+/// Requests counted by a series, across its groups and buckets.
+fn series_total(series: &Value) -> u64 {
+    series["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|g| g["buckets"].as_array().unwrap())
+        .map(|b| b["requests"].as_u64().unwrap())
+        .sum()
+}
+
+#[tokio::test]
+async fn a_series_covers_every_key_or_the_one_named() {
+    let rig = rig().await;
+    rig.traffic().await;
+    let all = rig
+        .json("/admin/v1/stats/series?window=1h", &rig.gary)
+        .await;
+    assert_eq!(all["object"], "stats_series");
+    assert_eq!(series_total(&all), 3, "{all}");
+    let alice = rig
+        .json("/admin/v1/stats/series?window=1h&key=alice", &rig.gary)
+        .await;
+    assert_eq!(series_total(&alice), 2, "{alice}");
+    let nobody = rig
+        .json("/admin/v1/stats/series?window=1h&key=nobody", &rig.gary)
+        .await;
+    assert_eq!(nobody["data"].as_array().unwrap().len(), 0);
+    // The answer is the contract: a bucket carries counts, rates and latency percentiles, nothing else.
+    let bucket = &all["data"][0]["buckets"][0];
+    let mut fields: Vec<&str> = bucket
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    fields.sort_unstable();
+    assert_eq!(
+        fields,
+        [
+            "attempts",
+            "failure_rate",
+            "failures",
+            "fallback_rate",
+            "fallbacks",
+            "latency_ms",
+            "requests",
+            "start_ms"
+        ]
+    );
+}
+
+#[tokio::test]
+async fn a_quiet_bucket_has_null_rates_and_the_default_interval_gives_a_drawable_window() {
+    let rig = rig().await;
+    rig.traffic().await;
+    let series = rig.json("/admin/v1/stats/series", &rig.gary).await;
+    // 24 hours by default, so 15-minute buckets (96 of them, the finest interval with at most 120).
+    assert_eq!(series["interval_ms"], 900_000);
+    let buckets = series["data"][0]["buckets"].as_array().unwrap();
+    assert!((96..=97).contains(&buckets.len()), "{}", buckets.len());
+    let quiet = buckets.iter().find(|b| b["requests"] == 0).unwrap();
+    assert!(quiet["failure_rate"].is_null() && quiet["latency_ms"]["p99"].is_null());
+    let busy = buckets.iter().find(|b| b["requests"] != 0).unwrap();
+    assert_eq!(busy["failure_rate"], 0.0);
+}
+
+#[tokio::test]
+async fn an_empty_window_is_an_empty_answer_not_an_error() {
+    let rig = rig().await;
+    let series = rig
+        .json("/admin/v1/stats/series?window=1h", &rig.gary)
+        .await;
+    assert_eq!(series["data"].as_array().unwrap().len(), 0);
+    assert_eq!(series["truncated"], false);
+    assert!(series["covered_since_ms"].is_null());
+}
+
+#[tokio::test]
+async fn every_bound_of_a_series_is_a_400_that_names_the_parameter() {
+    let rig = rig().await;
+    for (query, parameter) in [
+        ("bucket=5m", "bucket"),
+        ("interval=30s", "interval"),
+        ("interval=0m", "interval"),
+        ("interval=banana", "interval"),
+        ("window=30d&interval=1m", "interval"),
+        ("window=3650d", "window"),
+        ("window=0h", "window"),
+        ("window=%3Cscript%3E", "window"),
+        ("limit=26", "limit"),
+        ("limit=0", "limit"),
+        ("limit=-1", "limit"),
+        ("limit=many", "limit"),
+        ("group_by=session", "group_by"),
+        ("group_by=%27%3B%20DROP%20TABLE%20decisions", "group_by"),
+    ] {
+        let (status, body) = rig
+            .get(&format!("/admin/v1/stats/series?{query}"), &rig.gary)
+            .await;
+        assert_eq!(status, 400, "{query}: {body}");
+        let body: Value = serde_json::from_str(&body).unwrap();
+        let message = body["error"]["message"].as_str().unwrap();
+        assert!(
+            message.contains(&format!("`{parameter}`")),
+            "{query}: {message}"
+        );
+    }
+    // The edges of the bounds are accepted.
+    for query in [
+        "interval=1m&window=6h",
+        "window=400m&interval=1m",
+        "limit=25",
+        "limit=1",
+        "group_by=endpoint",
+        "group_by=target&route=r&target=t",
+    ] {
+        let (status, body) = rig
+            .get(&format!("/admin/v1/stats/series?{query}"), &rig.gary)
+            .await;
+        assert_eq!(status, 200, "{query}: {body}");
+    }
+}
+
+#[tokio::test]
+async fn a_series_needs_the_read_scope_and_the_client_api_has_none() {
+    let rig = rig().await;
+    let (status, body) = rig.get("/admin/v1/stats/series", &rig.sam).await;
+    assert_eq!(status, 403, "{body}");
+    let body: Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(body["error"]["code"], "admin_scope_required");
+    assert_eq!(body["error"]["scope"], "read");
+    // A bad parameter from a caller without the scope is still a refusal for the scope, not a hint about parameters.
+    let (status, _) = rig.get("/admin/v1/stats/series?bucket=5m", &rig.sam).await;
+    assert_eq!(status, 403);
+    let (status, _) = rig.get("/admin/v1/stats/series", &rig.ops).await;
+    assert_eq!(status, 401, "a client key is not an admin credential");
+    for key in [&rig.alice, &rig.ops] {
+        let (status, _) = rig.get("/v1/stats/series", key).await;
+        assert_eq!(status, 404);
+    }
+}

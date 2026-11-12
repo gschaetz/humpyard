@@ -336,3 +336,31 @@ async fn the_route_explain_rations_its_recent_numbers_with_the_client_gate() {
     );
     assert_eq!(busy["targets"][0]["target"], free["targets"][0]["target"]);
 }
+
+#[tokio::test]
+async fn a_series_is_a_heavy_read_shed_while_another_runs_and_shared_when_identical() {
+    let f = fixture("series", HeavyReads::default()).await;
+    // Identical series within the freshness are one computation.
+    let before = f.heavy.computations();
+    let first = get(&f.base, "/admin/v1/stats/series?window=1h", &f.keys.reader).await;
+    let second = get(&f.base, "/admin/v1/stats/series?window=1h", &f.keys.reader).await;
+    assert_eq!((first.0, second.0), (200, 200));
+    assert_eq!(f.heavy.computations(), before + 1);
+    assert_eq!(first.2, second.2, "the second answer is the first");
+
+    // While a statistics read holds the administrative gate, a series is shed and not queued.
+    let pause = f.heavy.pause();
+    let holder = {
+        let (base, key) = (f.base.clone(), f.keys.reader.clone());
+        tokio::spawn(async move { get(&base, "/admin/v1/stats?window=2h", &key).await })
+    };
+    gate_taken(&f.heavy, Surface::Admin).await;
+    let started = Instant::now();
+    let (status, retry_after, body) =
+        get(&f.base, "/admin/v1/stats/series?window=2h", &f.keys.reader).await;
+    assert_eq!((status, retry_after.as_deref()), (503, Some("5")), "{body}");
+    assert_eq!(body["error"]["code"], "admin_busy");
+    assert!(started.elapsed() < Duration::from_secs(1));
+    drop(pause);
+    assert_eq!(holder.await.unwrap().0, 200);
+}

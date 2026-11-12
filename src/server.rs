@@ -64,6 +64,7 @@ mod heavy;
 mod metrics;
 mod overrides;
 mod quota;
+mod series;
 mod sessions;
 mod stats;
 

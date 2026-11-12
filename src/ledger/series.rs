@@ -10,9 +10,10 @@ use super::LedgerError;
 use super::stats::{Accumulator, StatsQuery, accumulate, decision_rows, percentile};
 use crate::num::from_i64;
 
-/// The most buckets a series holds. The endpoint refuses a request for more; this keeps a caller of the ledger from
-/// building an unbounded answer.
-pub const MAX_BUCKETS: usize = 400;
+/// The most buckets a series holds: 400 for the window plus the partial one a window that does not start on an edge
+/// begins in. The endpoint refuses a request for more; this keeps a caller of the ledger from building an unbounded
+/// answer.
+pub const MAX_BUCKETS: usize = 401;
 
 /// What to read: the statistics query (window start, grouping, filters, row cap) plus the bucket width, the end of
 /// the window and how many groups to keep.

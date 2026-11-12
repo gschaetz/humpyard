@@ -91,6 +91,13 @@ pub(super) const ROUTES: &[Route] = &[
     },
     Route {
         method: "GET",
+        path: "/admin/v1/stats/series",
+        scope: Some(AdminScope::Read),
+        codes: &["admin_busy"],
+        register: |m| m.get(stats_series),
+    },
+    Route {
+        method: "GET",
         path: "/admin/v1/credentials",
         scope: Some(AdminScope::Read),
         codes: &[],
@@ -366,6 +373,18 @@ async fn stats(
         super::Surface::Admin,
     )
     .await
+}
+
+/// Statistics over time (ADR 0035): the same counts as `stats`, in equal buckets per group.
+async fn stats_series(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(params): Query<HashMap<String, String>>,
+) -> Response {
+    if let Err(denied) = read(&state, &headers) {
+        return denied.into_response();
+    }
+    super::series::series_view(&state, &state.snapshot(), &params).await
 }
 
 /// Every admin credential: id, scopes and expiry, never a hash.
