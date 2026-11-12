@@ -854,3 +854,281 @@ fn a_server_module_that_reads_the_ledger_without_the_gate_is_caught() {
         Vec::<String>::new()
     );
 }
+
+// ---- the fitness register (`fitness/register.toml`, docs/fitness-functions.md) ----
+
+#[derive(serde::Deserialize)]
+struct Register {
+    modules: BTreeMap<String, Class>,
+    checks: Vec<Check>,
+}
+
+#[derive(serde::Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
+#[serde(rename_all = "lowercase")]
+enum Class {
+    Request,
+    Shared,
+    Off,
+}
+
+#[derive(serde::Deserialize)]
+struct Check {
+    id: String,
+    cadence: Vec<String>,
+    r#where: String,
+    blocks: bool,
+    triggers: Triggers,
+}
+
+#[derive(serde::Deserialize)]
+struct Triggers {
+    classes: Vec<Class>,
+    paths: Vec<String>,
+}
+
+fn register_violations(
+    register: &Register,
+    modules: &std::collections::BTreeSet<String>,
+) -> Vec<String> {
+    let mut out = Vec::new();
+    for module in modules {
+        if !register.modules.contains_key(module) {
+            out.push(format!(
+                "module `{module}` has no performance class: add it to [modules] in fitness/register.toml (request, shared or off)"
+            ));
+        }
+    }
+    for module in register.modules.keys() {
+        if !modules.contains(module) {
+            out.push(format!(
+                "fitness/register.toml classes `{module}` but there is no such module in src/ (renamed or removed? update [modules])"
+            ));
+        }
+    }
+    for check in &register.checks {
+        let scheduled = check
+            .cadence
+            .iter()
+            .any(|c| c == "weekly" || c == "release");
+        if check.triggers.classes.is_empty() && check.triggers.paths.is_empty() && !scheduled {
+            out.push(format!(
+                "check `{}` has no trigger and no scheduled cadence, so nothing would ever run it",
+                check.id
+            ));
+        }
+        if check.r#where == "reference" && check.cadence.iter().any(|c| c != "release") {
+            out.push(format!(
+                "check `{}` runs on a reference machine, which only a release can use: its cadence must be [\"release\"]",
+                check.id
+            ));
+        }
+    }
+    for (module, class) in &register.modules {
+        if *class == Class::Off {
+            continue;
+        }
+        let covered = register.checks.iter().any(|c| {
+            c.blocks
+                && (c.triggers.classes.contains(class)
+                    || c.triggers.paths.iter().any(|p| {
+                        p == &format!("src/{module}.rs") || p == &format!("src/{module}/*")
+                    }))
+        });
+        if !covered {
+            out.push(format!(
+                "module `{module}` ({class:?}) is covered by no blocking check: list its class or its files in a check's triggers"
+            ));
+        }
+    }
+    out
+}
+
+/// The check ids a page lists: the first backticked word of each table row that starts with one.
+fn page_checks(page: &str) -> std::collections::BTreeSet<String> {
+    page.lines()
+        .filter_map(|l| l.strip_prefix("| `"))
+        .filter_map(|l| l.split('`').next())
+        .filter(|id| id.contains('-'))
+        .map(str::to_string)
+        .collect()
+}
+
+fn page_violations(register: &Register, page: &str) -> Vec<String> {
+    let listed = page_checks(page);
+    let mut out = Vec::new();
+    for check in &register.checks {
+        if !listed.contains(&check.id) {
+            out.push(format!(
+                "check `{}` is in the register but not on docs/fitness-functions.md",
+                check.id
+            ));
+        }
+    }
+    for id in &listed {
+        if !register.checks.iter().any(|c| &c.id == id) {
+            out.push(format!(
+                "docs/fitness-functions.md lists `{id}` but the register has no such check"
+            ));
+        }
+    }
+    out
+}
+
+fn load_register() -> Register {
+    let text =
+        fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("fitness/register.toml"))
+            .unwrap();
+    toml::from_str(&text).unwrap()
+}
+
+fn source_modules() -> std::collections::BTreeSet<String> {
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    rust_files(&src)
+        .iter()
+        .map(|p| module_of(p.strip_prefix(&src).unwrap()))
+        .collect()
+}
+
+#[test]
+fn every_module_is_classed_and_every_request_or_shared_module_is_watched() {
+    let problems = register_violations(&load_register(), &source_modules());
+    assert!(
+        problems.is_empty(),
+        "fitness register (docs/fitness-functions.md):\n  - {}",
+        problems.join("\n  - ")
+    );
+}
+
+#[test]
+fn the_fitness_page_and_the_register_list_the_same_checks() {
+    let page =
+        fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("docs/fitness-functions.md"))
+            .unwrap();
+    let problems = page_violations(&load_register(), &page);
+    assert!(problems.is_empty(), "{}", problems.join("\n"));
+}
+
+fn sample_register(extra: &str) -> Register {
+    toml::from_str(&format!(
+        r#"[modules]
+routing = "request"
+ledger = "shared"
+ctl = "off"
+{extra}
+[[checks]]
+id = "isolation-test"
+cadence = ["change", "weekly"]
+where = "ci"
+blocks = true
+triggers = {{ classes = ["request", "shared"], paths = [] }}
+"#
+    ))
+    .unwrap()
+}
+
+fn sample_modules(names: &[&str]) -> std::collections::BTreeSet<String> {
+    names.iter().map(|n| (*n).to_string()).collect()
+}
+
+#[test]
+fn a_consistent_sample_register_has_no_violations() {
+    let register = sample_register("");
+    assert_eq!(
+        register_violations(&register, &sample_modules(&["routing", "ledger", "ctl"])),
+        Vec::<String>::new()
+    );
+}
+
+#[test]
+fn an_unclassified_module_is_caught() {
+    let found = register_violations(
+        &sample_register(""),
+        &sample_modules(&["routing", "ledger", "ctl", "newmod"]),
+    );
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert!(
+        found[0].contains("`newmod` has no performance class"),
+        "{found:?}"
+    );
+}
+
+#[test]
+fn a_stale_entry_is_caught() {
+    let found = register_violations(
+        &sample_register(""),
+        &sample_modules(&["routing", "ledger"]),
+    );
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert!(
+        found[0].contains("classes `ctl` but there is no such module"),
+        "{found:?}"
+    );
+}
+
+#[test]
+fn a_request_module_no_blocking_check_covers_is_caught() {
+    let mut register = sample_register("");
+    register.checks[0].triggers.classes = vec![Class::Shared];
+    let found = register_violations(&register, &sample_modules(&["routing", "ledger", "ctl"]));
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert!(
+        found[0].contains("`routing` (Request) is covered by no blocking check"),
+        "{found:?}"
+    );
+    // Naming the module's files instead covers it.
+    register.checks[0].triggers.paths = vec!["src/routing/*".into()];
+    assert_eq!(
+        register_violations(&register, &sample_modules(&["routing", "ledger", "ctl"])),
+        Vec::<String>::new()
+    );
+    // A check that does not block covers nothing.
+    register.checks[0].blocks = false;
+    assert_eq!(
+        register_violations(&register, &sample_modules(&["routing", "ledger", "ctl"])).len(),
+        2
+    );
+}
+
+#[test]
+fn a_check_nothing_would_run_and_a_per_change_reference_check_are_caught() {
+    let mut register = sample_register("");
+    register.checks[0].triggers = Triggers {
+        classes: vec![],
+        paths: vec![],
+    };
+    register.checks[0].cadence = vec!["change".into()];
+    let found = register_violations(&register, &sample_modules(&["routing", "ledger", "ctl"]));
+    assert!(
+        found
+            .iter()
+            .any(|f| f.contains("nothing would ever run it")),
+        "{found:?}"
+    );
+    register.checks[0].cadence = vec!["change".into(), "release".into()];
+    register.checks[0].r#where = "reference".into();
+    let found = register_violations(&register, &sample_modules(&["routing", "ledger", "ctl"]));
+    assert!(
+        found.iter().any(|f| f.contains("only a release can use")),
+        "{found:?}"
+    );
+}
+
+#[test]
+fn a_page_that_disagrees_with_the_register_is_caught() {
+    let register = sample_register("");
+    assert_eq!(
+        page_violations(&register, "| `isolation-test` | x |\n"),
+        Vec::<String>::new()
+    );
+    let missing = page_violations(&register, "| nothing |\n");
+    assert!(
+        missing[0].contains("`isolation-test` is in the register but not on"),
+        "{missing:?}"
+    );
+    let extra = page_violations(
+        &register,
+        "| `isolation-test` | x |\n| `made-up-check` | y |\n",
+    );
+    assert_eq!(extra.len(), 1, "{extra:?}");
+    assert!(extra[0].contains("lists `made-up-check`"), "{extra:?}");
+}

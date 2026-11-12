@@ -4,7 +4,8 @@ What humpyard protects, from whom, and where the protections live. It is meant t
 ten minutes and to be updated whenever a trust boundary moves; a change that touches authentication, a network
 listener, secrets, or the parsing of untrusted data carries its own threat model in its `design.md` and updates this
 page when it lands. The rules that must keep holding are in [Architecture invariants](invariants.md); this page says
-which threats they answer and which threats nothing answers yet.
+which threats they answer and which threats nothing answers yet. Performance has the same kind of register in
+[Fitness functions](fitness-functions.md).
 
 ## The system in one paragraph
 

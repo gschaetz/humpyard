@@ -98,6 +98,7 @@ nav:
       - Roadmap: roadmap.md
       - Architecture: architecture.md
       - Invariants: invariants.md
+      - Fitness functions: fitness-functions.md
       - Threat model: threat-model.md
       - Background: background.md
       - Decision records:
