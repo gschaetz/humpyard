@@ -32,12 +32,22 @@ request path without something watching it.
 | Check | Protects | Runs when | Where | Cost | Blocks |
 |---|---|---|---|---|---|
 | `architecture-rules` | The invariants, among them 24: heavy ledger reads stay off the runtime and behind the gate | Any change to `src/`, `Cargo.toml`, its own test or this register; weekly; release | Hosted CI, the `check` job | Seconds | Yes |
-| `isolation-admin-reads` | [ADR 0036](adr/0036-admin-and-ui-work-must-not-change-the-request-paths-performance.md): administrative reads do not move request latency (p99 within 10% or 1 ms of the unloaded run, on one worker, no entry dropped) | A change to a request or shared module, `Cargo.toml`, `Cargo.lock`, the toolchain file, `tests/isolation.rs` or `tests/common/`; weekly; release | Hosted CI, the `isolation` job | Minutes | Yes |
+| `isolation-admin-reads` | [ADR 0036](adr/0036-admin-and-ui-work-must-not-change-the-request-paths-performance.md): administrative reads do not move request latency (p99 within 10% or 1 ms of the unloaded run, on one worker, no entry dropped) | A change to a request or shared module, `Cargo.toml`, `Cargo.lock`, the toolchain file, `tests/isolation.rs`, `tests/common/` or the CI workflow; weekly; release | Hosted CI, the `isolation` job | Minutes | Yes |
 | `isolation-prune-contention` | A large prune holds the write lock only briefly (slowest override write under 500 ms, requests unaffected) | The same | Hosted CI, the `isolation` job | Minutes | Yes |
 | `overhead-budgets` | The [budgets](performance.md): added latency p50 at most 2 ms and p99 at most 10 ms at 64 concurrent, and the streaming first chunk | At release | The reference machine, by hand | Minutes | Yes, at release |
 | `memory-budget` | Resident memory under load at most 64 MiB and growth between two loads at most 8 MiB | At release | The reference machine, by hand | Minutes | Yes, at release |
 | `throughput-comparison` | Throughput no more than 10% below the previous release, measured alongside it | At release | The reference machine, by hand | Minutes | Yes, at release |
 | `ledger-scale` | Ledger reads and writes at 450,000 rows | At release | The reference machine, by hand | Minutes | No |
+
+## How CI uses it
+
+The `changes` job runs `scripts/select-checks.py` on the files a pull request (or a push to `main`) changes. The
+`isolation` job runs only when it was selected; the weekly run (Mondays), a manual dispatch and a release tag select
+every hosted-CI check. The `performance-gate` job always runs and is the result to require: it passes when nothing
+was selected or every job that ran passed, and fails when one failed or was cancelled, so a skipped heavy job never
+leaves a pull request waiting. When the weekly run fails, the `report-weekly-failure` job opens an issue labelled
+`performance-regression` (or comments on the open one) naming the run; it never closes it, and pull requests and
+ordinary dispatches never open one. A dispatch with *rehearse failure* ticked forces that path to be checked.
 
 The weekly run does not claim to cover the reference-machine checks. They are run and recorded at release (see
 [Deployment](deployment.md)).

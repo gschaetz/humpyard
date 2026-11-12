@@ -64,7 +64,7 @@ ui_assets = "off"
 [[checks]]
 id = "architecture-rules"
 protects = "The invariants of docs/invariants.md, among them 24: heavy ledger reads stay off the runtime and behind the gate"
-triggers = { classes = ["request", "shared", "off"], paths = ["Cargo.toml", "tests/architecture.rs", "fitness/*", "docs/fitness-functions.md", "docs/invariants.md"] }
+triggers = { classes = ["request", "shared", "off"], paths = ["Cargo.toml", "tests/architecture.rs", "fitness/*", "scripts/select-checks.py", "tests/select_checks.rs", "docs/fitness-functions.md", "docs/invariants.md"] }
 cadence = ["change", "weekly", "release"]
 where = "ci"
 job = "check"
@@ -74,7 +74,7 @@ blocks = true
 [[checks]]
 id = "isolation-admin-reads"
 protects = "ADR 0036: administrative reads do not move request latency (p99 within 10% or 1 ms of the unloaded run, on one worker, no entry dropped)"
-triggers = { classes = ["request", "shared"], paths = ["Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "tests/isolation.rs", "tests/common/*"] }
+triggers = { classes = ["request", "shared"], paths = ["Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "tests/isolation.rs", "tests/common/*", ".github/workflows/ci.yml"] }
 cadence = ["change", "weekly", "release"]
 where = "ci"
 job = "isolation"
@@ -84,7 +84,7 @@ blocks = true
 [[checks]]
 id = "isolation-prune-contention"
 protects = "ADR 0036: a large prune holds the write lock only briefly (slowest override write under 500 ms, requests unaffected)"
-triggers = { classes = ["request", "shared"], paths = ["Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "tests/isolation.rs", "tests/common/*"] }
+triggers = { classes = ["request", "shared"], paths = ["Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "tests/isolation.rs", "tests/common/*", ".github/workflows/ci.yml"] }
 cadence = ["change", "weekly", "release"]
 where = "ci"
 job = "isolation"
