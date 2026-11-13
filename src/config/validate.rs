@@ -72,13 +72,21 @@ pub(super) fn metrics(
     })
 }
 
-/// Builds a key from its raw settings, checking the hash and the rate and concurrency limits.
-pub(super) fn key(id: &str, key: RawKey) -> Result<KeyConfig, ConfigError> {
+/// Builds a key from its raw settings, checking the hash and the rate and concurrency limits. `actors` has already
+/// been checked, so the key's actor exists.
+pub(super) fn key(
+    id: &str,
+    key: RawKey,
+    actors: &BTreeMap<String, super::ActorConfig>,
+) -> Result<KeyConfig, ConfigError> {
+    let owner = super::actors::owner_of(actors, key.actor.as_deref());
     Ok(KeyConfig {
         sha256: parse_hash(id, &key.sha256)?,
         allowed_routes: key.allowed_routes,
         over_budget: key.over_budget.unwrap_or_default(),
         profile: key.profile,
+        actor: key.actor,
+        owner,
         max_request_usd: key.max_request_usd,
         max_requests_per_minute: key_limit(
             &format!("keys.{id}"),

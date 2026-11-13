@@ -23,6 +23,9 @@ pub struct KeyRecord {
     pub read_config: bool,
     /// May create and remove runtime overrides.
     pub manage_overrides: bool,
+    /// The actor that owns the key and the person its usage rolls up to (attribution only; ADR 0037).
+    pub actor: Option<String>,
+    pub owner: Option<String>,
 }
 
 impl KeyRecord {
@@ -61,6 +64,8 @@ impl ConfigKeyStore {
                         max_request_usd: key.max_request_usd,
                         read_config: key.read_config,
                         manage_overrides: key.manage_overrides,
+                        actor: key.actor.clone(),
+                        owner: key.owner.clone(),
                     },
                 )
             })
@@ -164,6 +169,8 @@ mod tests {
             max_request_usd: None,
             read_config: false,
             manage_overrides: false,
+            actor: None,
+            owner: None,
         };
         assert!(record.may_use("anything"));
         record.allowed_routes = Some(vec!["auto".into()]);
@@ -190,6 +197,8 @@ mod tests {
                 read_config: false,
                 manage_overrides: false,
                 profile: None,
+                actor: None,
+                owner: None,
             },
         )]
         .into();

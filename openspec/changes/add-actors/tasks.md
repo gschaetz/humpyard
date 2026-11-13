@@ -2,10 +2,10 @@
 
 ## 1. Actors in the configuration
 
-- [ ] 1.1 Add `[actors.<id>]` (`kind` required, `display_name`, `owner`) and `actor =` on a key to the configuration schema and loader, with the checks from the `actors` spec (missing or unknown kind, owner not a human or not defined, owner on a human, key naming an unknown actor, id rules as for keys); verify with loader tests for every scenario in the spec, including that a configuration without `[actors]` loads unchanged
-- [ ] 1.2 Resolve each key's actor and owner once at load into the configuration snapshot, so a reload applies them to the next request; verify with a test that a key moved to another actor is attributed to the new one after a reload and a request in flight is unaffected
-- [ ] 1.3 Show the actors in the effective configuration (kind, display name, owner, key ids, labelled `file`) and the actor and owner in `GET /v1/key/info`, with no secret or hash; verify with tests for both endpoints and a check that nothing secret is serialised
-- [ ] 1.4 Prove an actor grants and removes nothing: a test that gives the same key settings with and without an actor and with a human and an agent, and compares routes, budgets and limits; document `[actors]` in `docs/configuration.md` and verify the documented example loads as written
+- [x] 1.1 Add `[actors.<id>]` (`kind` required, `display_name`, `owner`) and `actor =` on a key to the configuration schema and loader, with the checks from the `actors` spec (missing or unknown kind, owner not a human or not defined, owner on a human, key naming an unknown actor, id rules as for keys); verify with loader tests for every scenario in the spec, including that a configuration without `[actors]` loads unchanged
+- [x] 1.2 Resolve each key's actor and owner once at load into the configuration snapshot, so a reload applies them to the next request; verify with a test that a key moved to another actor is attributed to the new one after a reload and a request in flight is unaffected
+- [x] 1.3 Show the actors in the effective configuration (kind, display name, owner, key ids, labelled `file`) and the actor and owner in `GET /v1/key/info`, with no secret or hash; verify with tests for both endpoints and a check that nothing secret is serialised
+- [x] 1.4 Prove an actor grants and removes nothing: a test that gives the same key settings with and without an actor and with a human and an agent, and compares routes, budgets and limits; document `[actors]` in `docs/configuration.md` and verify the documented example loads as written
 
 ## 2. Attribution on decisions and in statistics
 

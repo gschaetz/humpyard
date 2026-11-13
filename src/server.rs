@@ -1022,6 +1022,8 @@ async fn key_info(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Res
     let remaining = |limit: Option<f64>, spent: f64| limit.map(|l| (l - spent).max(0.0));
     axum::Json(json!({
         "id": caller.id,
+        "actor": caller.actor,
+        "owner": caller.owner,
         "state": match status.state {
             BudgetState::Healthy => "healthy",
             BudgetState::Restricted => "restricted",

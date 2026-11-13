@@ -294,6 +294,8 @@ mod tests {
             read_config: false,
             manage_overrides: false,
             profile: None,
+            actor: None,
+            owner: None,
         }
     }
 

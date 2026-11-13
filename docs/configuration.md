@@ -84,6 +84,29 @@ See the [example configs](examples.md); `humpyard check-config <file>` validates
 - `[profiles.<id>]` (optional) and `profile = "<id>"` on a key: a named bundle of routes, budgets, `over_budget` and
   rate limits that its keys inherit and may only narrow. See [Key profiles](budgets.md#key-profiles). Not the same
   as the `x-humpyard-profile` request header.
+- `[actors.<id>]` (optional) and `actor = "<id>"` on a key: who a key is for, so usage can be read per agent and per
+  person. An actor is a `human` or an `agent`, and an agent may name the human it acts for as its `owner`.
+
+  ```toml
+  [actors.gary]
+  kind = "human"
+  display_name = "Gary"              # optional
+
+  [actors.claude-code]
+  kind = "agent"
+  owner = "gary"                     # optional, and only for an agent: the human it acts for
+
+  [keys.cc-laptop]
+  sha256 = "sha256:<64 hex digits>"
+  actor = "claude-code"
+  ```
+
+  `kind` is required. An `owner` must name a human actor that exists, and a human has none. A key that names an actor
+  that is not defined is refused at load. **An actor grants and removes nothing:** a key's routes, budgets and limits
+  come only from the key and its [profile](budgets.md#key-profiles), whoever owns it. Decisions record the key's actor
+  and the person it rolls up to (the owner of an agent, the human itself for a human's own key), and the admin
+  statistics group by either. `GET /v1/key/info` shows a key's `actor` and `owner`, and the effective configuration
+  lists each actor with the ids of the keys that name it. ADR 0037 has the reasoning.
 - `[metrics]` (optional, off by default): the Prometheus `/metrics` endpoint. `enabled`, `listen` (a
   separate address; recommended), `bearer_sha256` (the credential for serving it on the main
   listener), `key_labels` and `key_label_limit`. See [Metrics and alerts](metrics.md).

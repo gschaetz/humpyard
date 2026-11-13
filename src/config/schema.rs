@@ -35,6 +35,9 @@ pub(super) struct RawConfig {
     /// Named bundles of key authority (`add-key-profiles`, ADR 0025); a key names one with `profile`.
     #[serde(default)]
     pub(super) profiles: BTreeMap<String, RawProfile>,
+    /// Named owners of keys (`add-actors`, ADR 0037): a person or an agent. Labels only; they grant nothing.
+    #[serde(default)]
+    pub(super) actors: BTreeMap<String, RawActor>,
     pub(super) ledger: Option<RawLedger>,
     #[serde(default)]
     pub(super) budget: RawBudget,
@@ -302,12 +305,25 @@ pub(super) struct RawKey {
     pub(super) max_concurrent: Option<toml::Value>,
     /// The profile whose settings this key inherits and may only narrow.
     pub(super) profile: Option<String>,
+    /// The actor that owns this key (`[actors.<id>]`); a label for attribution, never an authority.
+    pub(super) actor: Option<String>,
     /// May read the effective configuration (`GET /v1/config`); off by default.
     #[serde(default)]
     pub(super) read_config: bool,
     /// May create and remove runtime overrides (`/v1/overrides`); off by default.
     #[serde(default)]
     pub(super) manage_overrides: bool,
+}
+
+/// A named owner of keys. `kind` is read untyped so that a missing or unknown one is refused naming the actor and
+/// the field, not with a parser message.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct RawActor {
+    pub(super) kind: Option<String>,
+    pub(super) display_name: Option<String>,
+    /// For an agent: the human actor it acts for.
+    pub(super) owner: Option<String>,
 }
 
 /// What a profile bounds: the narrowable settings of a key. It carries no privilege (`read_config`,
