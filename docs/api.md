@@ -38,7 +38,7 @@ The code tells it apart from a 429 that a provider sent and the gateway passed t
 |---|---|
 | `GET /v1/models` | the routes and targets a key may use, plus the [aliases](configuration.md) for them (an `[aliases.<id>]` entry carries its `display_name` and `description` when set). A request may name an alias as its `model`; it is served, authorized and recorded as the real route or target. `model_aliases = false` removes aliases from both |
 | `GET /healthz` | liveness |
-| `GET /v1/key/info` | a key's limits, spend and budget state |
+| `GET /v1/key/info` | a key's actor and owner, limits, spend and budget state |
 | `GET /v1/health` | which provider endpoints are being skipped, and which config version is loaded |
 | `GET /v1/config` | the configuration the gateway is serving, secrets omitted, with where each target and route came from (`file` or `generated`) and the config fingerprint; needs a key with `read_config = true` ([Keys](budgets.md#virtual-keys)) |
 | `POST /v1/overrides`, `GET /v1/overrides`, `DELETE /v1/overrides/{id}` | create, list (`?history=true` adds the ones that have ended in the last 30 days) and remove [runtime overrides](routing.md#runtime-overrides): an expiring instruction to stop using a target (`disable_target`) or a provider (`drain_provider`), or to cut a route to one target (`pin_route`). Creating and removing need a key with `manage_overrides = true`; listing needs that or `read_config` |

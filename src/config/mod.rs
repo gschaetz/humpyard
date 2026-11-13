@@ -1,6 +1,7 @@
 //! Gateway configuration: providers, targets and routes from one TOML file, with API keys read
 //! from the environment.
 
+mod actors;
 mod discovered;
 pub mod patch;
 mod pools;
@@ -88,6 +89,8 @@ pub struct Config {
     pub keys: BTreeMap<String, KeyConfig>,
     /// Key profiles by id, as defined; the keys above are already resolved against them.
     pub profiles: BTreeMap<String, ProfileConfig>,
+    /// Actors by id (`add-actors`, ADR 0037): named owners of keys. Labels for attribution; they grant nothing.
+    pub actors: BTreeMap<String, ActorConfig>,
     pub ledger: Option<PathBuf>,
     pub budget: BudgetConfig,
     pub health: HealthConfig,
@@ -236,6 +239,37 @@ pub struct KeyConfig {
     pub manage_overrides: bool,
     /// The profile the settings above were resolved against, if the key names one.
     pub profile: Option<String>,
+    /// The actor that owns this key, if it names one (attribution only).
+    pub actor: Option<String>,
+    /// The person the key's usage rolls up to: the actor's owner for an agent, the actor itself for a human.
+    pub owner: Option<String>,
+}
+
+/// Whether an actor is a person or an agent. It is a label: it changes no key's authority (ADR 0037).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ActorKind {
+    Human,
+    Agent,
+}
+
+impl ActorKind {
+    /// The name used in the configuration file and in the admin API.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Human => "human",
+            Self::Agent => "agent",
+        }
+    }
+}
+
+/// A named owner of keys as defined in `[actors.<id>]`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ActorConfig {
+    pub kind: ActorKind,
+    pub display_name: Option<String>,
+    /// For an agent, the human it acts for; always `None` for a human.
+    pub owner: Option<String>,
 }
 
 /// A key profile as defined (ADR 0025): the bounds its keys inherit and may only narrow. `None` bounds nothing.
@@ -420,6 +454,7 @@ impl Config {
         };
         let pools = pools::resolve(&mut raw)?;
         let profiles = profiles::resolve(&mut raw)?;
+        let actors = actors::resolve(&raw)?;
         validate::validate(&raw)?;
 
         let providers = build_providers(raw.providers, env)?;
@@ -470,11 +505,12 @@ impl Config {
                 .keys
                 .into_iter()
                 .map(|(id, key)| {
-                    let key = validate::key(&id, key)?;
+                    let key = validate::key(&id, key, &actors)?;
                     Ok((id, key))
                 })
                 .collect::<Result<_, ConfigError>>()?,
             profiles,
+            actors,
             overrides: OverridesConfig::from(&raw.overrides),
             metrics,
             admin,

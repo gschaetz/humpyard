@@ -14,7 +14,7 @@ use serde_json::{Value, json};
 use switchyard_protocol::WireFormat;
 
 use super::{AppState, authenticate};
-use crate::config::{Config, Endpoint, KeyConfig, ProfileConfig};
+use crate::config::{ActorConfig, Config, Endpoint, KeyConfig, ProfileConfig};
 use crate::overrides::Override;
 
 /// One key as the view shows it: its limits and flags, never its hash.
@@ -30,8 +30,38 @@ fn key_view(k: &KeyConfig) -> Value {
         "max_concurrent": k.max_concurrent,
         "read_config": k.read_config,
         "profile": k.profile,
+        "actor": k.actor,
+        "owner": k.owner,
         "source": "file",
     })
+}
+
+/// One actor as defined, with the ids of the keys that name it. A label: it grants nothing (ADR 0037).
+fn actor_view(a: &ActorConfig, keys: &[&String]) -> Value {
+    json!({
+        "kind": a.kind.as_str(),
+        "display_name": a.display_name,
+        "owner": a.owner,
+        "keys": keys,
+        "source": "file",
+    })
+}
+
+/// Every actor with the keys that name it.
+fn actors_view(config: &Config) -> serde_json::Map<String, Value> {
+    config
+        .actors
+        .iter()
+        .map(|(id, a)| {
+            let named: Vec<&String> = config
+                .keys
+                .iter()
+                .filter(|(_, k)| k.actor.as_deref() == Some(id.as_str()))
+                .map(|(key_id, _)| key_id)
+                .collect();
+            (id.clone(), actor_view(a, &named))
+        })
+        .collect()
 }
 
 /// One profile as defined: the bounds its keys inherit and may only narrow. `null` bounds nothing.
@@ -143,6 +173,7 @@ pub(super) fn view(
         "selectors": config.select,
         "keys": keys,
         "profiles": profiles,
+        "actors": actors_view(config),
         // Only a count: who may administer the gateway is for administrators to see, not for every key that
         // may read the configuration (ADR 0027).
         "admin": {

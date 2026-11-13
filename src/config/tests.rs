@@ -1210,3 +1210,177 @@ fn a_cap_above_the_window_names_the_target_the_endpoint_and_the_setting() {
         .is_ok()
     );
 }
+
+// Actors (`add-actors`, ADR 0037): named owners of keys. Labels only; they grant nothing.
+
+/// VALID with `actors` appended and key `alice` carrying `key_settings`.
+fn with_actors(actors: &str, key_settings: &str) -> String {
+    format!("{VALID}\n{actors}\n[keys.alice]\nsha256 = \"{HASH_A}\"\n{key_settings}\n")
+}
+
+const GARY_AND_AGENT: &str =
+    "[actors.gary]\nkind = \"human\"\n[actors.claude-code]\nkind = \"agent\"\nowner = \"gary\"\n";
+
+#[test]
+fn a_human_and_an_agent_load() {
+    let config = Config::from_toml(&with_actors(GARY_AND_AGENT, ""), env).unwrap();
+    assert_eq!(config.actors["gary"].kind, ActorKind::Human);
+    assert_eq!(config.actors["claude-code"].kind, ActorKind::Agent);
+    assert_eq!(config.actors["claude-code"].owner.as_deref(), Some("gary"));
+    assert_eq!(config.actors["gary"].owner, None);
+}
+
+#[test]
+fn a_configuration_without_actors_loads_and_a_key_is_unchanged() {
+    let config = Config::from_toml(&key_with("max_concurrent = 2"), env).unwrap();
+    assert!(config.actors.is_empty());
+    assert_eq!(config.keys["alice"].actor, None);
+    assert_eq!(config.keys["alice"].owner, None);
+    assert_eq!(config.keys["alice"].max_concurrent, Some(2));
+}
+
+#[test]
+fn an_actor_with_no_kind_or_an_unknown_one_is_refused_naming_it() {
+    let message = err(&with_actors("[actors.gary]\ndisplay_name = \"Gary\"", ""));
+    assert!(message.contains("actors.gary.kind"), "{message}");
+    let message = err(&with_actors("[actors.gary]\nkind = \"bot\"", ""));
+    assert!(
+        message.contains("actors.gary.kind") && message.contains("bot"),
+        "{message}"
+    );
+    let message = err(&with_actors("[actors.gary]\nkind = \"Human\"", ""));
+    assert!(message.contains("actors.gary.kind"), "{message}");
+}
+
+#[test]
+fn an_agent_owner_must_be_a_human_that_exists() {
+    let message = err(&with_actors(
+        "[actors.a]\nkind = \"agent\"\n[actors.b]\nkind = \"agent\"\nowner = \"a\"",
+        "",
+    ));
+    assert!(
+        message.contains("actors.b.owner") && message.contains("agent"),
+        "{message}"
+    );
+    let message = err(&with_actors(
+        "[actors.b]\nkind = \"agent\"\nowner = \"sam\"",
+        "",
+    ));
+    assert!(
+        message.contains("actors.b.owner") && message.contains("sam"),
+        "{message}"
+    );
+}
+
+#[test]
+fn a_human_cannot_have_an_owner() {
+    let message = err(&with_actors(
+        "[actors.gary]\nkind = \"human\"\n[actors.sam]\nkind = \"human\"\nowner = \"gary\"",
+        "",
+    ));
+    assert!(message.contains("actors.sam.owner"), "{message}");
+}
+
+#[test]
+fn an_actor_cannot_carry_authority() {
+    for setting in [
+        "profile = \"trial\"",
+        "allowed_routes = [\"auto\"]",
+        "daily_usd = 1.0",
+        "read_config = true",
+    ] {
+        let text = with_actors(&format!("[actors.gary]\nkind = \"human\"\n{setting}"), "");
+        let message = err(&text);
+        assert!(
+            message.contains(setting.split(' ').next().unwrap()),
+            "{setting}: {message}"
+        );
+    }
+}
+
+#[test]
+fn a_key_names_an_actor_and_several_keys_may_name_the_same_one() {
+    let text = format!(
+        "{}\n[keys.bob]\nsha256 = \"{HASH_B}\"\nactor = \"claude-code\"\n",
+        with_actors(GARY_AND_AGENT, "actor = \"claude-code\"")
+    );
+    let config = Config::from_toml(&text, env).unwrap();
+    assert_eq!(config.keys["alice"].actor.as_deref(), Some("claude-code"));
+    assert_eq!(config.keys["bob"].actor.as_deref(), Some("claude-code"));
+}
+
+#[test]
+fn a_key_naming_an_unknown_actor_is_refused_naming_the_key_and_the_actor() {
+    let message = err(&with_actors(GARY_AND_AGENT, "actor = \"openclaw\""));
+    assert!(
+        message.contains("keys.alice.actor") && message.contains("openclaw"),
+        "{message}"
+    );
+    let message = err(&key_with("actor = \"gary\""));
+    assert!(message.contains("keys.alice.actor"), "{message}");
+}
+
+#[test]
+fn a_key_rolls_up_to_its_owner() {
+    let human = Config::from_toml(&with_actors(GARY_AND_AGENT, "actor = \"gary\""), env).unwrap();
+    assert_eq!(human.keys["alice"].owner.as_deref(), Some("gary"));
+    let agent =
+        Config::from_toml(&with_actors(GARY_AND_AGENT, "actor = \"claude-code\""), env).unwrap();
+    assert_eq!(agent.keys["alice"].owner.as_deref(), Some("gary"));
+    let orphan = Config::from_toml(
+        &with_actors(
+            "[actors.openclaw]\nkind = \"agent\"",
+            "actor = \"openclaw\"",
+        ),
+        env,
+    )
+    .unwrap();
+    assert_eq!(orphan.keys["alice"].actor.as_deref(), Some("openclaw"));
+    assert_eq!(orphan.keys["alice"].owner, None);
+}
+
+#[test]
+fn an_actor_changes_nothing_a_key_may_do() {
+    let settings = "allowed_routes = [\"auto\"]\nmax_concurrent = 2\nover_budget = \"free_only\"";
+    let plain = Config::from_toml(&key_with(settings), env).unwrap();
+    for (actors, name) in [(GARY_AND_AGENT, "gary"), (GARY_AND_AGENT, "claude-code")] {
+        let with = Config::from_toml(
+            &with_actors(actors, &format!("{settings}\nactor = \"{name}\"")),
+            env,
+        )
+        .unwrap();
+        let (a, b) = (&plain.keys["alice"], &with.keys["alice"]);
+        assert_eq!(a.allowed_routes, b.allowed_routes);
+        assert_eq!(a.max_concurrent, b.max_concurrent);
+        assert_eq!(a.max_requests_per_minute, b.max_requests_per_minute);
+        assert_eq!(a.over_budget, b.over_budget);
+        assert_eq!(a.limits, b.limits);
+        assert_eq!(a.max_request_usd, b.max_request_usd);
+        assert_eq!(
+            (a.read_config, a.manage_overrides),
+            (b.read_config, b.manage_overrides)
+        );
+    }
+}
+
+#[test]
+fn the_documented_actors_example_loads_as_written() {
+    let docs = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/docs/configuration.md"
+    ))
+    .unwrap();
+    let block = docs
+        .split("```toml")
+        .filter_map(|part| part.split("```").next())
+        .find(|part| part.contains("[actors.gary]"))
+        .expect("docs/configuration.md has an actors example");
+    let text = block.replace("sha256:<64 hex digits>", HASH_A);
+    let config = Config::from_toml(&format!("{VALID}\n{text}"), env).unwrap();
+    assert_eq!(config.actors.len(), 2);
+    assert_eq!(
+        config.keys["cc-laptop"].actor.as_deref(),
+        Some("claude-code")
+    );
+    assert_eq!(config.keys["cc-laptop"].owner.as_deref(), Some("gary"));
+}
