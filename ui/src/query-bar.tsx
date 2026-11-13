@@ -1,10 +1,11 @@
 import { useEffect, useState } from "preact/hooks";
 import { METRIC_LABELS } from "./chart-data";
-import { GROUPS, METRICS, REFRESHES, WINDOWS, type Group, type Metric, type Query, type Refresh, type Window } from "./query";
+import { GROUPS, METRICS, REFRESHES, WINDOWS, ZONES, type Group, type Metric, type Query, type Refresh, type Window, type Zone } from "./query";
 
 export type View = "lines" | "bars";
 
 const GROUP_LABELS: Record<Group, string> = { route: "Route", target: "Target", endpoint: "Endpoint" };
+const ZONE_LABELS: Record<Zone, string> = { local: "Local time", utc: "UTC" };
 const REFRESH_LABELS: Record<Refresh, string> = { off: "Off", "30s": "30 seconds", "1m": "1 minute", "5m": "5 minutes" };
 
 /** A text filter that changes the query when the person commits it (Enter or leaving the field), not on each key. */
@@ -35,8 +36,8 @@ function Filter(props: { label: string; value: string; onCommit: (value: string)
 }
 
 /**
- * The query bar: what to show (window, grouping, metric, route and target filters), how (lines or ranking) and how
- * often to refresh. Every choice comes from a fixed list; the filters are plain text. Changing any of them asks the
+ * The query bar: what to show (window, grouping, metric, route and target filters), how (lines or ranking, local time
+ * or UTC) and how often to refresh. Every choice comes from a fixed list; the filters are plain text. Changing any of them asks the
  * view to read again.
  */
 export function QueryBar(props: {
@@ -80,6 +81,14 @@ export function QueryBar(props: {
         <select value={props.view} onChange={(event) => { props.onView(event.currentTarget.value as View); }}>
           <option value="lines">Over time</option>
           <option value="bars">Ranking</option>
+        </select>
+      </label>
+      <label>
+        Times
+        <select value={query.zone} onChange={(event) => { props.onQuery({ zone: event.currentTarget.value as Zone }); }}>
+          {ZONES.map((z) => (
+            <option key={z} value={z}>{ZONE_LABELS[z]}</option>
+          ))}
         </select>
       </label>
       <label>
