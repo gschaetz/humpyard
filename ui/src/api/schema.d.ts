@@ -201,6 +201,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/admin/v1/keys/{id}/revoke": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Revoke a client key for a bounded time
+         * @description Retires a leaked client key without a deploy. The key is refused on its next request with the same 401 as a key the gateway never knew. An audited, expiring record that only removes access: it is not an override, no override endpoint lists or ends it, and it ends when it expires or is removed here. Deleting the key from the configuration is the permanent step.
+         */
+        post: operations["revokeKey"];
+        /** End a client key revocation before it expires */
+        delete: operations["endKeyRevocation"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/admin/v1/overrides": {
         parameters: {
             query?: never;
@@ -299,6 +320,14 @@ export interface components {
         };
         Revocation: {
             credential?: string;
+            /** @enum {boolean} */
+            revoked?: true;
+            created_by?: string;
+            expires_ms?: number;
+            expires_in_secs?: number;
+        };
+        KeyRevocation: {
+            key?: string;
             /** @enum {boolean} */
             revoked?: true;
             created_by?: string;
@@ -1128,6 +1157,134 @@ export interface operations {
                 content: {
                     "application/json": {
                         credential?: string;
+                        /** @enum {boolean} */
+                        revoked?: false;
+                    };
+                };
+            };
+            /** @description Missing, unknown, expired or revoked credential. One shape for every reason. */
+            401: {
+                headers: {
+                    "WWW-Authenticate"?: "Bearer";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description A valid credential without the scope the operation needs; `error.scope` names it. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No revocation is in force for that credential. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    revokeKey: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The client key to revoke, by its id in `[keys.*]`. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RevokeRequest"];
+            };
+        };
+        responses: {
+            /** @description The revocation now in force. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KeyRevocation"];
+                };
+            };
+            /** @description Not a client key of the configuration, a missing reason, or an expiry beyond the maximum. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Missing, unknown, expired or revoked credential. One shape for every reason. */
+            401: {
+                headers: {
+                    "WWW-Authenticate"?: "Bearer";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description A valid credential without the scope the operation needs; `error.scope` names it. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Already revoked, or no ledger is configured. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description The revocation could not be stored. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    endKeyRevocation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The client key whose revocation to end. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The revocation has ended. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        key?: string;
                         /** @enum {boolean} */
                         revoked?: false;
                     };

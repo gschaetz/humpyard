@@ -15,9 +15,9 @@
 
 ## 3. Revoking a client key
 
-- [ ] 3.1 Add `POST` and `DELETE /admin/v1/keys/{id}/revoke` in the `credentials` scope: an audited, expiring record with an expiry no later than the overrides maximum, stored with the admin revocations, not listed or counted as an override and not removable through the override endpoints; verify with tests for the happy path, an unknown key, the wrong scope, a client key calling it, expiry and removal
-- [ ] 3.2 Refuse a request with a revoked key with the same 401 and body as an unknown key, from the same in-memory set an admin revocation uses so no ledger read is added to authentication; mark the key `revoked: true` with its expiry in the effective configuration; verify with a test that compares the revoked and unknown responses byte for byte and a test that the key works again after expiry
-- [ ] 3.3 Describe the endpoints in the OpenAPI document and `docs/api.md` (including that deleting the key from the file is the permanent step); verify the contract test and the strict docs build pass
+- [x] 3.1 Add `POST` and `DELETE /admin/v1/keys/{id}/revoke` in the `credentials` scope: an audited, expiring record with an expiry no later than the overrides maximum, stored with the admin revocations, not listed or counted as an override and not removable through the override endpoints; verify with tests for the happy path, an unknown key, the wrong scope, a client key calling it, expiry and removal
+- [x] 3.2 Refuse a request with a revoked key with the same 401 and body as an unknown key, from the same in-memory set an admin revocation uses so no ledger read is added to authentication; mark the key `revoked: true` with its expiry in the effective configuration; verify with a test that compares the revoked and unknown responses byte for byte and a test that the key works again after expiry
+- [x] 3.3 Describe the endpoints in the OpenAPI document and `docs/api.md` (including that deleting the key from the file is the permanent step); verify the contract test and the strict docs build pass
 
 ## 4. Request-path guard
 

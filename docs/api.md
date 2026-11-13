@@ -85,6 +85,8 @@ Mint a credential with `humpyard keygen gary --admin --scopes read,overrides`: i
 | `DELETE /admin/v1/overrides/{id}` | `overrides` | removes one in force |
 | `POST /admin/v1/credentials/{id}/revoke` | `credentials` | revokes an admin credential: body `{"reason": "...", "expires_in_secs": 3600}` |
 | `DELETE /admin/v1/credentials/{id}/revoke` | `credentials` | ends that revocation early |
+| `POST /admin/v1/keys/{id}/revoke` | `credentials` | revokes a **client key** the same way, so a leaked one is retired without a deploy; same body |
+| `DELETE /admin/v1/keys/{id}/revoke` | `credentials` | ends that revocation early |
 
 An override made here is recorded as made by `admin:<id>` (a client key is recorded by its own id), so the audit
 rows say who did it.
@@ -100,9 +102,17 @@ from the file and reload. `GET /admin/v1/credentials` shows `revoked: true` whil
 `humpyard_admin_revocations_active` ([Metrics](metrics.md)) counts them; the shipped alert rules include
 `HumpyardAdminRevoked` for one that lasts over 30 minutes.
 
+**Revoking a client key** works the same way and with the same body, rules and limits, at
+`POST /admin/v1/keys/{id}/revoke` (the id is a key of `[keys.*]`; an admin credential's id is a 400). From the next
+request the key is refused with exactly the 401 a key the gateway never knew gets, so nobody can tell a revoked key
+from an unknown one. Other keys are untouched. `GET /admin/v1/config` shows `revoked: true` and `revoked_until_ms` on
+the key while it is in force. It survives a restart, ends by itself or with `DELETE`, and deleting the key from the
+file is the permanent step. Revoking an admin credential is counted by `humpyard_admin_revocations_active`; a key
+revocation is not.
+
 A revocation is stored with the overrides but is not one: it is not listed by `/v1/overrides` or
 `/admin/v1/overrides`, is not counted in `humpyard_overrides_active`, never affects routing, and cannot be ended
-through the override endpoints, so a client key that manages overrides cannot restore a revoked admin.
+through the override endpoints, so a client key that manages overrides cannot restore a revoked admin or a revoked key.
 
 ### Configuration patches
 
