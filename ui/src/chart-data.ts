@@ -1,6 +1,6 @@
 import type { Series, SeriesBucket } from "./api/client";
 import { count, ms, percent } from "./format";
-import type { Metric } from "./query";
+import type { Metric, Zone } from "./query";
 
 /** The most series drawn: also the gateway's default `limit`, and the number of distinct colours and shapes. */
 export const MAX_SERIES = 8;
@@ -40,9 +40,44 @@ export const METRIC_LABELS: Record<Metric, string> = {
   requests: "Requests",
 };
 
-/** UTC, to the minute, so a point's text is the same wherever the page is read. */
-export function utc(startMs: number): string {
-  return `${new Date(startMs).toISOString().slice(0, 16).replace("T", " ")} UTC`;
+/** The time zone a choice stands for: the browser's own, or UTC. A name that Intl knows, such as `America/Chicago`. */
+export function timeZoneId(zone: Zone): string {
+  if (zone === "utc") return "UTC";
+  return new Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+}
+
+const formatters = new Map<string, Intl.DateTimeFormat>();
+
+function parts(ms: number, timeZone: string): Record<string, string> {
+  let format = formatters.get(timeZone);
+  if (format === undefined) {
+    format = new Intl.DateTimeFormat("en-US", {
+      timeZone,
+      hourCycle: "h23",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      timeZoneName: "short",
+    });
+    formatters.set(timeZone, format);
+  }
+  const out: Record<string, string> = {};
+  for (const part of format.formatToParts(ms)) out[part.type] = part.value;
+  return out;
+}
+
+/** A moment to the minute in the given zone, with the zone's short name (`2026-01-02 03:04 UTC`, `2026-01-01 21:04 CST`). */
+export function timeText(ms: number, timeZone = "UTC"): string {
+  const p = parts(ms, timeZone);
+  return `${p.year ?? ""}-${p.month ?? ""}-${p.day ?? ""} ${p.hour ?? ""}:${p.minute ?? ""} ${p.timeZoneName ?? ""}`;
+}
+
+/** An axis tick: the month and day on a long window, the time of day otherwise, in the given zone. */
+export function tickText(ms: number, long: boolean, timeZone = "UTC"): string {
+  const p = parts(ms, timeZone);
+  return long ? `${p.month ?? ""}-${p.day ?? ""}` : `${p.hour ?? ""}:${p.minute ?? ""}`;
 }
 
 /** Tick values from 0 up to a round number at or above `max`, about `want` of them. */
@@ -89,9 +124,10 @@ export const MIN_WIDTH = 360;
 
 /**
  * Scales for a series and a metric, for a chart `width` units wide (its width on screen, so text keeps its size).
- * All geometry is computed here and written as plain SVG attributes.
+ * All geometry is computed here and written as plain SVG attributes. Tick text is written in `timeZone`; the positions
+ * come from the bucket starts and do not depend on it.
  */
-export function layout(series: Series, metric: Metric, width = WIDTH): Layout {
+export function layout(series: Series, metric: Metric, width = WIDTH, timeZone = "UTC"): Layout {
   const plotWidth = Math.max(MIN_WIDTH, width) - LEFT - RIGHT;
   const groups = series.data.slice(0, MAX_SERIES);
   const starts = groups[0]?.buckets.map((b) => b.start_ms) ?? [];
@@ -123,7 +159,7 @@ export function layout(series: Series, metric: Metric, width = WIDTH): Layout {
     .filter((_, i) => i % every === 0)
     .map((start) => ({
       x: x(start),
-      label: new Date(start).toISOString().slice(long ? 5 : 11, long ? 10 : 16),
+      label: tickText(start, long, timeZone),
     }));
 
   const covered = series.covered_since_ms;
@@ -183,7 +219,7 @@ export function strokes(points: Point[]): { solid: string[]; partial: string | n
 }
 
 /** A point's hover text: when, which series, the value and how many requests it rests on. */
-export function pointTitle(group: string, metric: Metric, p: Point): string {
+export function pointTitle(group: string, metric: Metric, p: Point, timeZone = "UTC"): string {
   const what = p.value === null ? "no calls" : `${METRIC_LABELS[metric]} ${formatMetric(metric, p.value)} (${count(p.requests)} requests)`;
-  return `${utc(p.start_ms)} · ${group}: ${what}`;
+  return `${timeText(p.start_ms, timeZone)} · ${group}: ${what}`;
 }

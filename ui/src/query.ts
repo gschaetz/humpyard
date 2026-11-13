@@ -1,9 +1,9 @@
 /**
  * The query view's query: what the person asked to see, kept in the URL fragment so a view can be bookmarked and
  * shared. The fragment is untrusted input (anyone can send a link), so it is read against fixed lists: an unknown
- * window, grouping, metric or refresh period becomes the default, and a filter or focus value is only ever kept as a
- * plain string to be shown as text and sent as an encoded query parameter. Nothing here holds a credential or a token,
- * and none is ever written to the fragment.
+ * window, grouping, metric, time zone choice or refresh period becomes the default, and a filter or focus value is only
+ * ever kept as a plain string to be shown as text and sent as an encoded query parameter. Nothing here holds a
+ * credential or a token, and none is ever written to the fragment.
  */
 
 export const WINDOWS = ["1h", "6h", "24h", "7d", "30d"] as const;
@@ -14,6 +14,10 @@ export type Group = (typeof GROUPS)[number];
 
 export const METRICS = ["failure_rate", "fallback_rate", "p90", "requests"] as const;
 export type Metric = (typeof METRICS)[number];
+
+/** How times are written: in the browser's time zone or in UTC. It changes text only, never what is asked of the gateway. */
+export const ZONES = ["local", "utc"] as const;
+export type Zone = (typeof ZONES)[number];
 
 /** The refresh periods on offer, and what each means in milliseconds (`off` never refreshes). */
 export const REFRESH_MS = { off: 0, "30s": 30_000, "1m": 60_000, "5m": 300_000 } as const;
@@ -31,6 +35,7 @@ export interface Query {
   group: Group;
   metric: Metric;
   refresh: Refresh;
+  zone: Zone;
   /** Only this route; empty means every route. */
   route: string;
   /** Only attempts on this target; empty means every target. */
@@ -44,6 +49,7 @@ export const DEFAULT_QUERY: Query = {
   group: "target",
   metric: "failure_rate",
   refresh: "1m",
+  zone: "local",
   route: "",
   target: "",
   focus: "",
@@ -65,6 +71,7 @@ export function parseQuery(fragment: string): Query {
     group: oneOf(GROUPS, params.get("group"), DEFAULT_QUERY.group),
     metric: oneOf(METRICS, params.get("metric"), DEFAULT_QUERY.metric),
     refresh: oneOf(REFRESHES, params.get("refresh"), DEFAULT_QUERY.refresh),
+    zone: oneOf(ZONES, params.get("zone"), DEFAULT_QUERY.zone),
     route: text(params.get("route")),
     target: text(params.get("target")),
     focus: text(params.get("focus")),
@@ -79,6 +86,8 @@ export function serialiseQuery(query: Query): string {
     metric: query.metric,
     refresh: query.refresh,
   });
+  // The default is left out, so a link without it opens in local time.
+  if (query.zone !== DEFAULT_QUERY.zone) params.set("zone", query.zone);
   for (const name of ["route", "target", "focus"] as const) {
     if (query[name] !== "") params.set(name, query[name]);
   }
