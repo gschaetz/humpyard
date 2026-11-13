@@ -87,9 +87,11 @@ fn parse(
         None | Some("route") => GroupBy::Route,
         Some("target") => GroupBy::Target,
         Some("endpoint") => GroupBy::Endpoint,
+        Some("actor") => GroupBy::Actor,
+        Some("owner") => GroupBy::Owner,
         Some(other) => {
             return Err(format!(
-                "`group_by` must be route, target or endpoint, not `{other}`"
+                "`group_by` must be route, target, endpoint, actor or owner, not `{other}`"
             ));
         }
     };
@@ -170,6 +172,8 @@ fn group_by_name(by: GroupBy) -> &'static str {
         GroupBy::Route => "route",
         GroupBy::Target => "target",
         GroupBy::Endpoint => "endpoint",
+        GroupBy::Actor => "actor",
+        GroupBy::Owner => "owner",
     }
 }
 

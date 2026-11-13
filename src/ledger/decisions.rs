@@ -78,6 +78,10 @@ pub struct Decision {
     pub request_id: String,
     pub ts_ms: i64,
     pub key_id: Option<String>,
+    /// The actor the key names and the person its usage rolls up to, as they were when the request was made
+    /// (`add-actors`, ADR 0037). Attribution only: nothing reads them to authorize, limit or route.
+    pub actor: Option<String>,
+    pub owner: Option<String>,
     pub session_id: Option<String>,
     /// Client protocol: `openai_chat`, `openai_responses` or `anthropic_messages`.
     pub format: String,
@@ -209,6 +213,27 @@ pub(super) async fn migrate_v12(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     Ok(())
 }
 
+/// v14 (`add-actors`): the actor and owner a decision was made under. Old rows read as none.
+pub(super) async fn migrate_v14(pool: &SqlitePool) -> Result<(), sqlx::Error> {
+    for column in ["actor", "owner"] {
+        let has: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM pragma_table_info('decisions') WHERE name = ?1",
+        )
+        .bind(column)
+        .fetch_one(pool)
+        .await?;
+        if has == 0 {
+            // The name comes from the constant above, never from input.
+            sqlx::query(sqlx::AssertSqlSafe(format!(
+                "ALTER TABLE decisions ADD COLUMN {column} TEXT"
+            )))
+            .execute(pool)
+            .await?;
+        }
+    }
+    Ok(())
+}
+
 /// v11: the key's per-request cost ceiling and the targets it removed. Old rows read as none.
 pub(super) async fn migrate_v11(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     let has: i64 = sqlx::query_scalar(
@@ -319,7 +344,7 @@ pub(super) async fn insert_batch(pool: &SqlitePool, batch: &[Decision]) -> Resul
              route, rule, source, skipped_rules, budget, eligible_targets, stream, prompt_tokens, \
              tools, images, attempts, status, outcome, message, served_target, served_provider, \
              latency_ms, excluded_targets, cold_targets, incapable_targets, ranking, overrides, cost_ceiling, \
-             repaired_tool_arguments) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23,?24,?25,?26,?27,?28,?29,?30)",
+             repaired_tool_arguments, actor, owner) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23,?24,?25,?26,?27,?28,?29,?30,?31,?32)",
         )
         .bind(&d.request_id)
         .bind(d.ts_ms)
@@ -351,6 +376,8 @@ pub(super) async fn insert_batch(pool: &SqlitePool, batch: &[Decision]) -> Resul
         .bind(json_list(&d.overrides))
         .bind(d.cost_ceiling.as_ref().and_then(|c| serde_json::to_string(c).ok()))
         .bind(d.repaired_tool_arguments.map(i64::from))
+        .bind(&d.actor)
+        .bind(&d.owner)
         .execute(&mut *tx)
         .await?;
     }
@@ -392,6 +419,8 @@ pub(super) async fn query(
             request_id: row.get("request_id"),
             ts_ms: row.get("ts_ms"),
             key_id: row.get("key_id"),
+            actor: row.get("actor"),
+            owner: row.get("owner"),
             session_id: row.get("session_id"),
             format: row.get("format"),
             requested_model: row.get("requested_model"),

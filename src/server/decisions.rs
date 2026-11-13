@@ -122,6 +122,8 @@ fn to_json(d: &Decision, signals: Option<Signals>) -> Value {
         "request_id": d.request_id,
         "ts_ms": d.ts_ms,
         "key": d.key_id,
+        "actor": d.actor,
+        "owner": d.owner,
         "session_id": d.session_id,
         "format": d.format,
         "requested_model": d.requested_model,

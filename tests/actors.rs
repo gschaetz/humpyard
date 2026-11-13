@@ -59,6 +59,8 @@ struct Gateway {
     base: String,
     hash: String,
     key: String,
+    admin_key: String,
+    admin_hash: String,
     path: std::path::PathBuf,
     reload: mpsc::Sender<()>,
     gate: watch::Sender<bool>,
@@ -66,11 +68,20 @@ struct Gateway {
     _dir: tempfile::TempDir,
 }
 
-fn config_text(base: &str, hash: &str, key_settings: &str, ledger: &std::path::Path) -> String {
+fn config_text(
+    base: &str,
+    hash: &str,
+    admin_hash: &str,
+    key_settings: &str,
+    ledger: &std::path::Path,
+) -> String {
     format!(
         r#"listen = "127.0.0.1:0"
 [ledger]
 path = "{ledger}"
+[admin.credentials.root]
+sha256 = "{admin_hash}"
+scopes = ["read"]
 [keys.k]
 sha256 = "{hash}"
 read_config = true
@@ -97,8 +108,15 @@ async fn start(key_settings: &str) -> Gateway {
     let base = format!("http://{}", serve(app).await);
     let dir = tempfile::tempdir().unwrap();
     let (key, hash) = humpyard::auth::generate_key().unwrap();
+    let (admin_key, admin_hash) = humpyard::auth::generate_key().unwrap();
     let path = dir.path().join("humpyard.toml");
-    let text = config_text(&base, &hash, key_settings, &dir.path().join("ledger.db"));
+    let text = config_text(
+        &base,
+        &hash,
+        &admin_hash,
+        key_settings,
+        &dir.path().join("ledger.db"),
+    );
     std::fs::write(&path, &text).unwrap();
     let config = Config::from_toml(&text, |n| std::env::var(n).ok()).unwrap();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -119,6 +137,8 @@ async fn start(key_settings: &str) -> Gateway {
         base,
         hash,
         key,
+        admin_key,
+        admin_hash,
         path,
         reload,
         gate,
@@ -140,6 +160,33 @@ impl Gateway {
             .unwrap()
     }
 
+    /// An admin read: the status and the body.
+    async fn admin(&self, path: &str) -> (u16, Value) {
+        let response = reqwest::Client::new()
+            .get(format!("{}{path}", self.url))
+            .bearer_auth(&self.admin_key)
+            .send()
+            .await
+            .unwrap();
+        let status = response.status().as_u16();
+        (status, response.json().await.unwrap_or(Value::Null))
+    }
+
+    /// The caller's own decisions once at least `count` are recorded (they are written off the request path).
+    async fn decisions(&self, count: usize) -> Vec<Value> {
+        for _ in 0..100 {
+            let rows = self.get("/v1/decisions").await["data"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default();
+            if rows.len() >= count {
+                return rows;
+            }
+            tokio::time::sleep(Duration::from_millis(40)).await;
+        }
+        panic!("fewer than {count} decisions were recorded");
+    }
+
     async fn info(&self) -> Value {
         self.get("/v1/key/info").await
     }
@@ -159,7 +206,13 @@ impl Gateway {
         let ledger = self.path.with_file_name("ledger.db");
         std::fs::write(
             &self.path,
-            config_text(&self.base, &self.hash, key_settings, &ledger),
+            config_text(
+                &self.base,
+                &self.hash,
+                &self.admin_hash,
+                key_settings,
+                &ledger,
+            ),
         )
         .unwrap();
         self.reload.send(()).await.unwrap();
@@ -264,4 +317,145 @@ async fn an_actor_changes_nothing_a_key_may_do() {
         assert_eq!(gw.send("quick", false).await.status(), 200);
     }
     assert!(seen.windows(2).all(|pair| pair[0] == pair[1]), "{seen:?}");
+}
+
+#[tokio::test]
+async fn a_decision_records_the_actor_and_owner_its_key_was_under() {
+    let gw = start("actor = \"claude-code\"").await;
+    assert_eq!(gw.send("quick", false).await.status(), 200);
+    let rows = gw.decisions(1).await;
+    assert_eq!(rows[0]["actor"], "claude-code");
+    assert_eq!(rows[0]["owner"], "gary");
+}
+
+#[tokio::test]
+async fn a_key_of_a_human_records_that_human_as_both() {
+    let gw = start("actor = \"gary\"").await;
+    assert_eq!(gw.send("quick", false).await.status(), 200);
+    let rows = gw.decisions(1).await;
+    assert_eq!(
+        (&rows[0]["actor"], &rows[0]["owner"]),
+        (&json!("gary"), &json!("gary"))
+    );
+}
+
+#[tokio::test]
+async fn a_key_without_an_actor_records_none() {
+    let gw = start("").await;
+    assert_eq!(gw.send("quick", false).await.status(), 200);
+    let rows = gw.decisions(1).await;
+    assert_eq!(rows[0]["actor"], Value::Null);
+    assert_eq!(rows[0]["owner"], Value::Null);
+}
+
+#[tokio::test]
+async fn a_reload_does_not_rewrite_the_decisions_made_before_it() {
+    let gw = start("actor = \"claude-code\"").await;
+    assert_eq!(gw.send("quick", false).await.status(), 200);
+    gw.decisions(1).await;
+    gw.reload_with("actor = \"sam\"").await;
+    gw.wait_for_actor(json!("sam")).await;
+    assert_eq!(gw.send("quick", false).await.status(), 200);
+    let rows = gw.decisions(2).await;
+    // Newest first: the one after the reload is sam's, the one before it is still claude-code's under gary.
+    assert_eq!(
+        (&rows[0]["actor"], &rows[0]["owner"]),
+        (&json!("sam"), &json!("sam"))
+    );
+    assert_eq!(
+        (&rows[1]["actor"], &rows[1]["owner"]),
+        (&json!("claude-code"), &json!("gary"))
+    );
+}
+
+#[tokio::test]
+async fn admin_statistics_group_by_actor_and_by_owner() {
+    let gw = start("actor = \"claude-code\"").await;
+    for _ in 0..2 {
+        assert_eq!(gw.send("quick", false).await.status(), 200);
+    }
+    gw.decisions(2).await;
+    let (status, by_actor) = gw.admin("/admin/v1/stats?group_by=actor").await;
+    assert_eq!(status, 200, "{by_actor}");
+    assert_eq!(by_actor["group_by"], "actor");
+    assert_eq!(by_actor["data"][0]["group"], "claude-code");
+    assert_eq!(by_actor["data"][0]["requests"], 2);
+    let (status, by_owner) = gw.admin("/admin/v1/stats?group_by=owner").await;
+    assert_eq!(status, 200, "{by_owner}");
+    assert_eq!(by_owner["data"][0]["group"], "gary");
+    let (status, series) = gw.admin("/admin/v1/stats/series?group_by=actor").await;
+    assert_eq!(status, 200, "{series}");
+    assert_eq!(series["group_by"], "actor");
+    assert_eq!(series["data"][0]["group"], "claude-code");
+}
+
+#[tokio::test]
+async fn the_client_statistics_do_not_group_by_actor_or_owner() {
+    let gw = start("actor = \"claude-code\"").await;
+    for group in ["actor", "owner", "principal", "nonsense"] {
+        let response = reqwest::Client::new()
+            .get(format!("{}/v1/stats?group_by={group}", gw.url))
+            .bearer_auth(&gw.key)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status().as_u16(), 400, "{group}");
+        let body: Value = response.json().await.unwrap();
+        let message = body.to_string();
+        assert!(message.contains("route, target or endpoint"), "{message}");
+    }
+}
+
+#[tokio::test]
+async fn a_request_in_open_mode_records_no_actor_and_no_owner() {
+    let (gate, _) = watch::channel(false);
+    let app = Router::new()
+        .route("/chat/completions", post(completions))
+        .with_state(Arc::new(Upstream { gate }));
+    let base = format!("http://{}", serve(app).await);
+    let dir = tempfile::tempdir().unwrap();
+    let text = format!(
+        r#"listen = "127.0.0.1:0"
+[ledger]
+path = "{}"
+[providers.p]
+base_url = "{base}"
+api_key_env = "PATH"
+max_retries = 0
+[targets.quick]
+endpoints = [{{ provider = "p", model = "quick" }}]
+{ACTORS}
+"#,
+        dir.path().join("ledger.db").display()
+    );
+    let config = Config::from_toml(&text, |n| std::env::var(n).ok()).unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let (_stop, signals) = mpsc::channel(4);
+    tokio::spawn(server::run(config, listener, signals, None));
+    let client = reqwest::Client::new();
+    let response = client
+        .post(format!("{url}/v1/chat/completions"))
+        .json(&json!({"model": "quick", "messages": [{"role": "user", "content": "hi"}]}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status().as_u16(), 200);
+    for _ in 0..100 {
+        let body: Value = client
+            .get(format!("{url}/v1/decisions"))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        if let Some(row) = body["data"].as_array().and_then(|rows| rows.first()) {
+            assert_eq!(row["actor"], Value::Null);
+            assert_eq!(row["owner"], Value::Null);
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(40)).await;
+    }
+    panic!("no decision was recorded");
 }

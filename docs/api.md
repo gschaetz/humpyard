@@ -161,7 +161,7 @@ would let read the configuration file. Each request logs the admin id and the ou
 | `GET /admin/v1/health` | what `GET /v1/health` returns: skipped endpoints, latency, the loaded configuration, the last reload |
 | `GET /admin/v1/quota` | what `GET /v1/quota` returns |
 | `GET /admin/v1/decisions` | the decision log of **every key**, newest first, each failed attempt with the provider's `message`; `?key=alice` narrows it to one key, and the usual filters (`limit`, `route`, `outcome`, `since_ms`, ...) apply |
-| `GET /admin/v1/stats` | the [statistics](budgets.md#statistics) of **every key**; `?key=alice` narrows them, and `group_by` and `window` work as on `/v1/stats`; a [heavy read](#heavy-reads) |
+| `GET /admin/v1/stats` | the [statistics](budgets.md#statistics) of **every key**; `?key=alice` narrows them, and `window` and `group_by` work as on `/v1/stats`, which `group_by` extends with `actor` and `owner` ([below](#statistics-by-actor-and-owner)); a [heavy read](#heavy-reads) |
 | `GET /admin/v1/stats/series` | the same statistics [over time](#statistics-over-time): equal buckets per group; a [heavy read](#heavy-reads) |
 | `GET /admin/v1/credentials` | every admin credential: `id`, `kind`, `scopes`, `expires`, and `revoked` while a revocation is in force |
 
@@ -171,6 +171,17 @@ The client endpoints keep their rule that a key sees only its own decisions and 
 ```
 curl -H "Authorization: Bearer $ADMIN_SECRET" "https://gateway.example/admin/v1/decisions?key=alice&limit=20"
 ```
+
+### Statistics by actor and owner
+
+`GET /admin/v1/stats` and `GET /admin/v1/stats/series` also accept `group_by=actor` and `group_by=owner`, which count by
+who a key was for ([`[actors]`](configuration.md), ADR 0037). `actor` is the actor the key named when the request was
+made, which is one agent or person; `owner` is the person it rolls up to, the human an agent acts for, or the human
+itself for a human's own key. Each request counts once, by the same rules as the other groupings, with its cost and
+tokens. Requests with no actor (or no owner) are the group `(none)`, so nothing is left out of the totals. The ids are
+the ones recorded on each decision, so a key that changes owner later does not move its earlier requests. The client
+`GET /v1/stats` does not accept them (`400`): a key sees only its own calls. Each decision in the log also carries
+`actor` and `owner`.
 
 ### Statistics over time
 
@@ -183,7 +194,7 @@ counts add up to the group's totals.
 |---|---|
 | `window` | How far back, such as `6h` or `7d`; default `24h`; at most the days of decisions kept |
 | `interval` | Bucket width, such as `5m` or `1h`; at least `1m`, and no more than 400 buckets in the window. Default: the finest of 1m, 5m, 15m, 30m, 1h, 2h, 6h, 12h and 1d that gives at most 120 buckets |
-| `group_by` | `route` (default), `target` or `endpoint` |
+| `group_by` | `route` (default), `target`, `endpoint`, `actor` or `owner` (see [Statistics by actor and owner](#statistics-by-actor-and-owner)) |
 | `route`, `target` | Only this route, or only attempts on this target |
 | `key` | Only this client key's requests; omit for every key |
 | `limit` | The most groups returned, from 1 to 25; default 8 |

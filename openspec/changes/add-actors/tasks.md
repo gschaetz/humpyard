@@ -9,9 +9,9 @@
 
 ## 2. Attribution on decisions and in statistics
 
-- [ ] 2.1 Add the actor and owner columns to decisions as an additive ledger migration (next schema version, nullable, no backfill), written with the decision from the resolved key; the owner of a human is that human; verify with migration tests from the previous version and decision tests for an agent with an owner, a human's key, a key without an actor and open mode
-- [ ] 2.2 Group admin statistics and the series by `actor` and by `owner` through the existing counting function, with calls that have none in one group named `(none)` and the client `GET /v1/stats` answering 400 as for any unknown `group_by`; verify with ledger tests for the totals, the buckets and the `(none)` group, and an integration test for the client refusal
-- [ ] 2.3 Describe the new `group_by` values in `docs/openapi/admin-v1.json`, regenerate `ui/src/api/schema.d.ts`, and update `docs/api.md`; verify the OpenAPI contract test passes and fails when the document and the routes differ
+- [x] 2.1 Add the actor and owner columns to decisions as an additive ledger migration (next schema version, nullable, no backfill), written with the decision from the resolved key; the owner of a human is that human; verify with migration tests from the previous version and decision tests for an agent with an owner, a human's key, a key without an actor and open mode
+- [x] 2.2 Group admin statistics and the series by `actor` and by `owner` through the existing counting function, with calls that have none in one group named `(none)` and the client `GET /v1/stats` answering 400 as for any unknown `group_by`; verify with ledger tests for the totals, the buckets and the `(none)` group, and an integration test for the client refusal
+- [x] 2.3 Describe the new `group_by` values in `docs/openapi/admin-v1.json`, regenerate `ui/src/api/schema.d.ts`, and update `docs/api.md`; verify the OpenAPI contract test passes and fails when the document and the routes differ
 
 ## 3. Revoking a client key
 

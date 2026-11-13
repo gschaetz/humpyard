@@ -1103,6 +1103,9 @@ async fn infer(
     };
     let key_id = caller.as_ref().map_or("-", |k| k.id.as_str()).to_string();
     guard.decision.key_id = caller.as_ref().map(|k| k.id.clone());
+    // Attribution only (ADR 0037): recorded as they are now, never read to decide anything.
+    guard.decision.actor = caller.as_ref().and_then(|k| k.actor.clone());
+    guard.decision.owner = caller.as_ref().and_then(|k| k.owner.clone());
     guard.decision.session_id = request_info(&headers).session_id;
     let outcome = tokio::select! {
         outcome = handle(&state, &snap, format, &headers, &body, caller.as_ref(), &mut guard) => outcome,
