@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { Client, Health, Series, Stats } from "./api/client";
 import { Bars } from "./bars";
 import { LineChart } from "./chart";
+import { timeZoneId } from "./chart-data";
 import { clock } from "./format";
 import { buildRows, type ModelRow } from "./models";
 import { QueryBar, type View } from "./query-bar";
@@ -135,7 +136,7 @@ export function QueryView(props: { client: Client; onRefused: () => void }) {
                   This gateway cannot draw a series: it is older than this page. The table below is current.
                 </p>
               ) : (
-                <LineChart series={data.data.series} metric={query.metric} focus={query.focus} onFocus={(focus) => { change({ focus }); }} />
+                <LineChart series={data.data.series} metric={query.metric} focus={query.focus} timeZone={timeZoneId(query.zone)} onFocus={(focus) => { change({ focus }); }} />
               )}
               <Table rows={shown} group={query.group} />
             </>

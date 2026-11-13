@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { Series } from "./api/client";
-import { BOTTOM, HEIGHT, LEFT, MAX_SERIES, METRIC_LABELS, MIN_WIDTH, RIGHT, TOP, WIDTH, formatMetric, layout, pointTitle, strokes, utc, type Layout } from "./chart-data";
+import { BOTTOM, HEIGHT, LEFT, MAX_SERIES, METRIC_LABELS, MIN_WIDTH, RIGHT, TOP, WIDTH, formatMetric, layout, pointTitle, strokes, timeText, type Layout } from "./chart-data";
 import type { Metric } from "./query";
 
 /** A marker whose shape tells a series apart without colour. `shape` runs 0 to 7. */
@@ -41,8 +41,8 @@ function clip(name: string): string {
  * time and each series' value and request count. Drawn as SVG (positions are attributes, colours are classes), so the
  * Content-Security-Policy is untouched. Names are text.
  */
-function Tooltip(props: { drawn: Layout; index: number; metric: Metric; width: number }) {
-  const { drawn, index, metric, width } = props;
+function Tooltip(props: { drawn: Layout; index: number; metric: Metric; width: number; timeZone: string }) {
+  const { drawn, index, metric, width, timeZone } = props;
   const column = drawn.lines.map((line) => line.points[index]);
   const first = column.find((p) => p !== undefined);
   if (first === undefined) return null;
@@ -51,7 +51,7 @@ function Tooltip(props: { drawn: Layout; index: number; metric: Metric; width: n
     const what = p === undefined || p.value === null ? "no calls" : `${formatMetric(metric, p.value)} · ${p.requests.toString()} req`;
     return { shape: i, text: `${clip(line.group)}  ${what}` };
   });
-  const boxWidth = Math.max(utc(first.start_ms).length, ...rows.map((r) => r.text.length)) * TIP_CHAR + 30;
+  const boxWidth = Math.max(timeText(first.start_ms, timeZone).length, ...rows.map((r) => r.text.length)) * TIP_CHAR + 30;
   const boxHeight = 24 + rows.length * TIP_ROW;
   const left = first.x + 14 + boxWidth > width - 4 ? first.x - 14 - boxWidth : first.x + 14;
   return (
@@ -67,7 +67,7 @@ function Tooltip(props: { drawn: Layout; index: number; metric: Metric; width: n
       })}
       <g class="tip">
         <rect class="tip-box" x={left} y={TOP + 4} width={boxWidth} height={boxHeight} rx={4} />
-        <text class="tip-time" x={left + 8} y={TOP + 20}>{utc(first.start_ms)}</text>
+        <text class="tip-time" x={left + 8} y={TOP + 20}>{timeText(first.start_ms, timeZone)}</text>
         {rows.map((row, n) => (
           <g key={row.text} class={`line s${(row.shape % MAX_SERIES).toString()}`}>
             <Marker shape={row.shape} x={left + 13} y={TOP + 20 + (n + 1) * TIP_ROW - 4} />
@@ -86,8 +86,16 @@ function Tooltip(props: { drawn: Layout; index: number; metric: Metric; width: n
  * says so on hover; the last bucket is dashed because it is still filling; a window the row cap cut is shaded and said so.
  * The legend is the filter control: choosing a series dims the others and (in the view) filters the table to it.
  */
-export function LineChart(props: { series: Series; metric: Metric; focus: string; onFocus: (group: string) => void }) {
+export function LineChart(props: {
+  series: Series;
+  metric: Metric;
+  focus: string;
+  onFocus: (group: string) => void;
+  /** The zone times are written in, as a name Intl knows; UTC when not given. */
+  timeZone?: string;
+}) {
   const { series, metric, focus } = props;
+  const timeZone = props.timeZone ?? "UTC";
   // The chart is laid out in the units it is shown in (its width on screen), so it can fill the page without its text
   // growing with it. Before it is measured (and where nothing can be) it is the default width.
   const figure = useRef<HTMLElement>(null);
@@ -104,7 +112,7 @@ export function LineChart(props: { series: Series; metric: Metric; focus: string
     return () => { observer.disconnect(); };
   }, []);
   const [hover, setHover] = useState<number | null>(null);
-  const drawn = layout(series, metric, width);
+  const drawn = layout(series, metric, width, timeZone);
   if (drawn.lines.length === 0) return <p class="status">No requests in this window.</p>;
   const choose = (group: string) => {
     props.onFocus(group === focus ? "" : group);
@@ -139,7 +147,7 @@ export function LineChart(props: { series: Series; metric: Metric; focus: string
             <text class="axis" x={LEFT - 6} y={t.y + 4} text-anchor="end">{formatMetric(metric, t.value)}</text>
           </g>
         ))}
-        <text class="axis" x={width - RIGHT} y={HEIGHT - 2} text-anchor="end">times are UTC</text>
+        <text class="axis" x={width - RIGHT} y={HEIGHT - 2} text-anchor="end">times are {timeZone}</text>
         {drawn.xTicks.map((t) => (
           <text key={t.x} class="axis" x={t.x} y={HEIGHT - BOTTOM + 16} text-anchor="middle">{t.label}</text>
         ))}
@@ -164,7 +172,7 @@ export function LineChart(props: { series: Series; metric: Metric; focus: string
               )}
               {line.points.map((p) => (
                 <circle key={p.start_ms} class="hit" cx={p.x} cy={p.y ?? TOP + (HEIGHT - TOP - BOTTOM)} r={6}>
-                  <title>{pointTitle(line.group, metric, p)}</title>
+                  <title>{pointTitle(line.group, metric, p, timeZone)}</title>
                 </circle>
               ))}
               {last !== undefined && line.labelY !== null && (
@@ -173,7 +181,7 @@ export function LineChart(props: { series: Series; metric: Metric; focus: string
             </g>
           );
         })}
-        {hover !== null && <Tooltip drawn={drawn} index={hover} metric={metric} width={width} />}
+        {hover !== null && <Tooltip drawn={drawn} index={hover} metric={metric} width={width} timeZone={timeZone} />}
       </svg>
       <ul class="legend">
         {drawn.lines.map((line, i) => (

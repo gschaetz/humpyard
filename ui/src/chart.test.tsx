@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render } from "@testing-library/preact";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { LineChart } from "./chart";
-import { layout, niceTicks, strokes, utc, type Point } from "./chart-data";
+import { layout, niceTicks, strokes, tickText, timeText, timeZoneId, type Point } from "./chart-data";
 import { BUCKET_MS, T0, bucket, quietBucket, series } from "./fixtures";
 
 afterEach(cleanup);
@@ -245,6 +245,69 @@ describe("the chart's arithmetic", () => {
   });
 
   it("names a time in UTC to the minute", () => {
-    expect(utc(Date.UTC(2026, 0, 2, 3, 4, 59))).toBe("2026-01-02 03:04 UTC");
+    expect(timeText(Date.UTC(2026, 0, 2, 3, 4, 59))).toBe("2026-01-02 03:04 UTC");
+    expect(timeText(Date.UTC(2026, 0, 2, 3, 4, 59), "UTC")).toBe("2026-01-02 03:04 UTC");
+  });
+});
+
+// The zone is named in every call, so these results do not depend on the machine that runs them.
+describe("times in a time zone", () => {
+  const winter = Date.UTC(2026, 0, 1, 18, 0);
+  const summer = Date.UTC(2026, 6, 1, 18, 0);
+
+  it("writes the true local time to the minute, with the zone's own name, in standard and daylight saving time", () => {
+    expect(timeText(winter, "America/Chicago")).toBe("2026-01-01 12:00 CST");
+    expect(timeText(summer, "America/Chicago")).toBe("2026-07-01 13:00 CDT");
+  });
+
+  it("writes a zone with a half-hour offset to the minute, and moves the date across midnight", () => {
+    expect(timeText(winter, "Asia/Kolkata")).toBe("2026-01-01 23:30 GMT+5:30");
+    expect(timeText(Date.UTC(2026, 0, 1, 20, 0), "Asia/Kolkata")).toBe("2026-01-02 01:30 GMT+5:30");
+    expect(tickText(winter, false, "Asia/Kolkata")).toBe("23:30");
+    expect(tickText(Date.UTC(2026, 0, 1, 20, 0), true, "Asia/Kolkata")).toBe("01-02");
+  });
+
+  it("writes ticks as the time of day on a short window and the date on a long one", () => {
+    expect(tickText(winter, false)).toBe("18:00");
+    expect(tickText(winter, true)).toBe("01-01");
+    expect(tickText(winter, false, "America/Chicago")).toBe("12:00");
+  });
+
+  it("tells the two hours apart when the clocks go back, by the zone's name", () => {
+    const first = Date.UTC(2026, 10, 1, 6, 30);
+    const second = Date.UTC(2026, 10, 1, 7, 30);
+    expect(timeText(first, "America/Chicago")).toBe("2026-11-01 01:30 CDT");
+    expect(timeText(second, "America/Chicago")).toBe("2026-11-01 01:30 CST");
+  });
+
+  it("names UTC for the UTC choice and the browser's own zone for the local one", () => {
+    expect(timeZoneId("utc")).toBe("UTC");
+    expect(timeZoneId("local")).toBe(new Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC");
+  });
+
+  it("changes only the text of the ticks: their places and the data are the same in every zone", () => {
+    const data = series({ a: [0, 1, 2, 3].map((i) => bucket(i)) });
+    const utcLayout = layout(data, "requests", 640, "UTC");
+    const chicago = layout(data, "requests", 640, "America/Chicago");
+    expect(chicago.xTicks.map((t) => t.x)).toEqual(utcLayout.xTicks.map((t) => t.x));
+    expect(chicago.xTicks.map((t) => t.label)).not.toEqual(utcLayout.xTicks.map((t) => t.label));
+    expect(chicago.lines).toEqual(utcLayout.lines);
+  });
+
+  it("shows the zone in the axis note, the hover text and the tooltip, and UTC when none is given", () => {
+    const data = series({ a: [bucket(0), bucket(1)] });
+    const plain = render(<LineChart series={data} metric="requests" focus="" onFocus={none} />);
+    expect(plain.container.textContent).toContain("times are UTC");
+    expect([...plain.container.querySelectorAll("title")].every((t) => t.textContent.includes("UTC"))).toBe(true);
+    plain.unmount();
+
+    const { container } = render(<LineChart series={data} metric="requests" focus="" onFocus={none} timeZone="America/Chicago" />);
+    expect(container.textContent).toContain("times are America/Chicago");
+    expect(container.textContent).not.toContain("times are UTC");
+    const titles = [...container.querySelectorAll("title")].map((t) => t.textContent);
+    expect(titles.length).toBeGreaterThan(0);
+    // T0 is 12:00 UTC on 12 November, which is 06:00 in US Central standard time.
+    expect(titles.every((t) => t.includes("CST") && !t.includes("UTC"))).toBe(true);
+    expect(titles[0]).toContain("2026-11-12 06:00 CST");
   });
 });

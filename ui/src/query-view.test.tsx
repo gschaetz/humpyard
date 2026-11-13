@@ -178,14 +178,18 @@ describe("the chart and the table together", () => {
     expect(window.location.hash).not.toContain("focus");
   });
 
-  it("shows the ranking with the table's numbers in the table's order", async () => {
+  it("shows the ranking with the table's numbers, and says which rest on few calls", async () => {
     const two = stats(group("a", { requests: 10, attempts: 10, failures: 4, failure_rate: 0.4 }), group("b", { requests: 500, attempts: 500, failures: 5, failure_rate: 0.01 }));
     const { container } = show(client({ stats: () => Promise.resolve(two), health: () => Promise.resolve(health()) }));
     await screen.findByRole("table");
     const table = screen.getAllByRole("rowheader").map((c) => c.closest("tr")).map((r) => (r as HTMLElement).querySelectorAll("td")[3]?.textContent);
     fireEvent.change(screen.getByLabelText("Show"), { target: { value: "bars" } });
     const bars = [...container.querySelectorAll(".bar-value")].map((t) => t.textContent);
-    expect(bars).toEqual(table);
+    expect(bars).toHaveLength(table.length);
+    bars.forEach((text, i) => {
+      expect(text.startsWith(table[i] ?? "?")).toBe(true);
+    });
+    expect(bars[0]).toBe("40% · 10 calls");
     expect(screen.getAllByRole("rowheader").map((c) => c.textContent)).toEqual(["a", "b"]);
   });
 
@@ -273,5 +277,74 @@ describe("failures and refreshing", () => {
     window.history.replaceState(null, "", "#refresh=off");
     show(client());
     expect((await screen.findByText(/Updated \d\d:\d\d:\d\d/)).textContent).toContain("not refreshing");
+  });
+});
+
+describe("the time zone choice", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  /** The hover texts of the chart's points. */
+  const titles = (container: Element) => [...container.querySelectorAll("svg[role='img'] title")].map((t) => t.textContent);
+
+  it("starts in the browser's zone, names it, and shows UTC when asked, from the data already read", async () => {
+    vi.stubEnv("TZ", "America/Chicago");
+    const ser = vi.fn<Client["series"]>().mockResolvedValue(series({ fast: [bucket(0), bucket(1), bucket(2)] }));
+    const stat = vi.fn<Client["stats"]>().mockResolvedValue(stats(group("fast")));
+    const { container } = show(client({ series: ser, stats: stat }));
+    await screen.findByRole("table");
+    expect(screen.getByLabelText<HTMLSelectElement>("Times").value).toBe("local");
+    expect(container.textContent).toContain("times are America/Chicago");
+    // The fixtures start at 12:00 UTC on 12 November, which is 06:00 in US Central standard time.
+    expect(titles(container)[0]).toContain("06:00 CST");
+
+    fireEvent.change(screen.getByLabelText("Times"), { target: { value: "utc" } });
+    expect(container.textContent).toContain("times are UTC");
+    expect(titles(container)[0]).toContain("12:00 UTC");
+    expect(window.location.hash).toContain("zone=utc");
+    // The same numbers, written differently: nothing was asked of the gateway again.
+    expect(ser).toHaveBeenCalledTimes(1);
+    expect(stat).toHaveBeenCalledTimes(1);
+
+    fireEvent.change(screen.getByLabelText("Times"), { target: { value: "local" } });
+    expect(titles(container)[0]).toContain("06:00 CST");
+    expect(window.location.hash).not.toContain("zone");
+    expect(ser).toHaveBeenCalledTimes(1);
+  });
+
+  it("opens a link with zone=utc in UTC although the browser's zone is another", async () => {
+    vi.stubEnv("TZ", "Asia/Kolkata");
+    window.history.replaceState(null, "", "#zone=utc");
+    const { container } = show(client());
+    await screen.findByRole("table");
+    expect(screen.getByLabelText<HTMLSelectElement>("Times").value).toBe("utc");
+    expect(container.textContent).toContain("times are UTC");
+    expect(titles(container)[0]).toContain("12:00 UTC");
+  });
+
+  it("ignores a hostile zone in the fragment", async () => {
+    window.history.replaceState(null, "", "#zone=%3Cscript%3E");
+    const { container } = show(client());
+    await screen.findByRole("table");
+    expect(screen.getByLabelText<HTMLSelectElement>("Times").value).toBe("local");
+    expect(container.querySelector("script")).toBeNull();
+  });
+});
+
+describe("the ranking beside the table", () => {
+  it("orders the bars by the metric while the table keeps its problems-first order", async () => {
+    window.history.replaceState(null, "", "#metric=requests");
+    const two = stats(
+      group("busy", { requests: 900, attempts: 900, failures: 9, failure_rate: 0.01 }),
+      group("failing", { requests: 30, attempts: 30, failures: 20, failure_rate: 0.67 }),
+    );
+    const { container } = show(client({ stats: () => Promise.resolve(two), health: () => Promise.resolve(health()), series: () => Promise.resolve(series({ busy: [bucket(0)], failing: [bucket(0)] })) }));
+    await screen.findByRole("table");
+    fireEvent.change(screen.getByLabelText("Show"), { target: { value: "bars" } });
+    const bars = [...container.querySelectorAll("g.bar .bar-name")].map((t) => t.textContent);
+    const rowsInTable = [...container.querySelectorAll("tbody tr")].map((r) => r.querySelector("th")?.textContent ?? "").filter((t) => t === "busy" || t === "failing");
+    expect(bars).toEqual(["busy", "failing"]);
+    expect(rowsInTable).toEqual(["failing", "busy"]);
   });
 });

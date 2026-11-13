@@ -14,21 +14,29 @@ only reads. More views follow as separate changes ([ADR 0032](adr/0032-the-admin
 
 **The query bar** chooses what is shown: a window (1 hour, 6 hours, 24 hours, 7 days or 30 days), a grouping (route,
 target or endpoint), a metric (failure rate, fallback rate, p90 latency or requests), optional route and target
-filters (applied when you press Enter or leave the field), whether to draw the metric over time or as a ranking, and
-how often to refresh. It starts from 24 hours, by target, on failure rate, refreshing every minute. Changing any of
-them reads again at once.
+filters (applied when you press Enter or leave the field), whether to draw the metric over time or as a ranking, whether
+times are written in your local time or in UTC, and how often to refresh. It starts from 24 hours, by target, on failure
+rate, in local time, refreshing every minute. Changing any of them except the time zone reads again at once; the time
+zone only rewrites the times on the page.
 
 **The chart** draws one line per group (the eight busiest) across the window. Each bucket is as wide as the window
 needs (a minute for an hour, 15 minutes for 24 hours, two hours for 7 days). A bucket in which a group had no calls is
-a **gap**, not a zero, and its hover text says so; hovering any point gives its time (UTC), value and request count, so a
-spike on three requests is not mistaken for a trend. The last bucket is still filling and is drawn dashed. If the
+a **gap**, not a zero, and its hover text says so; hovering any point gives its time (to the minute, with the zone's name), value and request count, so a
+spike on three requests is not mistaken for a trend. **Times** are in your browser's time zone unless you choose UTC;
+the note under the chart names the zone in use (`America/Chicago`, or `UTC`). The gateway still cuts buckets on
+whole hours of UTC, so in a zone with a half-hour or 45-minute offset a tick can fall on the half hour; the time shown is
+the true local time of that bucket. When the clocks go back, the repeated hour appears twice and the zone's name in the
+hover text (CDT, then CST) tells the two apart. The last bucket is still filling and is drawn dashed. If the
 gateway read only the newest 50,000 decisions of the window, the part of the chart before the earliest one it counted is
 shaded and labelled, because there it does not know and a quiet line would be wrong. Series are told apart by marker
 shape and a label at the end of the line as well as by colour. Clicking a series in the legend (or a bar in the
 ranking) **filters the table to that group**; clicking it again shows all.
 
-**The ranking** shows the same metric as bars, one per group, from the window's totals, in the table's order. A group
-with nothing to measure shows "no value" and no bar.
+**The ranking** shows the same metric as bars, one per group, from the window's totals, **longest first** (ties by name),
+so the group at the top is the one with the most of what you chose: the most requests, the slowest, the highest failure
+rate. A group with nothing to measure shows "no value", no bar, and comes last. A rate or latency that rests on fewer than
+20 calls says how many (`100% · 1 call`), so one failed call is not mistaken for a trend. The table below keeps its own
+order, problems first, which answers a different question; sort its columns to compare.
 
 **The table** leads with four figures: health (for targets and endpoints; a route has no endpoint state of its own),
 requests, failure rate, fallback rate and p90 latency. The arrow at the left of a row opens the rest: answered calls,
@@ -46,8 +54,9 @@ clicking a column header sorts by them; "Default order" returns to the list abov
 
 **The address is the query.** The choices are kept in the part of the page address after `#`, so a view can be
 bookmarked and sent to a colleague, who sees the same query once they have signed in. The fragment never reaches a
-server and holds no credential or token. It is read against fixed lists: an unknown window, grouping, metric or refresh
-period is replaced by the default, and a filter is only ever shown as text.
+server and holds no credential or token. It is read against fixed lists: an unknown window, grouping, metric, time zone
+choice (`local` or `utc`, written only when it is `utc`) or refresh period is replaced by the default, and a filter is
+only ever shown as text. A link opened with `zone=utc` shows UTC whatever the reader's own zone is.
 
 **Refreshing.** The view re-reads the chart, the table and the health together on the chosen period (off, 30 seconds, 1
 minute or 5 minutes) and shows "Updated hh:mm:ss". It reads only while the page is visible, and once more when you
