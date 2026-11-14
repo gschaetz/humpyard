@@ -17,6 +17,10 @@
 //! tolerance (`docs/performance.md`, Run 3). `scripts/compare-throughput.sh` compares it with the previous
 //! release's harness in alternating runs, reading the gateway's requests per second from the table this prints.
 //!
+//! - `OVERHEAD_KEY` (`none`, the default, `plain` or `actor`): how the traffic authenticates. `none` is an open
+//!   gateway, as the recorded budgets were measured; `plain` sends a client key; `actor` sends a key that names an
+//!   agent actor owned by a human, so the run includes the key lookup, its revocation check and the actor and owner
+//!   written on every decision. The difference between the three is what a key and an actor add to a request.
 //! - `OVERHEAD_BUDGET_P50_MS`, `OVERHEAD_BUDGET_P99_MS`: replace a recorded limit, to check the failing path with a
 //!   tightened one. The recorded values are the constants below, and they change only with the documentation.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // test scaffolding
@@ -26,13 +30,13 @@ mod common;
 
 use std::time::Duration;
 
-use common::load::{run, run_stream};
+use common::load::{LoadKey, client_for, load_key, run, run_stream};
 use common::mock::{STREAM_CHUNKS, STREAM_GAP, mock_upstream};
 use common::serve;
 use humpyard::config::Config;
 use humpyard::server;
 
-async fn gateway(upstream: &str, dir: &std::path::Path) -> String {
+async fn gateway(upstream: &str, dir: &std::path::Path, load: &LoadKey) -> String {
     let toml = format!(
         r#"listen = "127.0.0.1:0"
 [ledger]
@@ -46,8 +50,9 @@ endpoints = [{{ provider = "p", model = "m", price = {{ input = 0.0, output = 0.
 [routes.r]
 type = "passthrough"
 targets = ["t"]
-"#,
-        dir.join("ledger.db").display()
+{keys}"#,
+        dir.join("ledger.db").display(),
+        keys = load.toml
     );
     let config = Config::from_toml(&toml, |n| std::env::var(n).ok()).unwrap();
     format!(
@@ -240,10 +245,9 @@ fn report(lines: &[BudgetLine], enforced: bool) -> Vec<String> {
 async fn gateway_overhead() {
     let dir = std::env::temp_dir().join(format!("humpyard-overhead-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    let client = reqwest::Client::builder()
-        .pool_max_idle_per_host(256)
-        .build()
-        .unwrap();
+    let load = load_key("OVERHEAD_KEY", "none");
+    println!("request traffic: {}", load.mode);
+    let client = client_for(&load, Some(256));
     let base_requests: usize = std::env::var("OVERHEAD_REQUESTS")
         .ok()
         .and_then(|v| v.parse().ok())
@@ -259,7 +263,7 @@ async fn gateway_overhead() {
         let delay = Duration::from_millis(delay_ms);
         let mock = mock_upstream(delay).await;
         std::fs::create_dir_all(dir.join(format!("d{delay_ms}"))).unwrap();
-        let gw = gateway(&mock, &dir.join(format!("d{delay_ms}"))).await;
+        let gw = gateway(&mock, &dir.join(format!("d{delay_ms}")), &load).await;
         let (direct_url, gateway_url) = (
             format!("{mock}/chat/completions"),
             format!("{gw}/v1/chat/completions"),
@@ -325,16 +329,15 @@ async fn gateway_overhead() {
 async fn gateway_streaming_overhead() {
     let dir = std::env::temp_dir().join(format!("humpyard-overhead-stream-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    let client = reqwest::Client::builder()
-        .pool_max_idle_per_host(256)
-        .build()
-        .unwrap();
+    let load = load_key("OVERHEAD_KEY", "none");
+    println!("request traffic: {}", load.mode);
+    let client = client_for(&load, Some(256));
     let per_worker: usize = std::env::var("OVERHEAD_STREAMS_PER_WORKER")
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(50);
     let mock = mock_upstream(Duration::ZERO).await;
-    let gw = gateway(&mock, &dir).await;
+    let gw = gateway(&mock, &dir, &load).await;
     let (direct_url, gateway_url) = (
         format!("{mock}/chat/completions"),
         format!("{gw}/v1/chat/completions"),

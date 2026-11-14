@@ -113,3 +113,61 @@ pub async fn run_stream(
         rps: all.len() as f64 / elapsed,
     }
 }
+
+/// How a harness's request traffic authenticates (the environment variable it reads says which): `actor`, a client
+/// key that names an agent actor owned by a human, so every request goes through the key lookup, its revocation check
+/// and the actor and owner written on its decision; `plain`, a key with no actor; or `none`, no keys, an open
+/// gateway. The three differ only in what each request does with its key, which is how the cost of an actor is seen
+/// apart from the cost of a key.
+pub struct LoadKey {
+    /// The name of the mode, for the report.
+    pub mode: String,
+    /// The configuration for it: a `[keys.load]` table, with its actors when it names one.
+    pub toml: String,
+    /// The secret the traffic sends, if any.
+    pub secret: Option<String>,
+}
+
+/// The mode named by environment variable `var` (`default` when it is not set), and the key it implies.
+pub fn load_key(var: &str, default: &str) -> LoadKey {
+    let mode = std::env::var(var).unwrap_or_else(|_| default.to_string());
+    if mode == "none" {
+        return LoadKey {
+            mode,
+            toml: String::new(),
+            secret: None,
+        };
+    }
+    let (secret, hash) = humpyard::auth::generate_key().unwrap();
+    let toml = match mode.as_str() {
+        "plain" => format!("[keys.load]\nsha256 = \"{hash}\"\n"),
+        "actor" => format!(
+            "[actors.gary]\nkind = \"human\"\n[actors.load-agent]\nkind = \"agent\"\nowner = \"gary\"\n\
+             [keys.load]\nsha256 = \"{hash}\"\nactor = \"load-agent\"\n"
+        ),
+        other => panic!("{var} must be actor, plain or none, not `{other}`"),
+    };
+    LoadKey {
+        mode,
+        toml,
+        secret: Some(secret),
+    }
+}
+
+/// A client that sends the load key (when there is one) on every request. A request that sets its own credential, as
+/// the administrative reads and the metrics scrape do, replaces it.
+pub fn client_for(load: &LoadKey, idle: Option<usize>) -> reqwest::Client {
+    let mut builder = reqwest::Client::builder();
+    if let Some(idle) = idle {
+        builder = builder.pool_max_idle_per_host(idle);
+    }
+    if let Some(secret) = &load.secret {
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert(
+            reqwest::header::AUTHORIZATION,
+            format!("Bearer {secret}").parse().unwrap(),
+        );
+        builder = builder.default_headers(headers);
+    }
+    builder.build().unwrap()
+}

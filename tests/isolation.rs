@@ -13,6 +13,12 @@
 //! `ISOLATION_POLITE=1` makes the load clients honor `Retry-After` (they wait out a 503) and pause a second after an
 //! answer, as a well-behaved GUI would, instead of looping as fast as they can; the recorded verdict is the default.
 //!
+//! `ISOLATION_KEY` chooses how the request traffic authenticates: `actor` (the default: a client key that names an
+//! agent actor owned by a human, so the traffic goes through the key lookup, its revocation check and the actor and
+//! owner written on every decision), `plain` (a key with no actor) or `none` (no keys, an open gateway, as before
+//! `add-actors`). The three differ only in what each request does with its key, which is how the cost of an actor is
+//! seen apart from the cost of a key; the recorded verdict is the default.
+//!
 //! `ISOLATION_WORKERS` (default 1) changes the gateway's worker count, to see how much of a result depends on it;
 //! the recorded verdict is always the default.
 //!
@@ -35,7 +41,7 @@ use std::time::Duration;
 use axum::Router;
 use axum::response::IntoResponse;
 use axum::routing::post;
-use common::load::{Run, run};
+use common::load::{LoadKey, Run, client_for, load_key, run};
 use common::seed::{Rng, make_row};
 use common::{chat_completion, serve, usage};
 use humpyard::config::Config;
@@ -339,6 +345,7 @@ fn gateway_toml(
     admin_hash: &str,
     metrics_hash: &str,
     top: &str,
+    load: &LoadKey,
 ) -> String {
     format!(
         r#"listen = "127.0.0.1:0"
@@ -362,8 +369,9 @@ targets = ["t"]
 [admin.credentials.gary]
 sha256 = "{admin_hash}"
 scopes = ["read", "overrides"]
-"#,
-        ledger.display()
+{keys}"#,
+        ledger.display(),
+        keys = load.toml
     )
 }
 
@@ -457,16 +465,22 @@ async fn admin_reads_do_not_move_the_request_path() {
     let upstream = mock_upstream().await;
     let workers = env_usize("ISOLATION_WORKERS", 1);
     println!("gateway runtime: {workers} worker thread(s)");
+    let load = load_key("ISOLATION_KEY", "actor");
+    println!("request traffic: {}", load.mode);
     let gateway = start_gateway(
-        gateway_toml(&ledger_path, &upstream, &admin_hash, &metrics_hash, ""),
+        gateway_toml(
+            &ledger_path,
+            &upstream,
+            &admin_hash,
+            &metrics_hash,
+            "",
+            &load,
+        ),
         workers,
     );
     let base = gateway.base.clone();
     let url = format!("{base}/v1/chat/completions");
-    let client = reqwest::Client::builder()
-        .pool_max_idle_per_host(256)
-        .build()
-        .unwrap();
+    let client = client_for(&load, Some(256));
     unloaded(&client, &url, 600).await; // warm the connections, the ledger writer and the caches
 
     assert_quiet(&client, &url, rounds, requests).await;
@@ -631,6 +645,8 @@ struct Credentials<'a> {
     admin_hash: &'a str,
     metrics_key: &'a str,
     metrics_hash: &'a str,
+    /// How the request traffic authenticates (`ISOLATION_KEY`).
+    load: &'a LoadKey,
 }
 
 /// One gateway start over a copy of the seeded ledger, with request traffic and override writes together. The
@@ -653,10 +669,11 @@ async fn contention_half(
             keys.admin_hash,
             keys.metrics_hash,
             &format!("decision_retention_days = {retention_days}\n"),
+            keys.load,
         ),
         1,
     );
-    let client = reqwest::Client::builder().build().unwrap();
+    let client = client_for(keys.load, None);
     let (stop, overrides) = start_overrides(&client, &gateway.base, keys.admin_key);
     let measured = run(
         &client,
@@ -764,12 +781,14 @@ async fn a_large_prune_does_not_move_the_request_path_or_block_writes() {
     let (admin_key, admin_hash) = humpyard::auth::generate_key().unwrap();
     let (metrics_key, metrics_hash) = humpyard::auth::generate_key().unwrap();
     let upstream = mock_upstream().await;
+    let load = load_key("ISOLATION_KEY", "actor");
     let keys = Credentials {
         upstream: &upstream,
         admin_key: &admin_key,
         admin_hash: &admin_hash,
         metrics_key: &metrics_key,
         metrics_hash: &metrics_hash,
+        load: &load,
     };
     println!(
         "{:<7}{:>13}{:>13}{:>17}{:>17}{:>14}",
