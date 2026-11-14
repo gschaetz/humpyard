@@ -225,8 +225,27 @@ async fn prompts_and_responses_never_reach_the_database() {
     assert_eq!(resp.status(), 200);
     // A refusal whose message could tempt an implementation to echo input.
     assert_eq!(r.ask("alice", "no-such-model", &[]).await.status(), 404);
-    tokio::time::sleep(Duration::from_millis(400)).await;
+    // The ledger writes off the request path, so wait until both decisions and the usage row are in it (a fixed pause
+    // was too short on a slow runner). Looking for the prompt before then would pass for the wrong reason.
     let ledger = Ledger::open(&r.db).await.unwrap();
+    let both_decisions = DecisionQuery {
+        limit: 10,
+        ..DecisionQuery::default()
+    };
+    let mut written = false;
+    for _ in 0..200 {
+        let decisions = ledger.decisions(&both_decisions).await.unwrap().len();
+        let usage = ledger.entries_since(0).await.unwrap().len();
+        if decisions >= 2 && usage >= 1 {
+            written = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(
+        written,
+        "the ledger never held the two decisions and the usage row"
+    );
     ledger.flush().await;
     let mut files = String::new();
     for suffix in ["", "-wal"] {
