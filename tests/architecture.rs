@@ -1134,3 +1134,166 @@ fn a_page_that_disagrees_with_the_register_is_caught() {
     assert_eq!(extra.len(), 1, "{extra:?}");
     assert!(extra[0].contains("lists `made-up-check`"), "{extra:?}");
 }
+
+// ---- Actors are labels (ADR 0037, invariant 25) -------------------------------------------------------------------
+//
+// An actor and its owner say who a key is for. They are recorded on decisions and shown and counted by the statistics
+// and the configuration view; they never decide what a request may do. These rules keep it so: outside the places
+// that carry, record or display them, no source text names an actor or an owner, so nothing on the request path can
+// authorize, limit, budget or route by one. Like the rules above, each is a function of source text.
+
+/// Files that may name an actor or an owner: the configuration that defines them, the key record that carries them,
+/// the ledger that stores and counts them, and the handlers that display or group by them.
+const ACTOR_ATTRIBUTION: [&str; 5] = [
+    "config/",
+    "auth.rs",
+    "ledger",
+    "server/config_view.rs",
+    "server/decisions.rs",
+];
+
+/// The statistics handlers name them only to accept `group_by=actor` and `group_by=owner`.
+const ACTOR_GROUPING: [&str; 2] = ["server/stats.rs", "server/series.rs"];
+
+/// `server.rs` serves requests, so it may name them only on these four lines (string literals are stripped before the
+/// scan, so the key info's `"actor": caller.actor,` reads as `: caller.actor,`): two that write them onto the
+/// decision and two that show them in the key's own info.
+const ACTOR_SERVER_LINES: [&str; 4] = [
+    "guard.decision.actor = caller.as_ref().and_then(|k| k.actor.clone());",
+    "guard.decision.owner = caller.as_ref().and_then(|k| k.owner.clone());",
+    ": caller.actor,",
+    ": caller.owner,",
+];
+
+fn names_an_actor(line: &str) -> bool {
+    line.split(|c: char| !(c.is_alphanumeric() || c == '_'))
+        .any(|word| {
+            let lower = word.to_lowercase();
+            matches!(lower.as_str(), "actor" | "actors" | "owner" | "owners")
+                || word.starts_with("Actor")
+                || word.starts_with("Owner")
+        })
+}
+
+/// The lines of `code` (production code of `relative`, a path under `src/`) that name an actor or an owner where
+/// that is not allowed.
+fn actor_violations(relative: &str, code: &str) -> Vec<String> {
+    let allowed_file = ACTOR_ATTRIBUTION
+        .iter()
+        .chain(ACTOR_GROUPING.iter())
+        .any(|prefix| relative.starts_with(prefix));
+    if allowed_file {
+        return Vec::new();
+    }
+    code.lines()
+        .filter(|line| names_an_actor(line))
+        .filter(|line| relative != "server.rs" || !ACTOR_SERVER_LINES.contains(&line.trim()))
+        .map(|line| format!("{relative}: `{}` names an actor or an owner", line.trim()))
+        .collect()
+}
+
+#[test]
+fn no_module_reads_an_actor_or_an_owner_to_decide_anything() {
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut found = Vec::new();
+    for path in rust_files(&src) {
+        let relative = path
+            .strip_prefix(&src)
+            .unwrap()
+            .to_string_lossy()
+            .replace('\\', "/");
+        let code = production_code(&fs::read_to_string(&path).unwrap());
+        found.extend(actor_violations(&relative, &code));
+    }
+    assert!(
+        found.is_empty(),
+        "an actor is a label and grants nothing (ADR 0037); only the attribution code may name one:\n  - {}",
+        found.join("\n  - ")
+    );
+}
+
+#[test]
+fn the_files_that_may_name_an_actor_exist_so_the_rule_cannot_pass_by_checking_nothing() {
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    for relative in ACTOR_ATTRIBUTION.iter().chain(ACTOR_GROUPING.iter()) {
+        let found = src.join(relative).exists() || src.join(format!("{relative}.rs")).exists();
+        assert!(
+            found,
+            "src/{relative} is listed as attribution code but is missing (renamed? update the list)"
+        );
+    }
+    // And the real tree does name actors where the rule allows it, so the scan is looking at something.
+    let config = production_code(&fs::read_to_string(src.join("config/actors.rs")).unwrap());
+    assert!(names_an_actor(&config));
+}
+
+#[test]
+fn a_policy_that_reads_an_actor_is_caught() {
+    let sample =
+        "fn allows(key: &KeyRecord) -> bool {\n    key.actor.as_deref() != Some(\"blocked\")\n}\n";
+    assert_eq!(actor_violations("policy.rs", sample).len(), 1);
+}
+
+#[test]
+fn a_limiter_or_budget_that_reads_an_owner_is_caught() {
+    for module in [
+        "limiter.rs",
+        "budget.rs",
+        "select.rs",
+        "pool.rs",
+        "routing.rs",
+        "metering.rs",
+        "server/overrides.rs",
+    ] {
+        let sample = "let cap = if key.owner.is_some() { 10 } else { 1 };\n";
+        assert_eq!(actor_violations(module, sample).len(), 1, "{module}");
+    }
+}
+
+#[test]
+fn a_request_handler_that_branches_on_an_actor_is_caught_but_recording_one_is_not() {
+    // The four lines `server.rs` has today pass, exactly as written.
+    let allowed = ACTOR_SERVER_LINES
+        .iter()
+        .fold(String::new(), |all, line| all + "    " + line + "\n");
+    assert_eq!(
+        actor_violations("server.rs", &allowed),
+        Vec::<String>::new()
+    );
+    // Anything else naming one on the request path is caught, however close to those lines it sits.
+    for hostile in [
+        "    let tier = if key.actor.is_some() { 1 } else { 2 };\n",
+        "    if caller.as_ref().is_some_and(|k| k.actor.is_some()) {\n",
+        "    guard.decision.actor = caller.actor.clone().or(fallback.actor);\n",
+        "    let wide = caller.owner.is_some();\n",
+    ] {
+        assert_eq!(actor_violations("server.rs", hostile).len(), 1, "{hostile}");
+    }
+    let other_handler = "    let who = record.owner.clone();\n";
+    assert_eq!(
+        actor_violations("server/explain.rs", other_handler).len(),
+        1
+    );
+}
+
+#[test]
+fn the_attribution_code_may_name_an_actor_and_other_words_are_not_mistaken_for_one() {
+    for relative in [
+        "config/actors.rs",
+        "auth.rs",
+        "ledger/stats.rs",
+        "server/config_view.rs",
+        "server/decisions.rs",
+        "server/stats.rs",
+    ] {
+        assert!(
+            actor_violations(relative, "let a = k.actor.clone();\n").is_empty(),
+            "{relative}"
+        );
+    }
+    // "factor" and "ownership" are not "actor" and "owner".
+    assert!(!names_an_actor("let factor = 2; // ownership of the lock"));
+    assert!(!names_an_actor("let contractor = 1;"));
+    assert!(names_an_actor("GroupBy::Actor => x,"));
+    assert!(names_an_actor("let o = ActorKind::Human;"));
+}

@@ -509,3 +509,55 @@ Two full runs on the host: loaded p99 6.74 ms against 9.27 and 9.37 ms unloaded 
 about 300 reads answered and about 90,000 refused per round, none failed. The contention test passed in the same runs
 (slowest override write 220 and 291 ms, median of the rounds). The loaded half is again no slower than the unloaded
 one, as in Run 9: a heavy read answered from another thread leaves the request path alone, and a refusal costs little.
+
+## Run 12: a key, and an actor on it, in the request traffic (2026-11-13)
+
+Why: `add-actors` puts two new things on every request that carries a key: the lookup now asks whether the key is
+revoked (an in-memory scan of the key revocations in force, empty unless one is), and the decision is written with the
+actor and owner the key names. Until now no harness sent a key at all, so neither was measured. Both harnesses now take
+a mode for how their traffic authenticates, and the isolation test uses `actor` by default, so the CI job exercises the
+new path on every run:
+
+- `none`: no keys, an open gateway, as every earlier run;
+- `plain`: a client key with no actor;
+- `actor`: a client key that names an agent actor owned by a human, so each request goes through the lookup, the
+  revocation check and the actor and owner written on its decision.
+
+Same laptop and toolchain as Runs 9 to 11, the gateway code after `add-actors` group 3. Commands:
+`ISOLATION_KEY=<mode> cargo test --release --test isolation -- --ignored --nocapture` and
+`OVERHEAD_KEY=<mode> cargo test --release --test overhead -- --ignored --nocapture --test-threads=1`, one run of each
+mode, the three in the same order back to back.
+
+### Isolation (one worker, the ledger seeded past the row cap, three administrative load clients)
+
+| Request traffic | Unloaded p99 | Loaded p99 | Dropped | Slowest override write (median of the rounds) | p99 with a prune, against without |
+|---|---|---|---|---|---|
+| `none` | 8.06 ms | 6.75 ms | 0 | 294 ms | 8.32 against 8.26 ms |
+| `plain` | 8.24 ms | 6.89 ms | 0 | 157 ms | 8.08 against 8.37 ms |
+| `actor` | 8.15 ms | 6.89 ms | 0 | 158 ms | 8.09 against 8.47 ms |
+
+All three pass (allowed rise 1.00 ms); the loaded half is again no slower than the unloaded one, as in Runs 9 and 11,
+and every round answered reads, series included. The unloaded p99 of the three modes differs by less than the 0.3 ms
+that two halves of one mode differ by in the noise check (7.92 against 7.87, 7.92 against 7.96 and 8.31 against 8.95 ms).
+
+### Gateway overhead (the 50 ms upstream, and the instant one that isolates the gateway's own work)
+
+| Added by the gateway, p50 / p99 (ms) | `none` | `plain` | `actor` |
+|---|---|---|---|
+| instant upstream, concurrency 1 | +0.06 / +0.14 | +0.06 / +0.08 | +0.06 / +0.11 |
+| instant upstream, concurrency 16 | +0.22 / +0.30 | +0.20 / +0.26 | +0.20 / +0.25 |
+| instant upstream, concurrency 64 | +0.86 / +1.27 | +0.85 / +1.15 | +0.86 / +1.23 |
+| 50 ms upstream, concurrency 64 | +1.15 / +3.00 | +0.94 / +2.85 | +1.34 / +3.69 |
+| instant upstream, concurrency 64, gateway requests per second | 48,816 | 48,815 | 48,533 |
+
+The gateway's own work, with no upstream delay to hide it, is the same to a hundredth of a millisecond at the median in
+the three modes, and its throughput differs by 0.6%. The 50 ms rows move by a few tenths of a millisecond in no
+particular direction, which is the noise of a timer-driven mock (Run 7). Every budget is met in every mode, with the
+worst cases at concurrency 64 or 1: added p50 at most 1.34 ms (limit 2) and p99 at most 3.69 ms (limit 10) on the
+50 ms upstream; first chunk p50 at most 0.72 ms and p99 at most 3.11 ms; whole stream p50 at most 1.03 ms (limit 15) and
+p99 at most 9.44 ms (limit 30).
+
+What this does and does not show: a key and an actor add less to a request than one run on this machine can resolve, and
+nothing moved a budget. It is one run per mode, not the alternating comparison of Run 6, and it is not the
+throughput-against-the-previous-release check, which belongs to a release. The check that blocks a merge is the
+isolation job (the performance gate), which runs on the pull request that carries this run.

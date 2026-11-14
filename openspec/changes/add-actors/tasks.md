@@ -21,7 +21,7 @@
 
 ## 4. Request-path guard
 
-- [ ] 4.1 Add an architecture test that no module outside attribution (the decision write, statistics and configuration display) reads an actor or owner, so nothing authorizes, limits or routes by one, and register the new modules in `fitness/register.toml` with their checks; verify the test passes and fails when a read is added to the request path, and that `scripts/select-checks.py` selects the isolation job for the change
+- [x] 4.1 Add an architecture test that no module outside attribution (the decision write, statistics and configuration display) reads an actor or owner, so nothing authorizes, limits or routes by one, and register the new modules in `fitness/register.toml` with their checks; verify the test passes and fails when a read is added to the request path, and that `scripts/select-checks.py` selects the isolation job for the change
 - [ ] 4.2 Run the isolation job and the overhead comparison with actors set on the load's keys, and record the result as the next run in `docs/performance.md`; verify the performance gate passes and the figures are within the budgets
 
 ## 5. Wrap-up

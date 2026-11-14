@@ -181,3 +181,18 @@ in an ADR (`docs/adr/`) in the same change. Which checks guard performance, and 
     read without the gate), `tests/ledger_read_pool.rs`, `tests/heavy_reads.rs`, and the isolation tests
     (`tests/isolation.rs`; the budgets and what a CPU limit does are in [Performance and scale](performance.md));
     see [ADR-0036](adr/0036-admin-and-ui-work-must-not-change-the-request-paths-performance.md).
+
+25. **An actor is a label: nothing reads one to authorize, limit, budget or route a request.** An actor (a human or an
+    agent) and its owner say who a key is for. They are carried on the key's record, written onto each decision as
+    ids, counted by the administrative statistics and shown by the configuration view and the key's own info; a key's
+    routes, budgets, limits and privileges come only from the key and its profile. Outside the code that defines
+    them (`config/`), carries them (`auth.rs`), stores and counts them (`ledger`) or displays and groups by them
+    (`server/config_view.rs`, `server/decisions.rs`, `server/stats.rs`, `server/series.rs`), no source text names an
+    actor or an owner, and `server.rs` names them on four exact lines: two that write them onto the decision and two
+    that show them in the key's own info. Reason: a second place that decides what a key may do is a second source of
+    truth for authority, and a label that quietly becomes a permission is how an owner field ends up widening what
+    the file granted. *Enforced by* `tests/architecture.rs` (`no_module_reads_an_actor_or_an_owner_to_decide_anything`,
+    with a sample-source test for each way to break it: a policy, a limiter, a budget or a selector that reads one, a
+    request handler that branches on one, and a handler outside the display code that reads one) and
+    `tests/actors.rs` (`an_actor_changes_nothing_a_key_may_do`); see
+    [ADR-0037](adr/0037-an-actor-names-who-a-key-is-for-and-grants-nothing.md).
