@@ -406,6 +406,32 @@ export interface components {
             current_latency_ms?: number | null;
             /** @description With `group_by=target`: how many answers the smoothed figure is built from. */
             latency_samples?: number | null;
+            vs_baseline?: components["schemas"]["BaselineComparison"];
+        };
+        /** @description What a set of answered calls with known usage would have cost at the baseline endpoint, and what they cost. Present only when a baseline was asked for. An estimate from the tokens the calls used, not a comparison of answer quality. */
+        BaselineComparison: {
+            /** @description The calls' tokens priced at the baseline endpoint. */
+            baseline_cost_usd: number;
+            /** @description What the same calls actually cost. */
+            cost_usd: number;
+            /** @description `baseline_cost_usd` minus `cost_usd`; negative when the baseline would have been cheaper. */
+            saved_usd: number;
+            /** @description `saved_usd` over `baseline_cost_usd`; null when the baseline cost is nothing. */
+            saved_ratio: number | null;
+            /** @description Answered calls whose provider reported usage: the calls both costs are over. */
+            calls_priced: number;
+            /** @description Answered calls in neither cost because the provider reported no usage. */
+            calls_left_out: number;
+        };
+        /** @description The baseline endpoint of a statistics answer and what the figures are. Present only when a baseline was asked for. */
+        Baseline: {
+            endpoint: string;
+            input_per_million_usd: number;
+            /** @description The cached price, or the input price when the endpoint sets none. */
+            cached_input_per_million_usd: number;
+            output_per_million_usd: number;
+            /** @description A plain statement of what the figures are and are not. */
+            basis: string;
         };
         ConfigPatchRequest: {
             /** @description The fingerprint of the configuration file the editor last read. */
@@ -861,6 +887,8 @@ export interface operations {
                 route?: string;
                 /** @description Only this target. */
                 target?: string;
+                /** @description An endpoint of the configuration as `provider/model` that has an untiered price. The answer then also says what each group's answered calls would have cost at that endpoint's prices, what they cost, and the difference. Admin only: the client statistics refuse it. A name that is not such an endpoint is a 400 saying whether it is unknown, has no price or has a tiered price. */
+                baseline?: string;
             };
             header?: never;
             path?: never;
@@ -883,6 +911,8 @@ export interface operations {
                         window: Record<string, never>;
                         truncated: boolean;
                         data: components["schemas"]["StatsGroup"][];
+                        baseline?: components["schemas"]["Baseline"];
+                        summary?: components["schemas"]["BaselineComparison"];
                     };
                 };
             };

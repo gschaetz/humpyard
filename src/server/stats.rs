@@ -12,7 +12,9 @@ use switchyard_protocol::WireFormat;
 
 use super::heavy::{Busy, Surface};
 use super::{AppState, GatewayError, authenticate};
+use crate::config::Price;
 use crate::ledger::{GroupBy, GroupStats, StatsQuery, TokenTotals};
+use crate::pricing::{BaselineRefusal, baseline_price, linear_cost_micro_usd};
 
 pub(super) const DEFAULT_WINDOW_MS: i64 = 24 * 3_600_000;
 /// The window when the decision retention is "forever".
@@ -87,25 +89,144 @@ async fn stats_answer(
             return Ok(GatewayError::BadRequest(message).into_response_for(format));
         }
     };
+    // A baseline that cannot be used is refused before anything is read.
+    let baseline = match params
+        .get("baseline")
+        .map(|name| resolve_baseline(snap, name))
+    {
+        None => None,
+        Some(Ok(found)) => Some(found),
+        Some(Err(message)) => {
+            return Ok(GatewayError::BadRequest(message).into_response_for(format));
+        }
+    };
     ledger.flush().await;
     match ledger.stats(&query).await {
-        Ok(summary) => Ok(axum::Json(json!({
-            "object": "stats",
-            "computed_at_ms": state.clock.now_ms(),
-            "group_by": params.get("group_by").map_or("route", String::as_str),
-            "window": {"since_ms": query.since_ms, "seconds": (state.clock.now_ms() - query.since_ms) / 1000},
-            "truncated": summary.truncated,
-            "data": summary.groups.iter().map(|g| {
-                let mut row = group_json(g);
-                if params.get("group_by").map(String::as_str) == Some("target") {
-                    add_live_latency(&mut row, state, &g.group);
-                }
-                row
-            }).collect::<Vec<_>>(),
-        }))
-        .into_response()),
+        Ok(summary) => {
+            let mut answer = json!({
+                "object": "stats",
+                "computed_at_ms": state.clock.now_ms(),
+                "group_by": params.get("group_by").map_or("route", String::as_str),
+                "window": {"since_ms": query.since_ms, "seconds": (state.clock.now_ms() - query.since_ms) / 1000},
+                "truncated": summary.truncated,
+                "data": summary.groups.iter().map(|g| {
+                    let mut row = group_json(g);
+                    if params.get("group_by").map(String::as_str) == Some("target") {
+                        add_live_latency(&mut row, state, &g.group);
+                    }
+                    if let Some(baseline) = &baseline {
+                        row["vs_baseline"] = baseline.group(g).json();
+                    }
+                    row
+                }).collect::<Vec<_>>(),
+            });
+            if let Some(baseline) = &baseline {
+                baseline.describe(&summary.groups, &mut answer);
+            }
+            Ok(axum::Json(answer).into_response())
+        }
         Err(error) if error.is_busy() => Err(Busy),
         Err(error) => Ok(GatewayError::Internal(error.to_string()).into_response_for(format)),
+    }
+}
+
+/// A baseline endpoint: what the same calls would have cost at its prices (`add-baseline-cost`).
+struct Baseline {
+    endpoint: String,
+    price: Price,
+}
+
+/// What a baseline says about one group, or about the whole answer, in micro-USD.
+#[derive(Default)]
+struct Compared {
+    baseline_micro: f64,
+    actual_micro: u64,
+    priced: u64,
+    left_out: u64,
+}
+
+impl Compared {
+    fn saved_micro(&self) -> f64 {
+        self.baseline_micro - crate::num::f64_from_u64(self.actual_micro)
+    }
+
+    fn json(&self) -> Value {
+        let usd = |micro: f64| micro / 1_000_000.0;
+        json!({
+            "baseline_cost_usd": usd(self.baseline_micro),
+            "cost_usd": usd(crate::num::f64_from_u64(self.actual_micro)),
+            "saved_usd": usd(self.saved_micro()),
+            // Null when the baseline cost is nothing, so a ratio is never made of zero.
+            "saved_ratio": (self.baseline_micro > 0.0).then(|| self.saved_micro() / self.baseline_micro),
+            "calls_priced": self.priced,
+            "calls_left_out": self.left_out,
+        })
+    }
+}
+
+const BASELINE_BASIS: &str = "An estimate, not a measurement: the tokens these calls used, priced at this endpoint's prices from the configuration. It says nothing about whether this endpoint would have answered as well, and another model counts tokens differently. Calls whose provider reported no usage are in neither cost.";
+
+impl Baseline {
+    /// The comparison for one group: its calls with known usage priced at the baseline, and what they cost.
+    fn group(&self, g: &GroupStats) -> Compared {
+        let t = &g.tokens;
+        Compared {
+            baseline_micro: linear_cost_micro_usd(
+                &self.price,
+                t.input.saturating_add(t.cache_creation),
+                t.cached_input,
+                t.output,
+            ),
+            actual_micro: g.cost_micro_usd,
+            priced: g.usage_known,
+            left_out: g.answered.saturating_sub(g.usage_known),
+        }
+    }
+
+    /// Adds the baseline and the summary of every group to the answer.
+    fn describe(&self, groups: &[GroupStats], answer: &mut Value) {
+        let mut sum = Compared::default();
+        for g in groups {
+            let c = self.group(g);
+            sum.baseline_micro += c.baseline_micro;
+            sum.actual_micro = sum.actual_micro.saturating_add(c.actual_micro);
+            sum.priced = sum.priced.saturating_add(c.priced);
+            sum.left_out = sum.left_out.saturating_add(c.left_out);
+        }
+        let p = &self.price;
+        answer["baseline"] = json!({
+            "endpoint": self.endpoint,
+            "input_per_million_usd": p.input,
+            "cached_input_per_million_usd": p.cached_input.unwrap_or(p.input),
+            "output_per_million_usd": p.output,
+            "basis": BASELINE_BASIS,
+        });
+        answer["summary"] = sum.json();
+    }
+}
+
+/// The baseline named `name` (`provider/model`), or the message of the 400 that refuses it.
+fn resolve_baseline(snap: &super::Snapshot, name: &str) -> Result<Baseline, String> {
+    let endpoints = snap
+        .config
+        .targets
+        .values()
+        .flatten()
+        .map(|e| (e.provider.as_str(), e.model.as_str(), e.price.as_ref()));
+    match baseline_price(endpoints, name) {
+        Ok(price) => Ok(Baseline {
+            endpoint: name.to_string(),
+            price: price.clone(),
+        }),
+        Err(BaselineRefusal::Unknown) => Err(format!(
+            "`baseline` must be an endpoint of the configuration, as `provider/model`; `{name}` is not one"
+        )),
+        Err(BaselineRefusal::NoPrice) => Err(format!(
+            "`baseline` `{name}` has no price in the configuration, so it cannot be priced"
+        )),
+        Err(BaselineRefusal::Tiered) => Err(format!(
+            "`baseline` `{name}` has a tiered price; tiered baselines are not supported, because a call's cost then depends on its prompt size"
+        )),
     }
 }
 
@@ -143,7 +264,11 @@ fn parse(
     surface: Surface,
 ) -> Result<StatsQuery, String> {
     for name in params.keys() {
-        if !["window", "group_by", "route", "target"].contains(&name.as_str()) {
+        // `baseline` shows the prices of configured endpoints, which a client key must not learn, so only the
+        // administrative surface takes it (`add-baseline-cost`).
+        let known = ["window", "group_by", "route", "target"].contains(&name.as_str())
+            || (name == "baseline" && surface == Surface::Admin);
+        if !known {
             return Err(format!("unknown parameter `{name}`"));
         }
     }
