@@ -52,6 +52,21 @@ slow or expensive. humpyard is the **routing and policy layer** in front of your
 - **Easy to run.** A static binary or a small container, a SQLite ledger with virtual keys and
   budgets, hot config reload, and money handled as integers that fail closed.
 
+## Why not LiteLLM or OpenRouter?
+
+They are good tools with far more providers, and humpyard is pre-alpha. Pick humpyard when:
+
+- **You want to write the routing policy.** Rules decide which request goes to which model (by key,
+  headers, prompt size, tools, images), with a dry run and a record of why. A hosted router decides for
+  you; LiteLLM's auto router scores the prompt text into tiers.
+- **You want tiers backed by pools that change.** A route is a stable name such as `fast` or `deep`, with
+  a pool of models behind it. `humpyard models sync` keeps free pools current from each provider's own
+  model list, so you stop hand-editing them ([discovery](docs/discovery.md); you schedule the sync).
+- **Private requests must stay private.** A request marked private is refused, not sent to a public provider.
+- **You want one static binary**, with no Python service or database.
+
+The full comparison, including where the others win: [humpyard.dev/compare](https://humpyard.dev/compare/).
+
 ## Quick start
 
 The fastest way: let `humpyard init` write the config. It checks your provider's models live and sends a test request.

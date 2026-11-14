@@ -19,7 +19,7 @@
 
 ## 5. Wrap-up
 
-- [ ] 5.1 Run the isolation test with the baseline parameter added to the statistics client of its load and record it as the next run in `docs/performance.md`; verify the performance gate passes and the loaded p99 is within the allowed rise
+- [x] 5.1 Run the isolation test with the baseline parameter added to the statistics client of its load and record it as the next run in `docs/performance.md`; verify the performance gate passes and the loaded p99 is within the allowed rise
 - [x] 5.2 Check the threat model of `design.md` against what was built (each row true, each proof present), update `docs/threat-model.md` if a gap or boundary changed, update `docs/architecture.md` (the status table and the "Last updated" line) and `docs/roadmap.md` (the savings item moves to shipped), and verify the Mermaid diagrams still match the code
 - [x] 5.3 Run fmt, clippy `-D warnings`, `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --document-private-items`, the full test suite with and without the `ui` feature, the `ui/` checks and `openspec validate add-baseline-cost --strict`; verify each exits 0
 

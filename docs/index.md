@@ -24,6 +24,12 @@ traffic** (Claude Code, Codex and the like), and it explains and measures what i
 - **Operable.** A single static binary or a small container, hot config reload, per-endpoint
   circuit breakers, graceful shutdown, and money handled as integers that fail closed.
 
+**Why not LiteLLM or OpenRouter?** They are good tools with far more providers, and humpyard is
+pre-alpha. Pick humpyard when you want to write the routing policy yourself, with a dry run and a record
+of why ([compare](compare.md)); when you want tiers backed by pools that stay current, so you stop
+hand-editing model lists ([discovery](discovery.md)); when private requests must be refused instead of
+sent to a public provider; or when you want one static binary with no Python service or database.
+
 ## Start here
 
 | I want to... | Read |
