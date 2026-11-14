@@ -10,8 +10,8 @@
 
 ## 3. The parameter and the answer
 
-- [ ] 3.1 Accept `baseline` on `GET /admin/v1/stats` and refuse it on `GET /v1/stats`; add the per-group baseline cost, actual cost, saving, ratio and priced calls, the top-level `baseline`, `summary` and statement, and the count of calls left out; verify with integration tests for free traffic against a paid baseline, partly paid traffic, a group with no priced calls, every grouping adding up to the summary, calls with no usage, the three refusals, the client refusal, a hostile value, two baselines not sharing a cached result, and an answer without a baseline equal to what it was
-- [ ] 3.2 Describe the parameter and the new fields in `docs/openapi/admin-v1.json`, regenerate `ui/src/api/schema.d.ts`, and update `docs/api.md`; verify the OpenAPI contract test passes against a real baseline answer and fails when a documented field is removed
+- [x] 3.1 Accept `baseline` on `GET /admin/v1/stats` and refuse it on `GET /v1/stats`; add the per-group baseline cost, actual cost, saving, ratio and priced calls, the top-level `baseline`, `summary` and statement, and the count of calls left out; verify with integration tests for free traffic against a paid baseline, partly paid traffic, a group with no priced calls, every grouping adding up to the summary, calls with no usage, the three refusals, the client refusal, a hostile value, two baselines not sharing a cached result, and an answer without a baseline equal to what it was
+- [x] 3.2 Describe the parameter and the new fields in `docs/openapi/admin-v1.json`, regenerate `ui/src/api/schema.d.ts`, and update `docs/api.md`; verify the OpenAPI contract test passes against a real baseline answer and fails when a documented field is removed
 
 ## 4. Documentation
 

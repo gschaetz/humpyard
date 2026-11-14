@@ -138,7 +138,7 @@ async fn rig() -> (Rig, tempfile::TempDir) {
         "listen = \"127.0.0.1:0\"\n[ledger]\npath = \"{}\"\n[keys.alice]\nsha256 = \"{alice_hash}\"\n\
          [admin.credentials.gary]\nsha256 = \"{gary_hash}\"\nscopes = [\"read\"]\n\
          [providers.p]\nbase_url = \"{upstream}\"\napi_key_env = \"K\"\nmax_retries = 0\ntimeout_secs = 5\n\
-         [targets.t]\nendpoints = [{{ provider = \"p\", model = \"m\" }}]\n\
+         [targets.t]\nendpoints = [{{ provider = \"p\", model = \"m\", price = {{ input = 1.0, output = 2.0 }} }}]\n\
          [routes.r]\ntype = \"passthrough\"\ntargets = [\"t\"]\n",
         db.display()
     );
@@ -219,6 +219,23 @@ async fn real_decisions_and_statistics_match_the_documented_schemas() {
         stats["data"][0]["response_signals"],
         json!({"observed": 2, "empty_output": 0, "truncated_output": 0, "bad_tool_call": 1, "cut_stream": 0})
     );
+    // A baseline answer: the group comparison, the summary and the baseline itself are documented too.
+    let priced = rig
+        .get("/admin/v1/stats?group_by=target&baseline=p/m")
+        .await;
+    let found = violations(
+        &doc,
+        &response_schema(&doc, "/admin/v1/stats"),
+        &priced,
+        "stats",
+    );
+    assert!(found.is_empty(), "{found:#?}\n{priced}");
+    assert!(
+        priced["data"][0]["vs_baseline"]["saved_usd"].is_number(),
+        "{priced}"
+    );
+    assert!(priced["summary"]["calls_priced"].is_u64(), "{priced}");
+    assert_eq!(priced["baseline"]["endpoint"], "p/m");
     // The figures the admin GUI's models view reads are documented too, not only the signal counters.
     assert!(stats["data"][0]["latency_ms"]["p50"].is_u64(), "{stats}");
     assert!(stats["data"][0]["failure_rate"].is_number(), "{stats}");
@@ -279,6 +296,29 @@ async fn the_check_fails_when_a_documented_field_is_missing_from_a_response() {
     assert_eq!(
         found,
         ["stats.data[0].response_signals.cut_stream: missing"]
+    );
+
+    // And the baseline figures: a missing comparison field is reported by name, in a group and in the summary.
+    let mut priced = rig
+        .get("/admin/v1/stats?group_by=target&baseline=p/m")
+        .await;
+    priced["data"][0]["vs_baseline"]
+        .as_object_mut()
+        .unwrap()
+        .remove("saved_usd");
+    priced["summary"]
+        .as_object_mut()
+        .unwrap()
+        .remove("calls_left_out");
+    priced["baseline"].as_object_mut().unwrap().remove("basis");
+    let found = violations(&doc, &schema, &priced, "stats");
+    assert_eq!(
+        found,
+        [
+            "stats.data[0].vs_baseline.saved_usd: missing",
+            "stats.baseline.basis: missing",
+            "stats.summary.calls_left_out: missing"
+        ]
     );
 
     // The same for the health body: an endpoint without its state is reported by name.

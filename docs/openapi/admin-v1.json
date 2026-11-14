@@ -637,6 +637,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "baseline",
+            "in": "query",
+            "required": false,
+            "description": "An endpoint of the configuration as `provider/model` that has an untiered price. The answer then also says what each group's answered calls would have cost at that endpoint's prices, what they cost, and the difference. Admin only: the client statistics refuse it. A name that is not such an endpoint is a 400 saying whether it is unknown, has no price or has a tiered price.",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -680,6 +689,12 @@
                       "items": {
                         "$ref": "#/components/schemas/StatsGroup"
                       }
+                    },
+                    "baseline": {
+                      "$ref": "#/components/schemas/Baseline"
+                    },
+                    "summary": {
+                      "$ref": "#/components/schemas/BaselineComparison"
                     }
                   }
                 }
@@ -2193,6 +2208,78 @@
             "type": "integer",
             "nullable": true,
             "description": "With `group_by=target`: how many answers the smoothed figure is built from."
+          },
+          "vs_baseline": {
+            "$ref": "#/components/schemas/BaselineComparison"
+          }
+        }
+      },
+      "BaselineComparison": {
+        "type": "object",
+        "description": "What a set of answered calls with known usage would have cost at the baseline endpoint, and what they cost. Present only when a baseline was asked for. An estimate from the tokens the calls used, not a comparison of answer quality.",
+        "required": [
+          "baseline_cost_usd",
+          "cost_usd",
+          "saved_usd",
+          "saved_ratio",
+          "calls_priced",
+          "calls_left_out"
+        ],
+        "properties": {
+          "baseline_cost_usd": {
+            "type": "number",
+            "description": "The calls' tokens priced at the baseline endpoint."
+          },
+          "cost_usd": {
+            "type": "number",
+            "description": "What the same calls actually cost."
+          },
+          "saved_usd": {
+            "type": "number",
+            "description": "`baseline_cost_usd` minus `cost_usd`; negative when the baseline would have been cheaper."
+          },
+          "saved_ratio": {
+            "type": "number",
+            "nullable": true,
+            "description": "`saved_usd` over `baseline_cost_usd`; null when the baseline cost is nothing."
+          },
+          "calls_priced": {
+            "type": "integer",
+            "description": "Answered calls whose provider reported usage: the calls both costs are over."
+          },
+          "calls_left_out": {
+            "type": "integer",
+            "description": "Answered calls in neither cost because the provider reported no usage."
+          }
+        }
+      },
+      "Baseline": {
+        "type": "object",
+        "description": "The baseline endpoint of a statistics answer and what the figures are. Present only when a baseline was asked for.",
+        "required": [
+          "endpoint",
+          "input_per_million_usd",
+          "cached_input_per_million_usd",
+          "output_per_million_usd",
+          "basis"
+        ],
+        "properties": {
+          "endpoint": {
+            "type": "string"
+          },
+          "input_per_million_usd": {
+            "type": "number"
+          },
+          "cached_input_per_million_usd": {
+            "type": "number",
+            "description": "The cached price, or the input price when the endpoint sets none."
+          },
+          "output_per_million_usd": {
+            "type": "number"
+          },
+          "basis": {
+            "type": "string",
+            "description": "A plain statement of what the figures are and are not."
           }
         }
       },

@@ -171,7 +171,7 @@ would let read the configuration file. Each request logs the admin id and the ou
 | `GET /admin/v1/health` | what `GET /v1/health` returns: skipped endpoints, latency, the loaded configuration, the last reload |
 | `GET /admin/v1/quota` | what `GET /v1/quota` returns |
 | `GET /admin/v1/decisions` | the decision log of **every key**, newest first, each failed attempt with the provider's `message`; `?key=alice` narrows it to one key, and the usual filters (`limit`, `route`, `outcome`, `since_ms`, ...) apply |
-| `GET /admin/v1/stats` | the [statistics](budgets.md#statistics) of **every key**; `?key=alice` narrows them, and `window` and `group_by` work as on `/v1/stats`, which `group_by` extends with `actor` and `owner` ([below](#statistics-by-actor-and-owner)); a [heavy read](#heavy-reads) |
+| `GET /admin/v1/stats` | the [statistics](budgets.md#statistics) of **every key**; `?key=alice` narrows them, and `window` and `group_by` work as on `/v1/stats`, which `group_by` extends with `actor` and `owner` ([below](#statistics-by-actor-and-owner)); `baseline` prices the same calls at an endpoint you name ([below](#what-the-traffic-would-have-cost)); a [heavy read](#heavy-reads) |
 | `GET /admin/v1/stats/series` | the same statistics [over time](#statistics-over-time): equal buckets per group; a [heavy read](#heavy-reads) |
 | `GET /admin/v1/credentials` | every admin credential: `id`, `kind`, `scopes`, `expires`, and `revoked` while a revocation is in force |
 
@@ -192,6 +192,32 @@ tokens. Requests with no actor (or no owner) are the group `(none)`, so nothing 
 the ones recorded on each decision, so a key that changes owner later does not move its earlier requests. The client
 `GET /v1/stats` does not accept them (`400`): a key sees only its own calls. Each decision in the log also carries
 `actor` and `owner`.
+
+### What the traffic would have cost
+
+`GET /admin/v1/stats` also accepts `baseline=<provider>/<model>`, an endpoint of the configuration (as `group_by=endpoint`
+names it) that has a price without tiers. Each group then carries `vs_baseline`, what its answered calls would have cost at
+that endpoint's prices, what they actually cost, and the difference, and a `summary` adds the groups up:
+
+```json
+"summary": {"baseline_cost_usd": 1.84, "cost_usd": 0.07, "saved_usd": 1.77, "saved_ratio": 0.962,
+            "calls_priced": 612, "calls_left_out": 3},
+"baseline": {"endpoint": "openai/gpt-5", "input_per_million_usd": 1.25, "cached_input_per_million_usd": 0.125,
+             "output_per_million_usd": 10.0, "basis": "An estimate, not a measurement: ..."}
+```
+
+It is an **estimate, and the answer says so** in `baseline.basis`. It takes the tokens the calls actually used (fresh
+input and cache writes at the input price, cache reads at the cached price or the input price, output at the output
+price, as the ledger prices a call) and prices them at the baseline. It does not say that endpoint could have answered
+as well, and another model counts tokens differently. Only answered calls whose provider reported usage are in either
+cost; calls that reported none are counted in `calls_left_out`, and the classifier and judge calls are in neither, so a
+saving cannot come from a missing record. `saved_usd` is the arithmetic difference and is negative when the baseline would
+have been cheaper; `saved_ratio` is that over the baseline cost, and null when the baseline cost is nothing.
+
+A `baseline` that is not an endpoint of the configuration, has no price or has a tiered price (a call's cost then depends
+on its prompt size) is a 400 saying which, and nothing is read. The client `GET /v1/stats` does not take it, because it
+would show a key the prices of endpoints it may not use. The grouping can be any of `route`, `target`, `endpoint`, `actor`
+or `owner`; each call is priced once, in the group that answered it, so the groups add up to the summary.
 
 ### Statistics over time
 
