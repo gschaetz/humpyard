@@ -198,6 +198,13 @@ repeat of the same read within ten seconds is answered from the first and states
 before trusting a rate. `POST /v1/route/explain` adds the same recent numbers (last 24 hours: attempts,
 failure rate, p50) to each target it lists.
 
+**What would the same traffic have cost?** The administrative statistics (`GET /admin/v1/stats`) take
+`baseline=<provider>/<model>`, an endpoint of your configuration that has a price, and price the tokens your answered
+calls used at that endpoint's rates, beside what they actually cost: the gap is what the routing saved against sending
+everything there. It is an estimate and says so in the answer, it covers only calls whose provider reported usage, and
+it is not offered to client keys. See [the API guide](api.md#what-the-traffic-would-have-cost) and
+[Cut the cost of coding-agent traffic](cut-agent-costs.md#what-would-it-have-cost).
+
 ### Cache use and sessions
 
 A model's prompt cache is a cost lever: input tokens served from cache are billed at a fraction of the

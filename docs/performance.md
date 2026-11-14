@@ -561,3 +561,24 @@ What this does and does not show: a key and an actor add less to a request than 
 nothing moved a budget. It is one run per mode, not the alternating comparison of Run 6, and it is not the
 throughput-against-the-previous-release check, which belongs to a release. The check that blocks a merge is the
 isolation job (the performance gate), which runs on the pull request that carries this run.
+
+## Run 13: the baseline in the statistics load (2026-11-13)
+
+`add-baseline-cost` adds two sums to the usage aggregate that every statistics read makes and a little arithmetic over the
+groups, so the isolation test's statistics client now asks for the baseline
+(`/admin/v1/stats?group_by=target&baseline=p/unused&window=...`, the unused endpoint given a price of $2 and $8 per
+million tokens). The new fields are therefore part of what the request path is measured against, and a baseline that the
+gateway refused would show as failed reads and fail the run. The load is otherwise Run 11's (three clients, a different
+window each time, one-worker gateway, ledger seeded past the row cap) and the traffic is Run 12's `actor` mode.
+
+Two full runs on the host, same laptop and toolchain as Runs 9 to 12:
+
+| Run | Unloaded p99 | Loaded p99 | Dropped | Reads answered per round | Failed | Slowest override write |
+|---|---|---|---|---|---|---|
+| 1 | 8.33 ms | 6.38 ms | 0 | 108, 247, 277, 254, ... | 0 | 195 ms |
+| 2 | 8.31 ms | 7.37 ms | 0 | 85, 229, 227, 221, ... | 0 | 207 ms |
+
+Both pass (allowed rise 1.00 ms), and about 63,000 to 77,000 reads a round were refused by the gate, as in Run 11. The
+loaded half is again no slower than the unloaded one, and the figures are within the spread of Runs 11 and 12 (unloaded
+8.15 ms, loaded 6.89 ms in Run 12's `actor` mode). The sums are two columns of a query the read already makes, so a
+difference was not expected and none shows. The contention test passed in the same runs.

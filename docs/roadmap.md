@@ -187,9 +187,10 @@ In this order, API first. See [Direction: operating humpyard](architecture.md#di
   run) is on the back burner until the static result says it is worth the spend. RouterBench, RouterArena
   and LLMRouterBench score single-turn question answering, where a router that does not read content has
   nothing to show, so they are not planned.
-- **A savings-versus-baseline view** in `/v1/stats`: what the same real traffic would have cost on one
-  reference endpoint, priced from the config (the demo does this by hand with two keys). It reuses the
-  pricing code of the session analytics and needs its own spec.
+- ~~A savings-versus-baseline view~~ Built and unreleased (`add-baseline-cost`): `GET /admin/v1/stats?baseline=<provider>/<model>`
+  prices the same real traffic at an endpoint you name, per group and in a summary, as an estimate that says so
+  ([the API guide](api.md#what-the-traffic-would-have-cost)). Next, as its own small change, the query view shows it; a
+  default baseline in the configuration and tiered baseline prices are later.
 - **A classifier-backed rule action**, if the decision log shows the catch-all route is too coarse.
 - **Quota per model**, if a provider publishes it; adapters for other providers' usage endpoints.
 - **Ledger scale items**, all low priority and each its own spec-first change, started only on the trigger

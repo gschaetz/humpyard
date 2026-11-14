@@ -200,9 +200,11 @@ struct LoadCounts {
     failed: u64,
 }
 
+/// The statistics read of the load: by target, priced at a baseline (`add-baseline-cost`), so the new arithmetic and
+/// fields are part of what the request path is measured against. The baseline is the unused endpoint `p/unused`.
 fn target_query(n: u64) -> String {
     format!(
-        "/admin/v1/stats?group_by=target&window={}h",
+        "/admin/v1/stats?group_by=target&baseline=p/unused&window={}h",
         700 + n % DISTINCT_WINDOWS
     )
 }
@@ -362,7 +364,7 @@ max_retries = 0
 endpoints = [{{ provider = "p", model = "m", price = {{ input = 0.0, output = 0.0 }} }}]
 # No route uses it: an override that names it removes nothing a request needs.
 [targets.u]
-endpoints = [{{ provider = "p", model = "unused", price = {{ input = 0.0, output = 0.0 }} }}]
+endpoints = [{{ provider = "p", model = "unused", price = {{ input = 2.0, output = 8.0 }} }}]
 [routes.r]
 type = "passthrough"
 targets = ["t"]
@@ -896,6 +898,7 @@ fn the_load_asks_for_a_different_window_each_time() {
     let seen: std::collections::HashSet<String> = (0..DISTINCT_WINDOWS).map(target_query).collect();
     assert_eq!(seen.len(), usize::try_from(DISTINCT_WINDOWS).unwrap());
     assert!(target_query(0).contains("group_by=target"));
+    assert!(target_query(0).contains("baseline=p/unused"));
     assert!(session_query(0).contains("group_by=session"));
     assert!(series_query(0).contains("/stats/series"));
     let series: std::collections::HashSet<String> =
