@@ -52,11 +52,41 @@ impl Kind {
 /// target, provider or route, so nothing that plans a request can see one.
 const REVOKE_ADMIN: &str = "revoke_admin_credential";
 
-/// A revocation of an admin credential in force: the principal cannot authenticate until it ends.
+/// The row kind of a client key revocation (`add-actors`): the same shape, for a key of `[keys.*]`.
+const REVOKE_KEY: &str = "revoke_client_key";
+
+/// What a revocation takes access from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Revoked {
+    /// An admin credential of `[admin.credentials.*]`.
+    AdminCredential,
+    /// A client key of `[keys.*]`.
+    ClientKey,
+}
+
+impl Revoked {
+    fn row_kind(self) -> &'static str {
+        match self {
+            Self::AdminCredential => REVOKE_ADMIN,
+            Self::ClientKey => REVOKE_KEY,
+        }
+    }
+
+    fn of_row(kind: &str) -> Option<Self> {
+        match kind {
+            REVOKE_ADMIN => Some(Self::AdminCredential),
+            REVOKE_KEY => Some(Self::ClientKey),
+            _ => None,
+        }
+    }
+}
+
+/// A revocation in force: the admin credential or client key cannot authenticate until it ends.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Revocation {
     pub id: i64,
-    /// The id of the revoked credential.
+    pub what: Revoked,
+    /// The id of the revoked credential or key.
     pub principal: String,
     pub reason: String,
     pub created_ms: i64,
@@ -72,8 +102,9 @@ impl Revocation {
     }
 
     fn from_record(record: &OverrideRecord) -> Option<Self> {
-        (record.kind == REVOKE_ADMIN).then(|| Self {
+        Revoked::of_row(&record.kind).map(|what| Self {
             id: record.id,
+            what,
             principal: record.subject.clone(),
             reason: record.reason.clone(),
             created_ms: record.created_ms,
@@ -202,6 +233,40 @@ impl Drains for StoreDrains {
     }
 }
 
+/// Which client keys are revoked right now. Authentication asks this for every request that carries a key, so it
+/// must be cheap; a revocation ending needs no other action because the answer follows the clock.
+pub trait RevokedKeys: Send + Sync {
+    fn key_revoked(&self, key: &str) -> bool;
+}
+
+/// No key is revoked: a gateway without a ledger, which cannot hold revocations.
+pub struct NoRevokedKeys;
+
+impl RevokedKeys for NoRevokedKeys {
+    fn key_revoked(&self, _key: &str) -> bool {
+        false
+    }
+}
+
+/// The key revocations an [`OverrideStore`] holds, read against a clock.
+pub struct StoreRevokedKeys {
+    store: Arc<dyn OverrideStore>,
+    clock: Arc<dyn Clock>,
+}
+
+impl StoreRevokedKeys {
+    #[must_use]
+    pub fn new(store: Arc<dyn OverrideStore>, clock: Arc<dyn Clock>) -> Self {
+        Self { store, clock }
+    }
+}
+
+impl RevokedKeys for StoreRevokedKeys {
+    fn key_revoked(&self, key: &str) -> bool {
+        self.store.key_revoked(key, self.clock.now_ms())
+    }
+}
+
 /// How an override stands: in force, removed by someone, or run out.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Status {
@@ -322,6 +387,31 @@ pub trait OverrideStore: Send + Sync {
         now_ms: i64,
     ) -> Result<Revocation, OverrideError>;
 
+    /// Revokes client key `key` the same way (`add-actors`).
+    async fn revoke_key(
+        &self,
+        key: &str,
+        reason: &str,
+        expires_in_secs: Option<u64>,
+        created_by: &str,
+        limits: OverridesConfig,
+        now_ms: i64,
+    ) -> Result<Revocation, OverrideError>;
+
+    /// The client key revocations in force.
+    fn key_revocations(&self, now_ms: i64) -> Vec<Revocation>;
+
+    /// Whether client key `key` is revoked at `now_ms`. Runs on every request that carries a key.
+    fn key_revoked(&self, key: &str, now_ms: i64) -> bool;
+
+    /// Ends the revocations of client key `key` in force; false if there were none.
+    async fn end_key_revocations(
+        &self,
+        key: &str,
+        by: &str,
+        now_ms: i64,
+    ) -> Result<bool, OverrideError>;
+
     /// The admin credential revocations in force. Never part of [`OverrideStore::active`].
     fn revocations(&self, now_ms: i64) -> Vec<Revocation>;
 
@@ -365,6 +455,83 @@ impl LedgerOverrides {
             active: RwLock::new(active),
             revoked: RwLock::new(revoked),
         })
+    }
+}
+
+impl LedgerOverrides {
+    #[allow(clippy::too_many_arguments)] // the five facts of one revocation, shared by two public entry points
+    async fn revoke_subject(
+        &self,
+        what: Revoked,
+        subject: &str,
+        reason: &str,
+        expires_in_secs: Option<u64>,
+        created_by: &str,
+        limits: OverridesConfig,
+        now_ms: i64,
+    ) -> Result<Revocation, OverrideError> {
+        if reason.trim().is_empty() {
+            return Err(OverrideError::NoReason);
+        }
+        let expires_ms = expiry_ms(now_ms, expires_in_secs, limits)?;
+        let new = NewOverride {
+            kind: what.row_kind().to_string(),
+            subject: subject.to_string(),
+            route: None,
+            reason: reason.to_string(),
+            created_ms: now_ms,
+            expires_ms,
+            created_by: created_by.to_string(),
+        };
+        let id = self.db.create(&new).await?;
+        let revocation = Revocation {
+            id,
+            what,
+            principal: subject.to_string(),
+            reason: reason.to_string(),
+            created_ms: now_ms,
+            expires_ms,
+            created_by: created_by.to_string(),
+        };
+        self.revoked.write().push(revocation.clone());
+        Ok(revocation)
+    }
+
+    fn in_force(&self, what: Revoked, now_ms: i64) -> Vec<Revocation> {
+        self.revoked
+            .read()
+            .iter()
+            .filter(|r| r.what == what && r.in_force(now_ms))
+            .cloned()
+            .collect()
+    }
+
+    fn is_in_force(&self, what: Revoked, subject: &str, now_ms: i64) -> bool {
+        self.revoked
+            .read()
+            .iter()
+            .any(|r| r.what == what && r.principal == subject && r.in_force(now_ms))
+    }
+
+    async fn end_subject(
+        &self,
+        what: Revoked,
+        subject: &str,
+        by: &str,
+        now_ms: i64,
+    ) -> Result<bool, OverrideError> {
+        let ids: Vec<i64> = self
+            .revoked
+            .read()
+            .iter()
+            .filter(|r| r.what == what && r.principal == subject && r.in_force(now_ms))
+            .map(|r| r.id)
+            .collect();
+        for id in &ids {
+            self.db.revoke(*id, now_ms, by).await?;
+        }
+        self.revoked.write().retain(|r| !ids.contains(&r.id));
+        Ok(!ids.is_empty())
     }
 }
 
@@ -488,46 +655,53 @@ impl OverrideStore for LedgerOverrides {
         limits: OverridesConfig,
         now_ms: i64,
     ) -> Result<Revocation, OverrideError> {
-        if reason.trim().is_empty() {
-            return Err(OverrideError::NoReason);
-        }
-        let expires_ms = expiry_ms(now_ms, expires_in_secs, limits)?;
-        let new = NewOverride {
-            kind: REVOKE_ADMIN.to_string(),
-            subject: principal.to_string(),
-            route: None,
-            reason: reason.to_string(),
-            created_ms: now_ms,
-            expires_ms,
-            created_by: created_by.to_string(),
-        };
-        let id = self.db.create(&new).await?;
-        let revocation = Revocation {
-            id,
-            principal: principal.to_string(),
-            reason: reason.to_string(),
-            created_ms: now_ms,
-            expires_ms,
-            created_by: created_by.to_string(),
-        };
-        self.revoked.write().push(revocation.clone());
-        Ok(revocation)
+        self.revoke_subject(
+            Revoked::AdminCredential,
+            principal,
+            reason,
+            expires_in_secs,
+            created_by,
+            limits,
+            now_ms,
+        )
+        .await
+    }
+
+    async fn revoke_key(
+        &self,
+        key: &str,
+        reason: &str,
+        expires_in_secs: Option<u64>,
+        created_by: &str,
+        limits: OverridesConfig,
+        now_ms: i64,
+    ) -> Result<Revocation, OverrideError> {
+        self.revoke_subject(
+            Revoked::ClientKey,
+            key,
+            reason,
+            expires_in_secs,
+            created_by,
+            limits,
+            now_ms,
+        )
+        .await
     }
 
     fn revocations(&self, now_ms: i64) -> Vec<Revocation> {
-        self.revoked
-            .read()
-            .iter()
-            .filter(|r| r.in_force(now_ms))
-            .cloned()
-            .collect()
+        self.in_force(Revoked::AdminCredential, now_ms)
+    }
+
+    fn key_revocations(&self, now_ms: i64) -> Vec<Revocation> {
+        self.in_force(Revoked::ClientKey, now_ms)
     }
 
     fn is_revoked(&self, principal: &str, now_ms: i64) -> bool {
-        self.revoked
-            .read()
-            .iter()
-            .any(|r| r.principal == principal && r.in_force(now_ms))
+        self.is_in_force(Revoked::AdminCredential, principal, now_ms)
+    }
+
+    fn key_revoked(&self, key: &str, now_ms: i64) -> bool {
+        self.is_in_force(Revoked::ClientKey, key, now_ms)
     }
 
     async fn end_revocations(
@@ -536,17 +710,16 @@ impl OverrideStore for LedgerOverrides {
         by: &str,
         now_ms: i64,
     ) -> Result<bool, OverrideError> {
-        let ids: Vec<i64> = self
-            .revoked
-            .read()
-            .iter()
-            .filter(|r| r.principal == principal && r.in_force(now_ms))
-            .map(|r| r.id)
-            .collect();
-        for id in &ids {
-            self.db.revoke(*id, now_ms, by).await?;
-        }
-        self.revoked.write().retain(|r| !ids.contains(&r.id));
-        Ok(!ids.is_empty())
+        self.end_subject(Revoked::AdminCredential, principal, by, now_ms)
+            .await
+    }
+
+    async fn end_key_revocations(
+        &self,
+        key: &str,
+        by: &str,
+        now_ms: i64,
+    ) -> Result<bool, OverrideError> {
+        self.end_subject(Revoked::ClientKey, key, by, now_ms).await
     }
 }

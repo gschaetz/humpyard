@@ -17,7 +17,7 @@ use super::AppState;
 use crate::admin::{Principal, authenticate};
 use crate::auth::presented_key;
 use crate::config::{AdminConfig, AdminScope};
-use crate::overrides::OverrideError;
+use crate::overrides::{OverrideError, OverrideStore};
 
 type Register = fn(MethodRouter<Arc<AppState>>) -> MethodRouter<Arc<AppState>>;
 
@@ -121,6 +121,25 @@ pub(super) const ROUTES: &[Route] = &[
         scope: Some(AdminScope::Credentials),
         codes: &["revocation_not_found"],
         register: |m| m.delete(end_revocation),
+    },
+    Route {
+        method: "POST",
+        path: "/admin/v1/keys/{id}/revoke",
+        scope: Some(AdminScope::Credentials),
+        codes: &[
+            "invalid_revocation",
+            "overrides_need_ledger",
+            "already_revoked",
+            "ledger_error",
+        ],
+        register: |m| m.post(revoke_key),
+    },
+    Route {
+        method: "DELETE",
+        path: "/admin/v1/keys/{id}/revoke",
+        scope: Some(AdminScope::Credentials),
+        codes: &["revocation_not_found"],
+        register: |m| m.delete(end_key_revocation),
     },
     Route {
         method: "GET",
@@ -304,6 +323,25 @@ fn credential_json(id: &str, credential: &crate::config::AdminCredential) -> ser
 
 /// The admin section of the configuration in full, for administrators; client keys that may read the
 /// configuration see only a count (ADR 0027).
+/// Marks each client key whose revocation is in force with `revoked: true` and when it ends; the rest read
+/// `revoked: false`. Never anything of the key itself.
+fn mark_revoked_keys(state: &AppState, view: &mut serde_json::Value) {
+    let now_ms = state.clock.now_ms();
+    let revoked = state
+        .overrides
+        .as_ref()
+        .map(|store| store.key_revocations(now_ms))
+        .unwrap_or_default();
+    let Some(keys) = view["keys"].as_object_mut() else {
+        return;
+    };
+    for (id, key) in keys.iter_mut() {
+        let found = revoked.iter().find(|r| r.principal == *id);
+        key["revoked"] = json!(found.is_some());
+        key["revoked_until_ms"] = json!(found.map(|r| r.expires_ms));
+    }
+}
+
 fn admin_detail(admin: &AdminConfig) -> serde_json::Value {
     let credentials: serde_json::Map<String, serde_json::Value> = admin
         .credentials
@@ -325,6 +363,7 @@ async fn config(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Respo
     let snap = state.snapshot();
     let mut view = super::config_view::config_value(&state, &snap).await;
     view["admin"] = admin_detail(&snap.config.admin);
+    mark_revoked_keys(&state, &mut view);
     Json(view).into_response()
 }
 
@@ -428,25 +467,90 @@ struct RevokeBody {
     expires_in_secs: Option<u64>,
 }
 
+/// What a revoke endpoint takes access from. The two work the same way (an audited, expiring record that only removes
+/// access) and differ only in what they name and which store method they call.
+#[derive(Clone, Copy)]
+enum Target {
+    /// An admin credential of `[admin.credentials.*]`.
+    Credential,
+    /// A client key of `[keys.*]` (`add-actors`).
+    Key,
+}
+
+impl Target {
+    fn noun(self) -> &'static str {
+        match self {
+            Self::Credential => "admin credential",
+            Self::Key => "client key",
+        }
+    }
+
+    /// The field that names it in an answer.
+    fn field(self) -> &'static str {
+        match self {
+            Self::Credential => "credential",
+            Self::Key => "key",
+        }
+    }
+
+    fn defined(self, config: &crate::config::Config, id: &str) -> bool {
+        match self {
+            Self::Credential => config.admin.credentials.contains_key(id),
+            Self::Key => config.keys.contains_key(id),
+        }
+    }
+
+    fn is_revoked(self, store: &dyn OverrideStore, id: &str, now_ms: i64) -> bool {
+        match self {
+            Self::Credential => store.is_revoked(id, now_ms),
+            Self::Key => store.key_revoked(id, now_ms),
+        }
+    }
+}
+
 /// Revokes another credential (or the caller's own) for a bounded time. It only removes access, and it ends by
 /// itself; editing the file and reloading is how a credential is removed for good.
 async fn revoke_credential(
-    State(state): State<Arc<AppState>>,
+    state: State<Arc<AppState>>,
     headers: HeaderMap,
     Path(id): Path<String>,
     Json(body): Json<RevokeBody>,
 ) -> Response {
-    let principal = match authorize(&state, &headers, Some(AdminScope::Credentials)) {
+    revoke(&state.0, &headers, &id, &body, Target::Credential).await
+}
+
+/// Revokes a client key the same way, so a leaked one is retired at once and not at the next deploy.
+async fn revoke_key(
+    state: State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(body): Json<RevokeBody>,
+) -> Response {
+    revoke(&state.0, &headers, &id, &body, Target::Key).await
+}
+
+async fn revoke(
+    state: &AppState,
+    headers: &HeaderMap,
+    id: &str,
+    body: &RevokeBody,
+    target: Target,
+) -> Response {
+    let principal = match authorize(state, headers, Some(AdminScope::Credentials)) {
         Ok(principal) => principal,
         Err(denied) => return denied.into_response(),
     };
     let snap = state.snapshot();
-    if !snap.config.admin.credentials.contains_key(&id) {
+    if !target.defined(&snap.config, id) {
+        let place = match target {
+            Target::Credential => "an admin credential",
+            Target::Key => "a client key",
+        };
         return fail(
             StatusCode::BAD_REQUEST,
             "invalid_request_error",
             "invalid_revocation",
-            format!("`{id}` is not an admin credential in the loaded configuration"),
+            format!("`{id}` is not {place} in the loaded configuration"),
         );
     }
     let Some(store) = state.overrides.clone() else {
@@ -458,7 +562,7 @@ async fn revoke_credential(
         );
     };
     let now_ms = state.clock.now_ms();
-    if store.is_revoked(&id, now_ms) {
+    if target.is_revoked(store.as_ref(), id, now_ms) {
         return fail(
             StatusCode::CONFLICT,
             "invalid_request_error",
@@ -467,28 +571,45 @@ async fn revoke_credential(
         );
     }
     let by = principal.audit_name();
-    match store
-        .revoke_principal(
-            &id,
-            &body.reason,
-            body.expires_in_secs,
-            &by,
-            snap.config.overrides,
-            now_ms,
-        )
-        .await
-    {
+    let stored = match target {
+        Target::Credential => {
+            store
+                .revoke_principal(
+                    id,
+                    &body.reason,
+                    body.expires_in_secs,
+                    &by,
+                    snap.config.overrides,
+                    now_ms,
+                )
+                .await
+        }
+        Target::Key => {
+            store
+                .revoke_key(
+                    id,
+                    &body.reason,
+                    body.expires_in_secs,
+                    &by,
+                    snap.config.overrides,
+                    now_ms,
+                )
+                .await
+        }
+    };
+    match stored {
         Ok(revocation) => {
             tracing::warn!(
-                credential = %id,
+                subject = %id,
                 by = %by,
                 expires_ms = revocation.expires_ms,
-                "admin credential revoked"
+                "{} revoked",
+                target.noun()
             );
             (
                 StatusCode::CREATED,
                 Json(json!({
-                    "credential": revocation.principal,
+                    target.field(): revocation.principal,
                     "revoked": true,
                     "created_by": revocation.created_by,
                     "expires_ms": revocation.expires_ms,
@@ -517,28 +638,43 @@ async fn revoke_credential(
 
 /// Ends the revocation of a credential before it expires.
 async fn end_revocation(
-    State(state): State<Arc<AppState>>,
+    state: State<Arc<AppState>>,
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Response {
-    let principal = match authorize(&state, &headers, Some(AdminScope::Credentials)) {
+    end(&state.0, &headers, &id, Target::Credential).await
+}
+
+/// Ends the revocation of a client key before it expires.
+async fn end_key_revocation(
+    state: State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Response {
+    end(&state.0, &headers, &id, Target::Key).await
+}
+
+async fn end(state: &AppState, headers: &HeaderMap, id: &str, target: Target) -> Response {
+    let principal = match authorize(state, headers, Some(AdminScope::Credentials)) {
         Ok(principal) => principal,
         Err(denied) => return denied.into_response(),
     };
     let by = principal.audit_name();
+    let now_ms = state.clock.now_ms();
     let ended = match &state.overrides {
-        Some(store) => store
-            .end_revocations(&id, &by, state.clock.now_ms())
-            .await
-            .unwrap_or_else(|error| {
-                tracing::error!(%error, "could not end a revocation");
-                false
-            }),
+        Some(store) => match target {
+            Target::Credential => store.end_revocations(id, &by, now_ms).await,
+            Target::Key => store.end_key_revocations(id, &by, now_ms).await,
+        }
+        .unwrap_or_else(|error| {
+            tracing::error!(%error, "could not end a revocation");
+            false
+        }),
         None => false,
     };
     if ended {
-        tracing::warn!(credential = %id, by = %by, "admin credential revocation ended");
-        Json(json!({"credential": id, "revoked": false})).into_response()
+        tracing::warn!(subject = %id, by = %by, "{} revocation ended", target.noun());
+        Json(json!({target.field(): id, "revoked": false})).into_response()
     } else {
         fail(
             StatusCode::NOT_FOUND,

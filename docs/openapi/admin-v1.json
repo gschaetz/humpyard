@@ -1245,6 +1245,211 @@
         }
       }
     },
+    "/admin/v1/keys/{id}/revoke": {
+      "post": {
+        "operationId": "revokeKey",
+        "summary": "Revoke a client key for a bounded time",
+        "security": [
+          {
+            "adminBearer": [
+              "credentials"
+            ]
+          }
+        ],
+        "x-error-codes": [
+          "admin_credential_invalid",
+          "admin_scope_required",
+          "invalid_revocation",
+          "overrides_need_ledger",
+          "already_revoked",
+          "ledger_error"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "The client key to revoke, by its id in `[keys.*]`.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RevokeRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The revocation now in force.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KeyRevocation"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, unknown, expired or revoked credential. One shape for every reason.",
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "Bearer"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "A valid credential without the scope the operation needs; `error.scope` names it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Not a client key of the configuration, a missing reason, or an expiry beyond the maximum.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Already revoked, or no ledger is configured.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The revocation could not be stored.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "description": "Retires a leaked client key without a deploy. The key is refused on its next request with the same 401 as a key the gateway never knew. An audited, expiring record that only removes access: it is not an override, no override endpoint lists or ends it, and it ends when it expires or is removed here. Deleting the key from the configuration is the permanent step."
+      },
+      "delete": {
+        "operationId": "endKeyRevocation",
+        "summary": "End a client key revocation before it expires",
+        "security": [
+          {
+            "adminBearer": [
+              "credentials"
+            ]
+          }
+        ],
+        "x-error-codes": [
+          "admin_credential_invalid",
+          "admin_scope_required",
+          "revocation_not_found"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "The client key whose revocation to end.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The revocation has ended.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "key": {
+                      "type": "string"
+                    },
+                    "revoked": {
+                      "type": "boolean",
+                      "enum": [
+                        false
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, unknown, expired or revoked credential. One shape for every reason.",
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "Bearer"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "A valid credential without the scope the operation needs; `error.scope` names it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No revocation is in force for that credential.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/admin/v1/overrides": {
       "get": {
         "operationId": "listOverrides",
@@ -1712,6 +1917,29 @@
         "type": "object",
         "properties": {
           "credential": {
+            "type": "string"
+          },
+          "revoked": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          },
+          "created_by": {
+            "type": "string"
+          },
+          "expires_ms": {
+            "type": "integer"
+          },
+          "expires_in_secs": {
+            "type": "integer"
+          }
+        }
+      },
+      "KeyRevocation": {
+        "type": "object",
+        "properties": {
+          "key": {
             "type": "string"
           },
           "revoked": {

@@ -43,7 +43,10 @@ use crate::ledger::{AppliedOverride, CeilingRemoved, CostCeiling, Decision, Inca
 use crate::limiter::{Limiters, Permit, Refusal};
 use crate::metering::{Accounting, CALL_ID_HEADER, CallContext, StreamTemplate};
 use crate::num::f64_from_u64;
-use crate::overrides::{Drains, LedgerOverrides, NoDrains, Override, OverrideStore, StoreDrains};
+use crate::overrides::{
+    Drains, LedgerOverrides, NoDrains, NoRevokedKeys, Override, OverrideStore, RevokedKeys,
+    StoreDrains, StoreRevokedKeys,
+};
 use crate::policy::{
     All, AllowAll, BudgetState, KeyContext, PolicyContext, RequestMeta, RoutingPolicy,
 };
@@ -51,6 +54,7 @@ use crate::pool::{self, PROVIDER_HEADER, TargetClient};
 use crate::routing::{Plan, Route, Routes};
 use crate::scrub;
 use crate::select::{Facts, Features, Selectors};
+use async_trait::async_trait;
 
 const TARGET_HEADER: &str = "x-humpyard-target";
 const TOKEN_COUNT_HEADER: &str = "x-humpyard-token-count";
@@ -74,6 +78,31 @@ const ROUTE_HEADER: &str = "x-humpyard-route";
 const RULE_HEADER: &str = "x-humpyard-rule";
 /// Response header carrying the request's id, which also marks its usage rows and its decision.
 const REQUEST_ID_HEADER: &str = "x-humpyard-request-id";
+
+/// A key store that refuses a key while it is revoked, exactly as it refuses a key it has never known: the caller
+/// cannot tell the two apart.
+struct RevocableKeys {
+    inner: Arc<dyn KeyStore>,
+    revoked: Arc<dyn RevokedKeys>,
+}
+
+impl RevocableKeys {
+    fn new(inner: Arc<dyn KeyStore>, revoked: Arc<dyn RevokedKeys>) -> Self {
+        Self { inner, revoked }
+    }
+}
+
+#[async_trait]
+impl KeyStore for RevocableKeys {
+    fn enforces_auth(&self) -> bool {
+        self.inner.enforces_auth()
+    }
+
+    async fn lookup(&self, hash: &[u8; 32]) -> Option<KeyRecord> {
+        let record = self.inner.lookup(hash).await?;
+        (!self.revoked.key_revoked(&record.id)).then_some(record)
+    }
+}
 
 /// Everything derived from the config file. It is replaced whole on a reload (ADR 0012): a request
 /// takes the current snapshot once and uses it to the end, so rules never change under it.
@@ -107,6 +136,8 @@ pub struct AppState {
     overrides: Option<Arc<dyn OverrideStore>>,
     /// The providers those overrides drain, read by every target's client; kept across reloads.
     drains: Arc<dyn Drains>,
+    /// The client keys revoked at runtime, read by authentication; kept across reloads.
+    revoked_keys: Arc<dyn RevokedKeys>,
     /// Operational metrics, served at `/metrics` when enabled (ADR 0016).
     metrics: Arc<crate::metrics::Metrics>,
     /// The embedder's policy; it is composed with the budget policy of every snapshot.
@@ -390,6 +421,7 @@ fn try_reload(state: &AppState, path: &std::path::Path) -> Result<String, String
         &state.clock,
         &state.extra_policy,
         &state.drains,
+        &state.revoked_keys,
         Some(&current),
         fingerprint.clone(),
     )?;
@@ -496,6 +528,7 @@ impl Snapshot {
         clock: &Arc<dyn Clock>,
         extra_policy: &Arc<dyn RoutingPolicy>,
         drains: &Arc<dyn Drains>,
+        revoked_keys: &Arc<dyn RevokedKeys>,
         previous: Option<&Snapshot>,
         fingerprint: String,
     ) -> Result<Self, String> {
@@ -507,7 +540,10 @@ impl Snapshot {
         ]));
         Ok(Self {
             selectors: Selectors::new(&config.select),
-            keys: Arc::new(ConfigKeyStore::new(&config.keys)),
+            keys: Arc::new(RevocableKeys::new(
+                Arc::new(ConfigKeyStore::new(&config.keys)),
+                revoked_keys.clone(),
+            )),
             limiters: match previous {
                 Some(p) => p.limiters.reloaded(&config.keys),
                 None => Limiters::new(clock.clone(), &config.keys),
@@ -659,9 +695,16 @@ fn overridden_report(removed: &[Overridden]) -> serde_json::Value {
 async fn open_overrides(
     ledger: Option<&Ledger>,
     clock: &Arc<dyn Clock>,
-) -> Result<(Option<Arc<dyn OverrideStore>>, Arc<dyn Drains>), String> {
+) -> Result<
+    (
+        Option<Arc<dyn OverrideStore>>,
+        Arc<dyn Drains>,
+        Arc<dyn RevokedKeys>,
+    ),
+    String,
+> {
     let Some(ledger) = ledger else {
-        return Ok((None, Arc::new(NoDrains)));
+        return Ok((None, Arc::new(NoDrains), Arc::new(NoRevokedKeys)));
     };
     let store: Arc<dyn OverrideStore> = Arc::new(
         LedgerOverrides::open(ledger.override_db(), clock.now_ms())
@@ -669,7 +712,8 @@ async fn open_overrides(
             .map_err(|e| e.to_string())?,
     );
     let drains = Arc::new(StoreDrains::new(store.clone(), clock.clone()));
-    Ok((Some(store), drains))
+    let revoked = Arc::new(StoreRevokedKeys::new(store.clone(), clock.clone()));
+    Ok((Some(store), drains, revoked))
 }
 
 /// Opens the ledger the configuration names, if any.
@@ -692,7 +736,7 @@ async fn build(config: Config, options: Options, fingerprint: String) -> Result<
     let clock: Arc<dyn Clock> = options.clock.unwrap_or_else(|| Arc::new(SystemClock));
     let extra_policy: Arc<dyn RoutingPolicy> = options.policy.unwrap_or_else(|| Arc::new(AllowAll));
     let ledger = open_ledger(&config).await?;
-    let (overrides, drains) = open_overrides(ledger.as_ref(), &clock).await?;
+    let (overrides, drains, revoked_keys) = open_overrides(ledger.as_ref(), &clock).await?;
     let tracker = (!config.keys.is_empty())
         .then(|| Arc::new(BudgetTracker::new(clock.clone(), &config.budget)));
     if let (Some(tracker), Some(ledger)) = (&tracker, &ledger) {
@@ -707,7 +751,15 @@ async fn build(config: Config, options: Options, fingerprint: String) -> Result<
     let accounting = Arc::new(
         Accounting::new(ledger, clock.clone(), tracker.clone()).with_metrics(metrics.clone()),
     );
-    let snapshot = Snapshot::build(config, &clock, &extra_policy, &drains, None, fingerprint)?;
+    let snapshot = Snapshot::build(
+        config,
+        &clock,
+        &extra_policy,
+        &drains,
+        &revoked_keys,
+        None,
+        fingerprint,
+    )?;
     let (hard_stop_tx, hard_stop) = watch::channel(false);
     let state = Arc::new(AppState {
         heavy: options.heavy_reads.unwrap_or_default(),
@@ -719,6 +771,7 @@ async fn build(config: Config, options: Options, fingerprint: String) -> Result<
         quota: Arc::new(crate::quota::QuotaStore::default()),
         overrides,
         drains,
+        revoked_keys,
         metrics,
         extra_policy,
         config_path,

@@ -133,6 +133,7 @@ async fn produce(state: &AppState, body: Body) -> Result<Answer, Refused> {
         &state.clock,
         &state.extra_policy,
         &state.drains,
+        &state.revoked_keys,
         None,
         fingerprint.clone(),
     )
