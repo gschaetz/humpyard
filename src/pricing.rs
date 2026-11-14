@@ -37,6 +37,53 @@ pub fn cost_micro_usd(usage: &Usage, price: &Price) -> u64 {
     u64_from_f64_rounded(micro)
 }
 
+/// The cost of token sums at an untiered `price`, in micro-USD (fractional), by the same rules as
+/// [`cost_micro_usd`]: `input` is the fresh input plus the cache-creation tokens (billed at the input price), `cached`
+/// the cache reads (the cached price, or the input price when none is set), `output` the output tokens (reasoning
+/// included). With no tiers the cost is linear in the counts, so it can be had from sums instead of per call: pricing
+/// one call here and in [`cost_micro_usd`] gives the same figure, and over many calls it differs from a sum of
+/// per-call roundings by at most half a micro-USD a call.
+pub fn linear_cost_micro_usd(price: &Price, input: u64, cached: u64, output: u64) -> f64 {
+    f64_from_u64(input) * price.input
+        + f64_from_u64(cached) * price.cached_input.unwrap_or(price.input)
+        + f64_from_u64(output) * price.output
+}
+
+/// Why a name cannot be a baseline (`add-baseline-cost`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BaselineRefusal {
+    /// No target of the configuration uses an endpoint of that name.
+    Unknown,
+    /// The endpoint has no price.
+    NoPrice,
+    /// The price has tiers, so a call's cost depends on its prompt size and sums cannot give it.
+    Tiered,
+}
+
+/// The price of the endpoint named `name` (`provider/model`) among `endpoints` (provider, model, price), the first
+/// that names it winning, or why it cannot be a baseline.
+///
+/// # Errors
+/// [`BaselineRefusal`] when no endpoint has that name, it has no price, or its price has tiers.
+pub fn baseline_price<'a>(
+    mut endpoints: impl Iterator<Item = (&'a str, &'a str, Option<&'a Price>)>,
+    name: &str,
+) -> Result<&'a Price, BaselineRefusal> {
+    let (_, _, price) = endpoints
+        .find(|(provider, model, _)| {
+            name.strip_prefix(*provider)
+                .and_then(|rest| rest.strip_prefix('/'))
+                .is_some_and(|rest| rest == *model)
+        })
+        .ok_or(BaselineRefusal::Unknown)?;
+    let price = price.ok_or(BaselineRefusal::NoPrice)?;
+    if price.tiers.is_empty() {
+        Ok(price)
+    } else {
+        Err(BaselineRefusal::Tiered)
+    }
+}
+
 /// A lower bound on what a request costs at `price`, in micro-USD (fractional): `prompt_low` tokens at the
 /// lowest input rate and `output` tokens at the lowest output rate, over the base price and every tier.
 /// It can only under-count, so a request whose bound exceeds a ceiling is certain to exceed it.
@@ -81,6 +128,91 @@ mod tests {
     fn spec_example_costs_three_thousandths_of_a_dollar() {
         // 1,000 input at $1/M plus 500 output at $4/M is $0.003 = 3,000 micro-USD.
         assert_eq!(cost_micro_usd(&usage(1_000, 500), &PRICE), 3_000);
+    }
+
+    #[test]
+    fn the_linear_cost_of_one_call_is_the_cost_of_that_call() {
+        let mut u = usage(1_234, 567);
+        u.cache = Some(Box::new(InputCacheUsage {
+            cached_input_tokens: Some(8_000),
+            cache_creation_input_tokens: Some(300),
+        }));
+        let cheap = Price {
+            cached_input: Some(0.1),
+            ..PRICE
+        };
+        for price in [&PRICE, &cheap] {
+            // input = fresh + cache creation, cached = cache reads, as the ledger sums them.
+            let linear = linear_cost_micro_usd(price, 1_234 + 300, 8_000, 567);
+            assert_eq!(
+                u64_from_f64_rounded(linear),
+                cost_micro_usd(&u, price),
+                "{price:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_linear_cost_of_sums_is_the_sum_of_the_costs_to_within_a_half_micro_usd_a_call() {
+        let calls = [
+            (10_u64, 3_u64, 2_u64),
+            (999, 0, 41),
+            (5, 5_000, 7),
+            (1, 1, 1),
+        ];
+        let mut each = 0_u64;
+        let (mut input, mut cached, mut output) = (0, 0, 0);
+        for (i, c, o) in calls {
+            let mut u = usage(i, o);
+            u.cache = Some(Box::new(InputCacheUsage {
+                cached_input_tokens: Some(c),
+                cache_creation_input_tokens: None,
+            }));
+            each += cost_micro_usd(&u, &PRICE);
+            (input, cached, output) = (input + i, cached + c, output + o);
+        }
+        let whole = linear_cost_micro_usd(&PRICE, input, cached, output);
+        assert!((whole - f64_from_u64(each)).abs() <= 0.5 * f64_from_u64(calls.len() as u64));
+    }
+
+    #[test]
+    fn a_baseline_is_a_priced_endpoint_without_tiers() {
+        let plain = PRICE;
+        let tiers = tiered();
+        let endpoints = || {
+            [
+                ("openai", "gpt-big", Some(&plain)),
+                ("groq", "llama", None),
+                ("anthropic", "claude-big", Some(&tiers)),
+                ("meta", "x/y", Some(&plain)),
+            ]
+            .into_iter()
+        };
+        assert_eq!(baseline_price(endpoints(), "openai/gpt-big"), Ok(&plain));
+        assert_eq!(baseline_price(endpoints(), "meta/x/y"), Ok(&plain));
+        assert_eq!(
+            baseline_price(endpoints(), "groq/llama"),
+            Err(BaselineRefusal::NoPrice)
+        );
+        assert_eq!(
+            baseline_price(endpoints(), "anthropic/claude-big"),
+            Err(BaselineRefusal::Tiered)
+        );
+        for unknown in [
+            "",
+            "openai",
+            "openai/",
+            "openai/gpt",
+            "gpt-big",
+            "OPENAI/gpt-big",
+            "x/y",
+        ] {
+            assert_eq!(
+                baseline_price(endpoints(), unknown),
+                Err(BaselineRefusal::Unknown),
+                "{unknown:?}"
+            );
+        }
     }
 
     #[test]
