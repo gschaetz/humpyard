@@ -17,7 +17,7 @@ HUMPYARD=/path/to/humpyard examples/demo/run.sh
 ```
 
 It sends the same 11 requests twice, once all to one big model and once as `auto`, and compares
-the cost from the ledger. The tokens are from a mock provider and the percentage depends on the
+the cost from the ledger. (On your own traffic you do not need two keys: [ask for a baseline](#what-would-it-have-cost).) The tokens are from a mock provider and the percentage depends on the
 demo's prices and mix, so treat it as a demonstration of the mechanism, not a promise ([what the
 demo does not show](demo.md#what-it-does-not-show)).
 
@@ -68,6 +68,33 @@ Budgets fail closed: a key over its cap is refused, not billed.
 humpyard ctl stats          # cost, tokens and latency per route, target and endpoint
 curl localhost:8080/v1/stats -H "Authorization: Bearer $KEY"
 ```
+
+### What would it have cost?
+
+The quickest way to see whether the split saved anything is to ask the gateway to price the same traffic at the model you
+would otherwise have used for everything. That needs an admin credential with the `read` scope
+(`humpyard keygen ops --admin --scopes read`, see [the admin API](api.md#the-admin-api)) and the name of that model as
+your config has it, `provider/model`:
+
+```sh
+curl "$GATEWAY/admin/v1/stats?window=7d&group_by=route&baseline=paid/capable-large" \
+  -H "Authorization: Bearer $ADMIN"
+```
+
+Every group, and a `summary` of all of them, now says what its answered calls would have cost at that model's prices,
+what they cost, and the difference. For the demo above (a mock provider and the demo's prices) it reads like this, with
+the free route saving all of its baseline cost and the tool turns, which went to the baseline model itself, saving none:
+
+```json
+"summary": {"baseline_cost_usd": 0.01788, "cost_usd": 0.0123, "saved_usd": 0.00558, "saved_ratio": 0.312,
+            "calls_priced": 8, "calls_left_out": 0}
+```
+
+Read it as what it is. It takes the tokens the calls used, not the tokens the baseline model would have used (another
+model counts differently), and it says nothing about whether the baseline model would have answered as well; it is an
+arithmetic comparison, and the answer states that in `baseline.basis`. Calls whose provider reported no usage are left out
+and counted, and `saved_usd` is negative when the baseline would have been cheaper. Pick the baseline honestly: the model
+you would really have used for everything. [The API guide](api.md#what-the-traffic-would-have-cost) has the details.
 
 Compare a week on the split with a week without it on your own traffic. Small models are not
 equal at agent work (see the note on model quality on the [clients page](clients.md)), so also watch
