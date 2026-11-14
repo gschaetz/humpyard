@@ -114,5 +114,5 @@ async fn a_v12_file_is_upgraded_reads_old_rows_as_unknown_and_takes_new_ones() {
         .fetch_one(&mut conn)
         .await
         .unwrap();
-    assert_eq!(version, 13);
+    assert_eq!(version, 14);
 }

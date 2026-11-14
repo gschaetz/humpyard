@@ -34,7 +34,7 @@ pub use series::{Bucket, GroupSeries, MAX_BUCKETS, Series, SeriesQuery};
 pub use sessions::{SessionQuery, SessionScan, SessionStats, Switch};
 pub use stats::{GroupBy, GroupStats, SignalCounts, Stats, StatsQuery, TokenTotals, percentile};
 
-const SCHEMA_VERSION: i64 = 13;
+const SCHEMA_VERSION: i64 = 14;
 /// How often the writer deletes decisions past their retention.
 const PRUNE_EVERY: std::time::Duration = std::time::Duration::from_secs(3600);
 /// Decision retention when none is given, in days.
@@ -744,6 +744,10 @@ async fn migrate(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     if version < 13 {
         // v13 (`record-response-quality-signals`): four facts about each answer. Old rows read as unknown.
         migrate_v13(pool).await?;
+    }
+    if version < 14 {
+        // v14 (`add-actors`): the actor and owner each decision was made under. Old rows read as none.
+        decisions::migrate_v14(pool).await?;
     }
     if version < SCHEMA_VERSION {
         // PRAGMA does not take bound parameters; the value is a compile-time constant.

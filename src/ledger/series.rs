@@ -166,7 +166,7 @@ mod tests {
             .await
             .unwrap();
         sqlx::query(
-            "CREATE TABLE decisions (route TEXT, attempts TEXT, ts_ms INTEGER, key_id TEXT)",
+            "CREATE TABLE decisions (route TEXT, actor TEXT, owner TEXT, attempts TEXT, ts_ms INTEGER, key_id TEXT)",
         )
         .execute(&pool)
         .await
@@ -178,13 +178,15 @@ mod tests {
                     serde_json::json!({"target": target, "provider": "p", "model": target, "outcome": outcome, "ms": ms})
                 })
                 .collect();
-            sqlx::query("INSERT INTO decisions VALUES (?1, ?2, ?3, NULL)")
-                .bind(route)
-                .bind(serde_json::Value::Array(attempts).to_string())
-                .bind(ts)
-                .execute(&pool)
-                .await
-                .unwrap();
+            sqlx::query(
+                "INSERT INTO decisions (route, attempts, ts_ms, key_id) VALUES (?1, ?2, ?3, NULL)",
+            )
+            .bind(route)
+            .bind(serde_json::Value::Array(attempts).to_string())
+            .bind(ts)
+            .execute(&pool)
+            .await
+            .unwrap();
         }
         pool
     }

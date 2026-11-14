@@ -57,7 +57,7 @@ pub(super) async fn stats_view(
             "stats",
             key.as_deref(),
             params,
-            stats_answer(state, snap, params, key.clone()),
+            stats_answer(state, snap, params, key.clone(), surface),
         )
         .await
 }
@@ -68,6 +68,7 @@ async fn stats_answer(
     snap: &super::Snapshot,
     params: &HashMap<String, String>,
     key: Option<String>,
+    surface: Surface,
 ) -> Result<Response, Busy> {
     let format = WireFormat::OpenAiChat;
     let Some(ledger) = state.accounting.ledger() else {
@@ -80,7 +81,7 @@ async fn stats_answer(
     if params.get("group_by").is_some_and(|g| g == "session") {
         return super::sessions::sessions_view(state, key, params, longest).await;
     }
-    let query = match parse(params, key, state.clock.now_ms(), longest) {
+    let query = match parse(params, key, state.clock.now_ms(), longest, surface) {
         Ok(query) => query,
         Err(message) => {
             return Ok(GatewayError::BadRequest(message).into_response_for(format));
@@ -139,6 +140,7 @@ fn parse(
     key: Option<String>,
     now_ms: i64,
     longest_ms: i64,
+    surface: Surface,
 ) -> Result<StatsQuery, String> {
     for name in params.keys() {
         if !["window", "group_by", "route", "target"].contains(&name.as_str()) {
@@ -153,10 +155,15 @@ fn parse(
         None | Some("route") => GroupBy::Route,
         Some("target") => GroupBy::Target,
         Some("endpoint") => GroupBy::Endpoint,
+        // A client key sees only its own calls, so grouping them by actor or owner could add nothing.
+        Some("actor") if surface == Surface::Admin => GroupBy::Actor,
+        Some("owner") if surface == Surface::Admin => GroupBy::Owner,
         Some(other) => {
-            return Err(format!(
-                "`group_by` must be route, target or endpoint, not `{other}`"
-            ));
+            return Err(if surface == Surface::Admin {
+                format!("`group_by` must be route, target, endpoint, actor or owner, not `{other}`")
+            } else {
+                format!("`group_by` must be route, target or endpoint, not `{other}`")
+            });
         }
     };
     Ok(StatsQuery {

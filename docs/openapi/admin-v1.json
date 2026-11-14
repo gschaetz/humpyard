@@ -615,7 +615,7 @@
             "name": "group_by",
             "in": "query",
             "required": false,
-            "description": "`route` (default), `target` or `endpoint`.",
+            "description": "`route` (default), `target`, `endpoint`, `actor` or `owner`. The last two count by who the key was for (the actor it names, or the person that actor acts for); calls with none are the group `(none)`.",
             "schema": {
               "type": "string"
             }
@@ -787,7 +787,7 @@
             "name": "group_by",
             "in": "query",
             "required": false,
-            "description": "`route` (default), `target` or `endpoint`.",
+            "description": "`route` (default), `target`, `endpoint`, `actor` or `owner`. The last two count by who the key was for (the actor it names, or the person that actor acts for); calls with none are the group `(none)`.",
             "schema": {
               "type": "string"
             }
@@ -1799,6 +1799,16 @@
             "type": "string",
             "nullable": true,
             "description": "The client key the request came in with."
+          },
+          "actor": {
+            "type": "string",
+            "nullable": true,
+            "description": "The actor the key named when the request was made; null when it named none."
+          },
+          "owner": {
+            "type": "string",
+            "nullable": true,
+            "description": "The person the request's usage rolls up to: the actor's owner for an agent, the actor itself for a human. Null when there is none."
           },
           "route": {
             "type": "string",

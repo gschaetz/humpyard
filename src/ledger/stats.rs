@@ -19,7 +19,14 @@ pub enum GroupBy {
     Target,
     /// The provider and model an attempt was made on, as `provider/model`.
     Endpoint,
+    /// The actor the request's key names (`add-actors`); requests of a key with none are the group `(none)`.
+    Actor,
+    /// The person the request's key rolls up to: its actor's owner, or the human itself for a human's own key.
+    Owner,
 }
+
+/// The group of requests that no actor (or owner) is recorded for.
+pub const NO_ACTOR: &str = "(none)";
 
 /// Which decisions to summarize. `key` is applied by the caller's identity, never by the client.
 #[derive(Clone, Debug)]
@@ -168,7 +175,7 @@ pub(super) async fn decision_rows(
     q: &StatsQuery,
 ) -> Result<Vec<sqlx::sqlite::SqliteRow>, LedgerError> {
     Ok(sqlx::query(
-        "SELECT route, attempts, ts_ms FROM decisions WHERE ts_ms >= ?1 AND (?2 IS NULL OR key_id = ?2) \
+        "SELECT route, actor, owner, attempts, ts_ms FROM decisions WHERE ts_ms >= ?1 AND (?2 IS NULL OR key_id = ?2) \
          AND (?3 IS NULL OR route = ?3) AND route IS NOT NULL ORDER BY ts_ms DESC LIMIT ?4",
     )
     .bind(q.since_ms)
@@ -250,8 +257,15 @@ pub(super) fn accumulate(
             .filter(|a| q.target.as_ref().is_none_or(|t| &a.target == t))
             .collect();
         match q.group_by {
-            GroupBy::Route => {
-                let entry = acc.entry((route, bucket)).or_default();
+            GroupBy::Route | GroupBy::Actor | GroupBy::Owner => {
+                // One group per request: its route, or the actor or owner it was made under.
+                let group = match q.group_by {
+                    GroupBy::Actor => row.get::<Option<String>, _>("actor"),
+                    GroupBy::Owner => row.get::<Option<String>, _>("owner"),
+                    _ => Some(route),
+                }
+                .unwrap_or_else(|| NO_ACTOR.to_string());
+                let entry = acc.entry((group, bucket)).or_default();
                 entry.requests += 1;
                 entry.fallbacks += u64::from(attempts.len() > 1);
                 for a in &in_scope {
@@ -309,8 +323,15 @@ async fn cost_by_group(
         GroupBy::Route => "route",
         GroupBy::Target => "target",
         GroupBy::Endpoint => "provider || '/' || model",
+        // A usage row has no actor of its own; its decision (the same request id) does.
+        GroupBy::Actor => {
+            "COALESCE((SELECT d.actor FROM decisions d WHERE d.request_id = usage.request_id), '(none)')"
+        }
+        GroupBy::Owner => {
+            "COALESCE((SELECT d.owner FROM decisions d WHERE d.request_id = usage.request_id), '(none)')"
+        }
     };
-    // `column` is one of three constants above and `KNOWN` a constant, never client input.
+    // `column` is one of the constants above and `KNOWN` a constant, never client input.
     let sql = format!(
         "SELECT {column} AS g, COUNT(*) AS answered, SUM(cost_micro_usd) AS cost, \
          SUM(input_tokens + cached_input_tokens + cache_creation_tokens + output_tokens) AS tokens, \
@@ -369,7 +390,7 @@ mod tests {
     /// fallback, two minutes apart, so a one-minute bucket separates them.
     async fn window() -> Vec<sqlx::sqlite::SqliteRow> {
         let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query("CREATE TABLE decisions (route TEXT, attempts TEXT, ts_ms INTEGER)")
+        sqlx::query("CREATE TABLE decisions (route TEXT, actor TEXT, owner TEXT, attempts TEXT, ts_ms INTEGER)")
             .execute(&pool)
             .await
             .unwrap();
@@ -383,7 +404,7 @@ mod tests {
             (130_000, vec![attempt("b", "ok", 300)]),
         ];
         for (ts, attempts) in rows {
-            sqlx::query("INSERT INTO decisions VALUES ('r', ?1, ?2)")
+            sqlx::query("INSERT INTO decisions (route, attempts, ts_ms) VALUES ('r', ?1, ?2)")
                 .bind(serde_json::Value::Array(attempts).to_string())
                 .bind(ts)
                 .execute(&pool)

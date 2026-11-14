@@ -325,6 +325,10 @@ export interface components {
             ts_ms: number;
             /** @description The client key the request came in with. */
             key?: string | null;
+            /** @description The actor the key named when the request was made; null when it named none. */
+            actor?: string | null;
+            /** @description The person the request's usage rolls up to: the actor's owner for an agent, the actor itself for a human. Null when there is none. */
+            owner?: string | null;
             route: string | null;
             outcome: string;
             status: number;
@@ -822,7 +826,7 @@ export interface operations {
                 key?: string;
                 /** @description How far back, for example `1h` or `7d`. */
                 window?: string;
-                /** @description `route` (default), `target` or `endpoint`. */
+                /** @description `route` (default), `target`, `endpoint`, `actor` or `owner`. The last two count by who the key was for (the actor it names, or the person that actor acts for); calls with none are the group `(none)`. */
                 group_by?: string;
                 /** @description Only this route. */
                 route?: string;
@@ -901,7 +905,7 @@ export interface operations {
                 key?: string;
                 /** @description How far back, for example `6h` or `7d`; default `24h`; at most the days of decisions kept. A longer window is a 400 naming `window`. */
                 window?: string;
-                /** @description `route` (default), `target` or `endpoint`. */
+                /** @description `route` (default), `target`, `endpoint`, `actor` or `owner`. The last two count by who the key was for (the actor it names, or the person that actor acts for); calls with none are the group `(none)`. */
                 group_by?: string;
                 /** @description Only this route. */
                 route?: string;
