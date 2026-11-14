@@ -164,7 +164,7 @@ as text; some of them are chosen by whoever holds a client key.
 
     ```sh
     docker run -d --name humpyard-ui -p 127.0.0.1:8787:8787 \
-      ghcr.io/gschaetz/humpyard:0.31.0 \
+      ghcr.io/gschaetz/humpyard:0.32.0 \
       ui --url https://gateway.example --listen 0.0.0.0:8787 --allow-host localhost:8787
     ```
 
