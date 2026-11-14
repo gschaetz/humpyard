@@ -1,6 +1,6 @@
 # 0037. An actor names who a key is for and grants nothing
 
-- Status: proposed
+- Status: accepted
 - Date: 2026-11-12
 - Supersedes: none (refines [0025](0025-the-ui-has-no-state-of-its-own.md): it said keys could one day be credentials owned in the database; this says what owns a key and what that ownership means)
 - Change: `openspec/changes/add-actors`

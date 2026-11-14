@@ -151,6 +151,25 @@ availability and to the record, so they are checked by tests and measurements; t
 | A CPU limit of one core or less lets heavy reads raise request latency | None yet | **Gap:** measured in [Run 9](performance.md#run-9-the-fix-on-the-host-and-under-a-cpu-limit-2026-11-11) (0.5 CPU: 10.5 to 91 ms p99); the cluster gives the gateway 500m. Raising the limit or the separate-process escalation in the ADR closes it |
 | `GET /admin/v1/decisions?request_id=` scans without using the index | Limit-bounded; not a fold | **Gap:** recorded as an open finding in [Performance and scale](performance.md) |
 
+### B10: who a key is for (actors)
+
+An actor says who a key is for: a person or an agent, with the person an agent acts for as its owner
+([ADR 0037](adr/0037-an-actor-names-who-a-key-is-for-and-grants-nothing.md)). (These are not the threat actors listed
+above.) An actor is a label, so the threats are to authority and to the record: a label that quietly becomes a
+permission, a caller who chooses who they are, and a leaked key that cannot be retired quickly.
+
+| Threat | Mitigation | Enforced by |
+|---|---|---|
+| A label becomes a permission: a policy, limiter or route rule starts reading an actor or owner | An actor grants and removes nothing; a key's authority comes only from the key and its profile; no module outside the attribution code may name one | Invariant 25; `tests/architecture.rs` (`no_module_reads_an_actor_or_an_owner_to_decide_anything`, with samples that break it); `tests/actors.rs` (`an_actor_changes_nothing_a_key_may_do`) |
+| A caller chooses its own actor or owner, or has its usage attributed to someone else | The actor comes only from the key's entry in the file; no header, field or user tag in a request is read for it | The architecture rule above (no request-path code reads one); `tests/actors.rs` |
+| A key names an actor that does not exist, or an owner that is not a person | Refused when the configuration loads, naming the table and field | `config::tests` (the actor tests) |
+| A leaked client key stays usable until the next deploy | `POST /admin/v1/keys/{id}/revoke` in the `credentials` scope: an audited, expiring record that only removes access, effective on the next request; deleting the key from the file is the permanent step | `tests/key_revoke.rs` |
+| A refusal tells a thief whether a key exists or was revoked | A revoked key is refused with the same 401 and body as an unknown one | `tests/key_revoke.rs` (`a_revoked_key_is_refused_byte_for_byte_like_a_key_the_gateway_never_knew`) |
+| A client key, or a credential with only the `overrides` scope, revokes keys or ends a revocation | The scope is `credentials`; a client key never reaches the admin API; a revocation is not an override and the override endpoints cannot end it | `tests/key_revoke.rs`; `tests/architecture.rs` (`only_the_override_store_the_admin_api_and_the_scrape_touch_revocations`) |
+| An owner change rewrites history, or a client key reads other keys' usage by actor | Decisions record the ids as they were when the request was made; the client statistics do not accept `group_by=actor` or `owner` | `tests/actors.rs`, `tests/actor_attribution.rs` |
+| A key's secret or hash leaves in a view | The effective configuration, key info and decisions show ids only | `tests/actors.rs`, `tests/key_revoke.rs` |
+| A key revoked for a long time is forgotten | An expiry no later than the overrides maximum, so it ends by itself | **Gap:** there is no alert for a key revoked for hours, as `HumpyardAdminRevoked` is for an admin credential |
+
 ## Gaps, in the order I would close them
 
 1. **Report channel.** A security policy and private reporting ([SECURITY.md](https://github.com/gschaetz/humpyard/blob/main/SECURITY.md)). Done with this page.
@@ -163,3 +182,4 @@ availability and to the record, so they are checked by tests and measurements; t
 8. **Heavy reads under a CPU limit of one core or less.** Raise the gateway container's CPU limit to 2, or move heavy reads to a separate process working from a local snapshot of the ledger (ADR 0036). Until then the isolation test passes on the host and fails in a container limited to 1 CPU or less.
 9. **The decisions lookup by request id** uses a filter pattern that stops SQLite using its index (308 ms at 1M rows); rewrite the optional filters.
 10. **A per-credential rate limit on the admin API.** The heavy-read gate bounds how much work reads can do, but a `read` credential can still ask as fast as it likes, and the series (a heavier read) and the GUI's refreshing pages make repeated reads normal. Many visible GUI tabs add up on the gateway; there is no server-side limit.
+11. **An alert for a client key that stays revoked.** `humpyard_admin_revocations_active` and the `HumpyardAdminRevoked` rule cover admin credentials only; a key revocation has neither, so a key revoked and forgotten is quiet. Add a gauge and a rule like the admin ones.
