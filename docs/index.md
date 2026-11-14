@@ -50,3 +50,5 @@ sent to a public provider; or when you want one static binary with no Python ser
 Source, issues and releases: [github.com/gschaetz/humpyard](https://github.com/gschaetz/humpyard).
 Questions and feedback: [Discord](https://discord.gg/qfTGr7KTfq). Please never paste API keys or full configs in chat.
 Apache-2.0.
+
+This site counts page views with Cloudflare Web Analytics, which sets no cookies. It is not part of the gateway.
