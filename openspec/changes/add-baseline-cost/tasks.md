@@ -2,11 +2,11 @@
 
 ## 1. The sums the baseline needs
 
-- [ ] 1.1 Add the count of answered calls with known usage and the group's total cost to the usage aggregate of `ledger/stats.rs` and to `GroupStats`; verify with ledger tests that a group with some calls missing usage reports the right count and cost, and that the existing figures (average cost, tokens, signals) are unchanged
+- [x] 1.1 Add the count of answered calls with known usage and the group's total cost to the usage aggregate of `ledger/stats.rs` and to `GroupStats`; verify with ledger tests that a group with some calls missing usage reports the right count and cost, and that the existing figures (average cost, tokens, signals) are unchanged
 
 ## 2. Pricing a baseline
 
-- [ ] 2.1 Add the linear cost of a set of token sums at a price to `pricing.rs`, next to `cost_micro_usd` and by the same rules (cached price or input price, reasoning inside output), and the lookup of a baseline endpoint's price among the configured targets with the three refusals (unknown, no price, tiered); verify with unit tests, including that pricing one call with the new function equals `cost_micro_usd`
+- [x] 2.1 Add the linear cost of a set of token sums at a price to `pricing.rs`, next to `cost_micro_usd` and by the same rules (cached price or input price, reasoning inside output), and the lookup of a baseline endpoint's price among the configured targets with the three refusals (unknown, no price, tiered); verify with unit tests, including that pricing one call with the new function equals `cost_micro_usd`
 
 ## 3. The parameter and the answer
 

@@ -61,6 +61,11 @@ pub struct GroupStats {
     pub answered: u64,
     pub avg_cost_micro_usd: Option<f64>,
     pub avg_tokens: Option<f64>,
+    /// The group's answered calls whose provider reported usage: the calls `tokens` and a baseline cost are over.
+    pub usage_known: u64,
+    /// What the group's answered calls cost in all, in micro-USD. A call with no reported usage costs 0 in the
+    /// ledger, so this is the cost of the `usage_known` calls.
+    pub cost_micro_usd: u64,
     /// Token totals of the group's answered calls that reported usage (calls marked as missing
     /// usage are left out, so they cannot pull the cache ratio down).
     pub tokens: TokenTotals,
@@ -218,6 +223,8 @@ fn fold(
                 answered,
                 avg_cost_micro_usd: (answered > 0).then(|| ratio(cost, answered)),
                 avg_tokens: (answered > 0).then(|| ratio(tokens, answered)),
+                usage_known: sums.known,
+                cost_micro_usd: cost,
                 tokens: sums.totals,
                 signals: sums.signals,
                 group,
@@ -307,6 +314,8 @@ const KNOWN: &str = "empty_output IS NOT NULL AND truncated_output IS NOT NULL \
 #[derive(Clone, Copy, Debug, Default)]
 struct UsageSums {
     answered: u64,
+    /// Answered calls whose provider reported usage.
+    known: u64,
     cost: u64,
     tokens: u64,
     totals: TokenTotals,
@@ -334,6 +343,7 @@ async fn cost_by_group(
     // `column` is one of the constants above and `KNOWN` a constant, never client input.
     let sql = format!(
         "SELECT {column} AS g, COUNT(*) AS answered, SUM(cost_micro_usd) AS cost, \
+         SUM(CASE WHEN usage_missing = 0 THEN 1 ELSE 0 END) AS known, \
          SUM(input_tokens + cached_input_tokens + cache_creation_tokens + output_tokens) AS tokens, \
          SUM(CASE WHEN usage_missing = 0 THEN input_tokens ELSE 0 END) AS fresh, \
          SUM(CASE WHEN usage_missing = 0 THEN cached_input_tokens ELSE 0 END) AS cached, \
@@ -361,6 +371,7 @@ async fn cost_by_group(
                 r.get::<String, _>("g"),
                 UsageSums {
                     answered: from_i64(r.get::<i64, _>("answered")),
+                    known: from_i64(r.get::<i64, _>("known")),
                     cost: from_i64(r.get::<i64, _>("cost")),
                     tokens: from_i64(r.get::<i64, _>("tokens")),
                     totals: TokenTotals {
