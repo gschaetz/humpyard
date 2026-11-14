@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/preact";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError, type Client } from "./api/client";
-import { bucket, group, health, quietBucket, series, stats } from "./fixtures";
+import { bucket, config, group, health, quietBucket, series, stats, withBaseline } from "./fixtures";
 import { QueryView } from "./query-view";
 
 const none = () => undefined;
@@ -12,6 +12,7 @@ function client(over: Partial<Client> = {}): Client {
     contractVersion: () => Promise.reject(new Error("not used")),
     stats: () => Promise.resolve(stats(group("fast"))),
     series: () => Promise.resolve(series({ fast: [bucket(0), bucket(1), bucket(2)] })),
+    config: () => Promise.resolve({ targets: {} }),
     health: () => Promise.resolve(health({ name: "fast", states: ["healthy"], latency: 350 })),
     exchangeToken: () => Promise.reject(new Error("not used")),
     ...over,
@@ -346,5 +347,133 @@ describe("the ranking beside the table", () => {
     const rowsInTable = [...container.querySelectorAll("tbody tr")].map((r) => r.querySelector("th")?.textContent ?? "").filter((t) => t === "busy" || t === "failing");
     expect(bars).toEqual(["busy", "failing"]);
     expect(rowsInTable).toEqual(["failing", "busy"]);
+  });
+});
+
+describe("comparing the traffic with a baseline", () => {
+  const priced = config(
+    { name: "openai/big", price: { input: 3, output: 15 } },
+    { name: "groq/llama", price: null },
+    { name: "anthropic/tiered", price: { input: 3, output: 15, tiers: [{ above_tokens: 1 }] } },
+  );
+
+  /** A client whose statistics carry a baseline answer when asked for one, and records what it was asked. */
+  function asked() {
+    const calls: (string | undefined)[] = [];
+    const c = client({
+      config: () => Promise.resolve(priced),
+      stats: (query) => {
+        calls.push(query?.baseline);
+        return Promise.resolve(query?.baseline === undefined ? stats(group("fast")) : withBaseline(stats(group("fast")), { endpoint: query.baseline }));
+      },
+    });
+    return { c, calls };
+  }
+
+  it("offers only the priced endpoints without tiers, and no choice at all when there is none", async () => {
+    show(client({ config: () => Promise.resolve(priced) }));
+    const select = await screen.findByLabelText<HTMLSelectElement>("Compare with");
+    expect([...select.options].map((o) => o.value)).toEqual(["", "openai/big"]);
+    expect(select.options[1]?.textContent).toBe("openai/big ($3 in, $15 out)");
+    cleanup();
+    show(client({ config: () => Promise.resolve(config({ name: "a/b", price: null })) }));
+    await screen.findByRole("table");
+    expect(screen.queryByLabelText("Compare with")).toBeNull();
+  });
+
+  it("hides the choice, and changes nothing else, when the configuration cannot be read", async () => {
+    show(client({ config: () => Promise.reject(new ApiError(403, "admin_scope_required", "no")) }));
+    await screen.findByRole("table");
+    expect(screen.queryByLabelText("Compare with")).toBeNull();
+    expect(screen.queryByLabelText("What this traffic would have cost")).toBeNull();
+  });
+
+  it("reads the statistics again with the baseline when it is chosen, keeps it in the fragment and shows the strip", async () => {
+    const { c, calls } = asked();
+    show(c);
+    const select = await screen.findByLabelText<HTMLSelectElement>("Compare with");
+    expect(screen.queryByLabelText("What this traffic would have cost")).toBeNull();
+    fireEvent.change(select, { target: { value: "openai/big" } });
+    const strip = await screen.findByLabelText("What this traffic would have cost");
+    expect(strip.textContent).toContain("At openai/big ($3 in, $15 out per million) this traffic would have cost $0.018.");
+    expect(strip.textContent).toContain("estimate");
+    expect(window.location.hash).toContain("baseline=openai%2Fbig");
+    expect(calls).toContain("openai/big");
+    // And back to none: no strip, the fragment loses it.
+    fireEvent.change(select, { target: { value: "" } });
+    await waitFor(() => { expect(screen.queryByLabelText("What this traffic would have cost")).toBeNull(); });
+    expect(window.location.hash).not.toContain("baseline");
+  });
+
+  it("opens a shared link with an offered baseline and shows the figure", async () => {
+    window.history.replaceState(null, "", "#baseline=openai%2Fbig");
+    const { c } = asked();
+    show(c);
+    expect((await screen.findByLabelText("What this traffic would have cost")).textContent).toContain("openai/big");
+    expect(screen.getByLabelText<HTMLSelectElement>("Compare with").value).toBe("openai/big");
+  });
+
+  it("uses no baseline for a hostile or unoffered value and creates no element from it", async () => {
+    window.history.replaceState(null, "", "#baseline=%3Cscript%3Ealert(1)%3C/script%3E");
+    const { c, calls } = asked();
+    const { container } = show(c);
+    await screen.findByLabelText("Compare with");
+    await screen.findByRole("table");
+    expect(screen.getByLabelText<HTMLSelectElement>("Compare with").value).toBe("");
+    expect(screen.queryByLabelText("What this traffic would have cost")).toBeNull();
+    expect(calls.every((b) => b === undefined)).toBe(true);
+    expect(container.querySelector("script")).toBeNull();
+  });
+
+  it("shows markup in the endpoint name and the statement as text and nothing else", async () => {
+    const hostile = "<img src=x onerror=alert(1)>";
+    window.history.replaceState(null, "", "#baseline=openai%2Fbig");
+    const c = client({
+      config: () => Promise.resolve(priced),
+      stats: () => {
+        const answer = withBaseline(stats(group("fast")), { endpoint: "openai/big" });
+        return Promise.resolve({ ...answer, baseline: { ...answer.baseline, endpoint: hostile, basis: hostile } });
+      },
+    });
+    const { container } = show(c);
+    const strip = await screen.findByLabelText("What this traffic would have cost");
+    expect(strip.textContent).toContain(hostile);
+    expect(container.querySelector("img")).toBeNull();
+    expect(strip.querySelector("[onerror]")).toBeNull();
+  });
+
+  it("says when the baseline would have been cheaper, when nothing was priced and how many calls were left out", async () => {
+    window.history.replaceState(null, "", "#baseline=openai%2Fbig");
+    const dearer = withBaseline(stats(group("fast")), { summary: { baseline_cost_usd: 0.01, cost_usd: 0.03, saved_usd: -0.02, saved_ratio: -2, calls_left_out: 2 } });
+    const empty = withBaseline(stats(group("fast")), { summary: { calls_priced: 0, baseline_cost_usd: 0, cost_usd: 0, saved_usd: 0, saved_ratio: null } });
+    let reads = 0;
+    show(client({ config: () => Promise.resolve(priced), stats: () => Promise.resolve(reads++ === 0 ? dearer : empty) }));
+    const first = await screen.findByLabelText("What this traffic would have cost");
+    expect(first.textContent).toContain("more than that");
+    expect(first.textContent).toContain("2 answered calls reported no usage");
+    fireEvent.click(screen.getByRole("button", { name: "Refresh now" }));
+    await waitFor(() => { expect(screen.getByLabelText("What this traffic would have cost").textContent).toContain("nothing to price"); });
+  });
+
+  it("shows a notice, reads again without it and keeps the table when the gateway does not know baseline", async () => {
+    window.history.replaceState(null, "", "#baseline=openai%2Fbig");
+    const calls: (string | undefined)[] = [];
+    show(
+      client({
+        config: () => Promise.resolve(priced),
+        stats: (query) => {
+          calls.push(query?.baseline);
+          return query?.baseline === undefined
+            ? Promise.resolve(stats(group("fast")))
+            : Promise.reject(new ApiError(400, null, "unknown parameter `baseline`"));
+        },
+      }),
+    );
+    expect(await screen.findByText(/older than this page and does not know the baseline comparison/)).toBeTruthy();
+    expect(screen.getByRole("table")).toBeTruthy();
+    expect(screen.queryByLabelText("What this traffic would have cost")).toBeNull();
+    expect(calls).toEqual(["openai/big", undefined]);
+    // The first read waited for the configuration, so a link with a baseline does not read the statistics twice.
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 });

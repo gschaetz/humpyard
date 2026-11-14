@@ -19,6 +19,16 @@ times are written in your local time or in UTC, and how often to refresh. It sta
 rate, in local time, refreshing every minute. Changing any of them except the time zone reads again at once; the time
 zone only rewrites the times on the page.
 
+**Compare with** (shown when the gateway's configuration has an endpoint with a price and no tiers) prices the same
+traffic at an endpoint you pick, and a strip above the chart says it in words: at that endpoint, with its prices, the
+traffic would have cost X, it cost Y, and that is Z less (or more) and a share of the baseline. It uses the
+[baseline cost](api.md#what-the-traffic-would-have-cost) of the admin statistics, so it is an **estimate**: the tokens the
+calls used, priced at the baseline, saying nothing about whether that model would have answered as well, with the calls
+that reported no usage left out and counted. Pick the model you would really have used for everything; "more" is shown
+plainly when the baseline would have been cheaper. The choice is kept in the address as `baseline=provider/model` and is
+read only when it is exactly one of the endpoints the configuration offers. A gateway older than the page, which does not
+know the comparison, gets a notice and the view as before.
+
 **The chart** draws one line per group (the eight busiest) across the window. Each bucket is as wide as the window
 needs (a minute for an hour, 15 minutes for 24 hours, two hours for 7 days). A bucket in which a group had no calls is
 a **gap**, not a zero, and its hover text says so; hovering any point gives its time (to the minute, with the zone's name), value and request count, so a

@@ -8,6 +8,25 @@ export type SeriesBucket = components["schemas"]["SeriesBucket"];
 export type Health = components["schemas"]["Health"];
 export type EndpointHealth = components["schemas"]["EndpointHealth"];
 export type Principal = components["schemas"]["Principal"];
+export type Baseline = components["schemas"]["Baseline"];
+export type BaselineComparison = components["schemas"]["BaselineComparison"];
+
+/**
+ * The parts of the effective configuration the page reads: each target's endpoints and their prices. The rest of the
+ * configuration is not described by the admin API's contract and is not read.
+ */
+export interface Config {
+  targets: Record<
+    string,
+    {
+      endpoints: {
+        provider: string;
+        model: string;
+        price?: { input: number; output: number; cached_input?: number | null; tiers?: unknown[] } | null;
+      }[];
+    }
+  >;
+}
 
 /** Why a call to the admin API did not produce data. `status` is 0 when the gateway could not be reached at all. */
 export class ApiError extends Error {
@@ -29,6 +48,8 @@ export interface StatsQuery {
   groupBy?: "route" | "target" | "endpoint";
   route?: string;
   target?: string;
+  /** An endpoint of the configuration, as `provider/model`, to price the same calls at (`add-baseline-cost`). */
+  baseline?: string;
 }
 
 /** Lets a caller drop a request it no longer wants (the query changed). */
@@ -59,6 +80,8 @@ export interface Client {
    */
   series(request: SeriesRequest, options?: Options): Promise<Series | null>;
   health(options?: Options): Promise<Health>;
+  /** The effective configuration, of which the page reads the targets' endpoints and prices. */
+  config(options?: Options): Promise<Config>;
   /**
    * Exchanges the access token `humpyard ui --credential-env` printed at start for a session cookie (the only call
    * outside `/admin/v1`). The token goes in the body, never in a URL.
@@ -119,7 +142,13 @@ export function createClient(
     stats: (query = {}, options) =>
       getJson<Stats>(
         "/admin/v1/stats",
-        { window: query.window, group_by: query.groupBy, route: query.route, target: query.target },
+        {
+          window: query.window,
+          group_by: query.groupBy,
+          route: query.route,
+          target: query.target,
+          baseline: query.baseline,
+        },
         options,
       ),
     series: async (request, options) => {
@@ -142,6 +171,7 @@ export function createClient(
       }
     },
     health: (options) => getJson<Health>("/admin/v1/health", undefined, options),
+    config: (options) => getJson<Config>("/admin/v1/config", undefined, options),
     exchangeToken: async (token) => {
       let response: Response;
       try {

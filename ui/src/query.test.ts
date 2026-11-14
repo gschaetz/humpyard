@@ -34,6 +34,16 @@ describe("the query", () => {
     expect(serialiseQuery({ ...DEFAULT_QUERY, zone: "local" })).not.toContain("zone");
   });
 
+  it("keeps a baseline only when one is set, as the text the link held", () => {
+    expect(DEFAULT_QUERY.baseline).toBe("");
+    expect(serialiseQuery(DEFAULT_QUERY)).not.toContain("baseline");
+    const query: Query = { ...DEFAULT_QUERY, baseline: "openai/gpt 5&x=1#" };
+    expect(serialiseQuery(query)).toContain("baseline=openai%2Fgpt+5%26x%3D1%23");
+    expect(parseQuery(serialiseQuery(query))).toEqual(query);
+    // A value too long to be a name is dropped, as for the filters.
+    expect(parseQuery(`baseline=${"x".repeat(MAX_TEXT + 1)}`).baseline).toBe("");
+  });
+
   it("round-trips filters and a chosen series as plain strings, whatever characters they hold", () => {
     const query: Query = { ...DEFAULT_QUERY, route: "my route", target: "a&b=c#d", focus: "<img src=x onerror=alert(1)>" };
     expect(parseQuery(serialiseQuery(query))).toEqual(query);
@@ -77,7 +87,7 @@ describe("the query", () => {
 
   it("never writes, or reads back, anything resembling a credential or a token", () => {
     const parsed = parseQuery("token=abc&credential=hunter2&authorization=Bearer%20x&access_token=y&window=7d");
-    expect(Object.keys(parsed).sort()).toEqual(["focus", "group", "metric", "refresh", "route", "target", "window", "zone"]);
+    expect(Object.keys(parsed).sort()).toEqual(["baseline", "focus", "group", "metric", "refresh", "route", "target", "window", "zone"]);
     const written = serialiseQuery(parsed);
     expect(written).not.toMatch(/token|credential|authorization|bearer|hunter2|abc/i);
     expect(written).toContain("window=7d");
