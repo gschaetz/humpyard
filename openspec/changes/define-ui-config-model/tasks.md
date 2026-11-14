@@ -9,6 +9,6 @@ Each group stands alone and ships in its own change; this change records the dec
 - [x] 5.1 Patch generation with a format-preserving TOML editor, validated by the real loader (shipped as `add-config-patch`: `POST /admin/v1/config/patch`, scope `config`, ADR 0034)
 - [ ] 5.2 Optional direct write (`[admin] allow_config_writes`), fingerprint-conditional and atomic
 - [x] 5.3 Key profiles in the configuration (`[profiles.*]`: routes, budget ceilings, `over_budget`, rate and concurrency limits) and `profile =` on config keys (shipped as `add-key-profiles`; classes, lifetime and `max_active_keys` move to 5.4 with database-managed keys)
-- [ ] 5.4 Database-managed keys: ledger table, admin-only create (secret shown once), narrowing to `min(key, profile)`, mandatory expiry and (for paid-capable profiles) budget, `max_active_keys`, immediate revoke with an audit row
+- [ ] 5.4 (a later change, started when a second person or a fleet of agents needs keys without the operator; the owner of such a key is an actor, ADR 0037, shipped as `add-actors` with file-declared actors and client-key revoke) Database-managed keys: ledger table, admin-only create (secret shown once), narrowing to `min(key, profile)`, mandatory expiry and (for paid-capable profiles) budget, `max_active_keys`, immediate revoke with an audit row
 - [ ] 5.5 Gate before sharing keys with anyone but the operator: a per-profile rate limit or concurrency cap
 - [ ] 6.1 Architecture test: only the file writer and the override store can change effective configuration

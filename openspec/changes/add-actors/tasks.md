@@ -22,13 +22,13 @@
 ## 4. Request-path guard
 
 - [x] 4.1 Add an architecture test that no module outside attribution (the decision write, statistics and configuration display) reads an actor or owner, so nothing authorizes, limits or routes by one, and register the new modules in `fitness/register.toml` with their checks; verify the test passes and fails when a read is added to the request path, and that `scripts/select-checks.py` selects the isolation job for the change
-- [ ] 4.2 Run the isolation job and the overhead comparison with actors set on the load's keys, and record the result as the next run in `docs/performance.md`; verify the performance gate passes and the figures are within the budgets
+- [x] 4.2 Run the isolation job and the overhead comparison with actors set on the load's keys, and record the result as the next run in `docs/performance.md`; verify the performance gate passes and the figures are within the budgets
 
 ## 5. Wrap-up
 
-- [ ] 5.1 Add the actor section to `docs/threat-model.md` (a value from a request never picks an actor; revoke needs `credentials`; the secret never leaves the file) and update `docs/architecture.md` (module table, status table, "Last updated") and `docs/roadmap.md`; verify the Mermaid diagrams still match the code and the strict docs build passes
-- [ ] 5.2 Accept ADR 0037 and add it to the `docs/adr/README.md` index; note in `define-ui-config-model` that task 5.4 (database keys) remains for a later change; verify the index lists it
-- [ ] 5.3 Run fmt, clippy `-D warnings`, `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --document-private-items`, the full test suite with and without the `ui` feature, the `ui/` checks and `openspec validate add-actors --strict`; verify each exits 0
+- [x] 5.1 Add the actor section to `docs/threat-model.md` (a value from a request never picks an actor; revoke needs `credentials`; the secret never leaves the file) and update `docs/architecture.md` (module table, status table, "Last updated") and `docs/roadmap.md`; verify the Mermaid diagrams still match the code and the strict docs build passes
+- [x] 5.2 Accept ADR 0037 and add it to the `docs/adr/README.md` index; note in `define-ui-config-model` that task 5.4 (database keys) remains for a later change; verify the index lists it
+- [x] 5.3 Run fmt, clippy `-D warnings`, `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --document-private-items`, the full test suite with and without the `ui` feature, the `ui/` checks and `openspec validate add-actors --strict`; verify each exits 0
 
 ## Workflow follow-up
 
