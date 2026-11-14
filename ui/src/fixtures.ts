@@ -1,4 +1,4 @@
-import type { Health, Series, SeriesBucket, Stats, StatsGroup } from "./api/client";
+import type { Baseline, BaselineComparison, Config, Health, Series, SeriesBucket, Stats, StatsGroup } from "./api/client";
 
 export function group(name: string, over: Partial<StatsGroup> = {}): StatsGroup {
   return {
@@ -80,5 +80,44 @@ export function series(groups: Record<string, SeriesBucket[]>, over: Partial<Ser
     omitted_groups: 0,
     data: Object.entries(groups).map(([group, buckets]) => ({ group, buckets })),
     ...over,
+  };
+}
+
+/** A configuration with these endpoints, as `provider/model` with a price (`null`: no price), under one target each. */
+export function config(
+  ...endpoints: { name: string; price: { input: number; output: number; cached_input?: number | null; tiers?: unknown[] } | null }[]
+): Config {
+  const targets: Config["targets"] = {};
+  endpoints.forEach((e, i) => {
+    const [provider = "", ...model] = e.name.split("/");
+    targets[`t${i.toString()}`] = { endpoints: [{ provider, model: model.join("/"), price: e.price }] };
+  });
+  return { targets };
+}
+
+/** A statistics answer that was asked for a baseline: the baseline, its summary and no change to the groups. */
+export function withBaseline(
+  stats: Stats,
+  over: { endpoint?: string; summary?: Partial<BaselineComparison> } = {},
+): Stats & { baseline: Baseline; summary: BaselineComparison } {
+  const summary: BaselineComparison = {
+    baseline_cost_usd: 0.018,
+    cost_usd: 0.012,
+    saved_usd: 0.006,
+    saved_ratio: 0.3333,
+    calls_priced: 8,
+    calls_left_out: 0,
+    ...over.summary,
+  };
+  return {
+    ...stats,
+    baseline: {
+      endpoint: over.endpoint ?? "p/big",
+      input_per_million_usd: 3,
+      cached_input_per_million_usd: 3,
+      output_per_million_usd: 15,
+      basis: "An estimate, not a measurement: the tokens these calls used, priced at this endpoint's prices.",
+    },
+    summary,
   };
 }

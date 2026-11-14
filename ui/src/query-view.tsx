@@ -1,6 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from "preact/hooks";
+import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { Client, Health, Series, Stats } from "./api/client";
 import { Bars } from "./bars";
+import { BaselineStrip } from "./baseline-strip";
+import { effectiveBaseline, isUnknownBaseline, offeredBaselines, type Offered } from "./baseline";
 import { LineChart } from "./chart";
 import { timeZoneId } from "./chart-data";
 import { clock } from "./format";
@@ -15,6 +17,8 @@ interface Data {
   series: Series | null;
   stats: Stats;
   health: Health;
+  /** The gateway refused `baseline` as unknown (it predates the parameter), so the read was made without it. */
+  baselineIgnored: boolean;
 }
 
 /** The most series asked for: also what the chart can tell apart. */
@@ -52,10 +56,18 @@ export function QueryView(props: { client: Client; onRefused: () => void }) {
   const [data, setData] = useState<{ data: Data; at: number } | null>(null);
   const [failure, setFailure] = useState<Failure | null>(null);
   const [loading, setLoading] = useState(true);
+  // The endpoints a baseline can be, from the configuration; none until it is read, and none when it cannot be.
+  const [offered, setOffered] = useState<Offered[]>([]);
+  // Whether the configuration has been read (or has failed to be): a link that names a baseline waits for this before its
+  // first read, so the statistics are not read once without the baseline and again with it.
+  const [configRead, setConfigRead] = useState(false);
 
   // The reader always sees the latest query without being rebuilt for it.
   const current = useRef(query);
   current.current = query;
+  const baseline = effectiveBaseline(query.baseline, offered);
+  const baselineNow = useRef(baseline);
+  baselineNow.current = baseline;
   const onRefused = useRef(props.onRefused);
   onRefused.current = props.onRefused;
 
@@ -72,8 +84,18 @@ export function QueryView(props: { client: Client; onRefused: () => void }) {
             client.series({ window: q.window, interval: INTERVALS[q.window], groupBy: q.group, limit: SERIES_LIMIT, ...filters }, { signal }),
             client.health({ signal }),
           ]);
-          const stats = await client.stats({ window: q.window, groupBy: q.group, ...filters }, { signal });
-          return { series, stats, health };
+          const ask = baselineNow.current;
+          let baselineIgnored = false;
+          let stats: Stats;
+          try {
+            stats = await client.stats({ window: q.window, groupBy: q.group, ...filters, baseline: ask === "" ? undefined : ask }, { signal });
+          } catch (failure) {
+            // A gateway older than this page refuses `baseline`: read again without it and say so.
+            if (ask === "" || !isUnknownBaseline(failure)) throw failure;
+            baselineIgnored = true;
+            stats = await client.stats({ window: q.window, groupBy: q.group, ...filters }, { signal });
+          }
+          return { series, stats, health, baselineIgnored };
         },
         onData: (next, at) => {
           setData({ data: next, at });
@@ -87,11 +109,13 @@ export function QueryView(props: { client: Client; onRefused: () => void }) {
   );
 
   // A change of anything that is asked of the gateway reads again at once and starts the period over.
-  const asked = [query.window, query.group, query.metric, query.route, query.target, query.refresh].join("|");
+  const asked = [query.window, query.group, query.metric, query.route, query.target, query.refresh, baseline].join("|");
+  const ready = query.baseline === "" || configRead;
   useEffect(() => {
+    if (!ready) return;
     refresher.setPeriod(REFRESH_MS[current.current.refresh]);
     refresher.restart();
-  }, [refresher, asked]);
+  }, [refresher, asked, ready]);
   useEffect(() => {
     const onVisibility = () => { refresher.visibilityChanged(); };
     document.addEventListener("visibilitychange", onVisibility);
@@ -100,6 +124,24 @@ export function QueryView(props: { client: Client; onRefused: () => void }) {
       refresher.stop();
     };
   }, [refresher]);
+
+  // The configuration changes only with a reload, so it is read when the view starts and on a manual refresh; a failed
+  // read leaves no choice to offer and nothing else different.
+  const loadOffered = useCallback(() => {
+    client.config().then(
+      (config) => {
+        setOffered(offeredBaselines(config));
+        setConfigRead(true);
+      },
+      () => {
+        setOffered([]);
+        setConfigRead(true);
+      },
+    );
+  }, [client]);
+  useEffect(() => {
+    loadOffered();
+  }, [loadOffered]);
 
   const rows = useMemo(() => {
     if (data === null) return [];
@@ -117,7 +159,12 @@ export function QueryView(props: { client: Client; onRefused: () => void }) {
         view={view}
         onQuery={change}
         onView={setView}
-        onRefreshNow={() => { refresher.restart(); }}
+        onRefreshNow={() => {
+          loadOffered();
+          refresher.restart();
+        }}
+        offered={offered}
+        baseline={baseline}
       />
       <Status data={data} failure={failure} loading={loading} period={query.refresh} />
       {data !== null && (
@@ -125,6 +172,13 @@ export function QueryView(props: { client: Client; onRefused: () => void }) {
           {data.data.stats.truncated && (
             <p role="status" class="notice">The statistics were cut short; the figures below may be incomplete.</p>
           )}
+          {data.data.baselineIgnored && (
+            <p role="status" class="notice">
+              This gateway is older than this page and does not know the baseline comparison, so it is not shown. The table
+              and chart are current.
+            </p>
+          )}
+          {baseline !== "" && !data.data.baselineIgnored && <BaselineStrip stats={data.data.stats} />}
           {rows.length === 0 ? (
             <p class="status">{filtered ? "Nothing matched this query." : "No targets."}</p>
           ) : (

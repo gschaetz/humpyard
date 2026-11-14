@@ -1,4 +1,5 @@
 import { useEffect, useState } from "preact/hooks";
+import { perMillion, type Offered } from "./baseline";
 import { METRIC_LABELS } from "./chart-data";
 import { GROUPS, METRICS, REFRESHES, WINDOWS, ZONES, type Group, type Metric, type Query, type Refresh, type Window, type Zone } from "./query";
 
@@ -46,6 +47,10 @@ export function QueryBar(props: {
   onQuery: (change: Partial<Query>) => void;
   onView: (view: View) => void;
   onRefreshNow: () => void;
+  /** The endpoints the traffic can be compared with; none hides the choice. */
+  offered: Offered[];
+  /** The baseline in use: one of `offered`, or empty for none. */
+  baseline: string;
 }) {
   const { query } = props;
   return (
@@ -83,6 +88,17 @@ export function QueryBar(props: {
           <option value="bars">Ranking</option>
         </select>
       </label>
+      {props.offered.length > 0 && (
+        <label>
+          Compare with
+          <select value={props.baseline} onChange={(event) => { props.onQuery({ baseline: event.currentTarget.value }); }}>
+            <option value="">None</option>
+            {props.offered.map((o) => (
+              <option key={o.name} value={o.name}>{`${o.name} (${perMillion(o.input)} in, ${perMillion(o.output)} out)`}</option>
+            ))}
+          </select>
+        </label>
+      )}
       <label>
         Times
         <select value={query.zone} onChange={(event) => { props.onQuery({ zone: event.currentTarget.value as Zone }); }}>

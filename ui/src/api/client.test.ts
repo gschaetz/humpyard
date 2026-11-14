@@ -30,6 +30,17 @@ describe("the admin API client", () => {
     expect(fetchImpl.mock.calls[1]?.[0]).toBe("/admin/v1/stats");
   });
 
+  it("sends the baseline encoded, only when set, and reads the configuration under /admin/v1", async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockImplementation(() => Promise.resolve(respond(200, { targets: {} })));
+    const client = createClient(() => "k", fetchImpl);
+    await client.stats({ window: "24h", baseline: "p/big model&x=1#" });
+    await client.stats({ window: "24h" });
+    await client.config();
+    expect(fetchImpl.mock.calls[0]?.[0]).toBe("/admin/v1/stats?window=24h&baseline=p%2Fbig+model%26x%3D1%23");
+    expect(fetchImpl.mock.calls[1]?.[0]).toBe("/admin/v1/stats?window=24h");
+    expect(fetchImpl.mock.calls[2]?.[0]).toBe("/admin/v1/config");
+  });
+
   describe("the series call", () => {
     const request = { window: "24h", interval: "15m", groupBy: "target" as const };
 

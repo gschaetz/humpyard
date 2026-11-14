@@ -117,3 +117,8 @@ tr.detail dd { margin: 0 0 0.3rem; }
 .chart .tip-row { fill: var(--fg); font-size: 12px; }
 .chart .tip .line .mark { fill: var(--c); stroke: none; }
 .chart .tip .line .mark.stroke { fill: none; stroke: var(--c); stroke-width: 2; }
+
+.baseline-strip { margin: 0 0 1rem; padding: 0.6rem 0.8rem; border: 1px solid var(--line); border-radius: 6px; }
+.baseline-strip p { margin: 0; }
+.baseline-strip .baseline-headline { font-weight: 600; }
+.baseline-strip .baseline-note { font-size: 0.85rem; margin-top: 0.25rem; }

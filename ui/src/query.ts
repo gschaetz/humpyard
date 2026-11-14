@@ -42,6 +42,11 @@ export interface Query {
   target: string;
   /** The series chosen in the chart, which filters the table to it; empty means none. */
   focus: string;
+  /**
+   * The endpoint, as `provider/model`, to compare the traffic with. Kept as the text the link held: the view uses it
+   * only when it is exactly one of the endpoints the configuration offers (`baseline.ts`), otherwise as none.
+   */
+  baseline: string;
 }
 
 export const DEFAULT_QUERY: Query = {
@@ -53,6 +58,7 @@ export const DEFAULT_QUERY: Query = {
   route: "",
   target: "",
   focus: "",
+  baseline: "",
 };
 
 function oneOf<T extends string>(list: readonly T[], value: string | null, fallback: T): T {
@@ -75,6 +81,7 @@ export function parseQuery(fragment: string): Query {
     route: text(params.get("route")),
     target: text(params.get("target")),
     focus: text(params.get("focus")),
+    baseline: text(params.get("baseline")),
   };
 }
 
@@ -88,7 +95,7 @@ export function serialiseQuery(query: Query): string {
   });
   // The default is left out, so a link without it opens in local time.
   if (query.zone !== DEFAULT_QUERY.zone) params.set("zone", query.zone);
-  for (const name of ["route", "target", "focus"] as const) {
+  for (const name of ["route", "target", "focus", "baseline"] as const) {
     if (query[name] !== "") params.set(name, query[name]);
   }
   return params.toString();
