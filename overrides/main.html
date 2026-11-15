@@ -13,3 +13,9 @@
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:image" content="https://humpyard.dev/assets/social-preview.png">
 {% endblock %}
+
+{% block scripts %}
+  {{ super() }}
+  {#- Page views, with no cookies: Cloudflare Web Analytics. The token is public by design. -#}
+  <script type="module" src="https://static.cloudflareinsights.com/beacon.min.js" data-cf-beacon='{"token": "a4ca1c38daa545269b53cd85f89fba3c"}'></script>
+{% endblock %}
