@@ -505,6 +505,10 @@ pub struct Endpoint {
     /// Whether the model accepts images; `false` removes the target from requests that carry them.
     #[serde(default)]
     pub vision: Option<bool>,
+    /// Request fields added to a request sent to this endpoint when the request does not carry them, never
+    /// replacing one it does (ADR 0038). Checked at load against the endpoint's protocol.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub request_defaults: BTreeMap<String, serde_json::Value>,
 }
 
 /// Reads `max_request_tokens` untyped so that a zero, negative, fractional or non-numeric value is refused

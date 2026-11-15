@@ -4,7 +4,9 @@ use std::collections::BTreeMap;
 
 use std::net::SocketAddr;
 
-use super::schema::{RawAdmin, RawConfig, RawKey, RawMetrics, RawProvider, RouteSpec, TailSpec};
+use super::schema::{
+    Endpoint, RawAdmin, RawConfig, RawKey, RawMetrics, RawProvider, RouteSpec, TailSpec,
+};
 use super::{
     AdminConfig, AdminCredential, AdminScope, ConfigError, KeyConfig, Limits, MetricsConfig,
 };
@@ -268,6 +270,73 @@ pub(super) fn invalid(message: impl Into<String>) -> ConfigError {
     ConfigError::Invalid(message.into())
 }
 
+/// The protocol an endpoint speaks upstream. The fields a request default may name belong to it (ADR 0038): an
+/// Anthropic body has no effort field and does not take the other sampling fields, so a native Anthropic upstream will
+/// declare its own list rather than inherit this one.
+#[derive(Clone, Copy)]
+enum UpstreamProtocol {
+    OpenAiChat,
+}
+
+/// Every endpoint is OpenAI-compatible today.
+fn upstream_protocol(_endpoint: &Endpoint) -> UpstreamProtocol {
+    UpstreamProtocol::OpenAiChat
+}
+
+/// The names `request_defaults` accepts for the `OpenAI` chat protocol, in the order the refusal lists them.
+const OPENAI_CHAT_DEFAULTS: [&str; 7] = [
+    "reasoning_effort",
+    "temperature",
+    "top_p",
+    "top_k",
+    "min_p",
+    "presence_penalty",
+    "frequency_penalty",
+];
+
+/// Why `value` is not a valid default for `name` on an `OpenAI` chat endpoint, or `None` when it is.
+fn openai_chat_default_problem(name: &str, value: &serde_json::Value) -> Option<String> {
+    let in_range = |low: f64, high: f64| match value.as_f64() {
+        Some(n) if (low..=high).contains(&n) => None,
+        Some(_) => Some(format!("must be from {low} to {high}")),
+        None => Some(format!("must be a number from {low} to {high}")),
+    };
+    match name {
+        "reasoning_effort" => match value.as_str() {
+            Some(text) if !text.is_empty() => None,
+            _ => Some("must be a non-empty string".to_string()),
+        },
+        "temperature" => in_range(0.0, 2.0),
+        "top_p" | "min_p" => in_range(0.0, 1.0),
+        "presence_penalty" | "frequency_penalty" => in_range(-2.0, 2.0),
+        "top_k" => match value.as_u64() {
+            Some(n) if n >= 1 => None,
+            _ => Some("must be a whole number of at least 1".to_string()),
+        },
+        _ => Some(format!(
+            "is not a field that can be defaulted; the allowed fields are {}",
+            OPENAI_CHAT_DEFAULTS.join(", ")
+        )),
+    }
+}
+
+/// Refuses an endpoint's `request_defaults` that names a field its protocol does not allow, or gives one a value of
+/// the wrong type or outside its range. The message names the target, the endpoint and the field.
+fn validate_request_defaults(target: &str, endpoint: &Endpoint) -> Result<(), ConfigError> {
+    for (name, value) in &endpoint.request_defaults {
+        let problem = match upstream_protocol(endpoint) {
+            UpstreamProtocol::OpenAiChat => openai_chat_default_problem(name, value),
+        };
+        if let Some(problem) = problem {
+            return Err(invalid(format!(
+                "target `{target}`: endpoint {}/{} request_defaults.{name} {problem}",
+                endpoint.provider, endpoint.model
+            )));
+        }
+    }
+    Ok(())
+}
+
 /// A key definition must carry only a hash; any field that looks like the key itself is an error
 /// that names the key id.
 pub(super) fn reject_plaintext_keys(text: &str) -> Result<(), ConfigError> {
@@ -390,6 +459,7 @@ pub(super) fn validate(raw: &RawConfig) -> Result<(), ConfigError> {
                     endpoint.provider
                 )));
             }
+            validate_request_defaults(id, endpoint)?;
         }
     }
     for (id, route) in &raw.routes {

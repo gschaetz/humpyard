@@ -171,6 +171,21 @@ permission, a caller who chooses who they are, and a leaked key that cannot be r
 | A key's secret or hash leaves in a view | The effective configuration, key info and decisions show ids only | `tests/actors.rs`, `tests/key_revoke.rs` |
 | A key revoked for a long time is forgotten | An expiry no later than the overrides maximum, so it ends by itself | **Gap:** there is no alert for a key revoked for hours, as `HumpyardAdminRevoked` is for an admin credential |
 
+### B11: settings the operator adds to a client's request (endpoint request defaults)
+
+An endpoint can declare request fields the gateway adds to a request that lacks them
+([ADR 0038](adr/0038-an-endpoint-default-fills-what-a-client-leaves-out-and-never-replaces-what-it-sent.md)). The
+boundary is the operator's reviewed file writing into a request a client wrote.
+
+| Threat | Mitigation | Enforced by |
+|---|---|---|
+| A default replaces what the client asked for | Defaults go through the HTTP client's non-replacing merge, so a field the request carries is never changed, including a value of 0 | `tests/request_defaults.rs` (`the_clients_own_value_wins_and_only_the_missing_fields_are_filled`, `a_client_value_equal_to_zero_is_still_the_clients`, and the same for the Anthropic format) |
+| A client learns the operator's settings, or sets them | The client sees only its response; the defaults are in the effective configuration, which needs `read_config` or an admin credential | `tests/request_defaults.rs` (`defaults_are_not_shown_to_a_client`), `tests/effective_config.rs` |
+| A typo or an unsupported field makes a provider reject every request | An allow-list per protocol, each field typed and ranged, refused at load and by `check-config`; a refused reload keeps the previous configuration | `config::tests` (the request-default tests), `tests/request_defaults.rs` (the reload test) |
+| A default raises cost or changes routing | `max_tokens` is not allowed; defaults are merged into the outbound body after planning, budgeting and limits, so none of those sees them | `tests/request_defaults.rs` (`defaults_do_not_change_which_endpoint_is_chosen_or_how_the_request_is_judged`), the allow-list test |
+| A default is applied to the wrong model after a failover | The setting belongs to the endpoint, and each attempt builds its own body | `tests/request_defaults.rs` (`a_failover_sends_each_endpoint_its_own_defaults`) |
+| A default hides a thinking request a client made | **Gap:** Claude Code's `thinking` object is not translated to OpenAI-compatible endpoints, so a default `reasoning_effort = "none"` cannot be overridden by it; only an effort field (`reasoning_effort`, or `output_config.effort`) wins. Stated in the configuration guide; the fix belongs in the translation layer or the native Anthropic upstream | [Providers](providers.md#a-models-own-request-settings) |
+
 ## Gaps, in the order I would close them
 
 1. **Report channel.** A security policy and private reporting ([SECURITY.md](https://github.com/gschaetz/humpyard/blob/main/SECURITY.md)). Done with this page.
@@ -184,3 +199,4 @@ permission, a caller who chooses who they are, and a leaked key that cannot be r
 9. **The decisions lookup by request id** uses a filter pattern that stops SQLite using its index (308 ms at 1M rows); rewrite the optional filters.
 10. **A per-credential rate limit on the admin API.** The heavy-read gate bounds how much work reads can do, but a `read` credential can still ask as fast as it likes, and the series (a heavier read) and the GUI's refreshing pages make repeated reads normal. Many visible GUI tabs add up on the gateway; there is no server-side limit.
 11. **An alert for a client key that stays revoked.** `humpyard_admin_revocations_active` and the `HumpyardAdminRevoked` rule cover admin credentials only; a key revocation has neither, so a key revoked and forgotten is quiet. Add a gauge and a rule like the admin ones.
+12. **A client's request for thinking cannot reach an OpenAI-compatible endpoint that has a `reasoning_effort` default.** The translation drops the Anthropic `thinking` object; map it to an effort in the translation layer, or serve those endpoints through a native Anthropic upstream (roadmap).

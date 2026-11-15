@@ -504,7 +504,10 @@ fn endpoint_client(
         api_key: Some(provider.api_key.clone()),
         forward_auth: false,
         extra_headers: provider.headers.clone(),
-        extra_body: std::collections::BTreeMap::default(),
+        // The endpoint's request defaults. The client library adds each to the outbound body only when the
+        // request does not already carry it (ADR 0038). Its separate `reasoning_effort` below would replace the
+        // client's value, which a default must never do, so that stays unset.
+        extra_body: endpoint.request_defaults.clone(),
         reasoning_effort: None,
         max_retries: provider.max_retries,
         // The gateway applies the provider's timeout itself (ADR 0031); the library's single deadline would also

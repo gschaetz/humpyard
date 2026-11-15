@@ -143,6 +143,13 @@ See the [example configs](examples.md); `humpyard check-config <file>` validates
   for a provider that caps a request far below the model's window. A target is removed from a request whose
   prompt is certainly larger than that on every endpoint; the pool filter `min_context_window` keeps reading
   `context_window`. See [A provider's per-request cap](routing.md#a-providers-per-request-cap).
+- `request_defaults` on an endpoint (optional): request fields the gateway adds to a request sent to that endpoint **when
+  the request does not already carry them**, for a model that needs settings most clients never send. The client's own
+  value always wins. The allowed fields are `reasoning_effort` (a non-empty string), `temperature` (0 to 2), `top_p` and
+  `min_p` (0 to 1), `top_k` (a whole number of at least 1), and `presence_penalty` and `frequency_penalty` (-2 to 2);
+  anything else, including `max_tokens`, or a value out of range is refused at load, naming the target, the endpoint and
+  the field. It is shown in `GET /v1/config`. See
+  [A model's own request settings](providers.md#a-models-own-request-settings).
 - `[health]`: optional endpoint circuit breaker (`failure_threshold`, `cooldown_secs`,
   `max_cooldown_secs`, `max_retry_after_secs`: the cap on a cooldown taken from a retry time the error
   states, default 300) and `skip_cold_targets` (default true: leave a target whose endpoints are all

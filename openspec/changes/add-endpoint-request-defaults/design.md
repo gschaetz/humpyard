@@ -90,7 +90,7 @@ request that came from a client.
 | A default replaces what the client asked for | Defaults go through the library's non-replacing merge | Test: a request carrying the field reaches a mock endpoint unchanged |
 | A client uses a default to learn or change config | The client sees only the response; the defaults are not echoed | Existing config view needs `read_config`; test that `/v1/models` and responses do not carry defaults |
 | A typo or unsupported field makes a provider reject every request | Allow-list, type and range checks at load | Tests for each refusal; `check-config` fails the deploy before it reaches the cluster |
-| A default raises cost (`max_tokens`, a long thinking effort) | `max_tokens` is not allowed; the operator chose the effort | Spec scenario "Routing is unchanged"; the allow-list test |
+| A default raises cost (`max_tokens`, a long thinking effort) | `max_tokens` is not allowed; the operator chose the effort | `tests/request_defaults.rs` (routing and judgement unchanged with defaults); the allow-list test |
 | A default silently changes behavior for a client that expected the provider default | Documented; visible in the effective configuration | Docs task; config view test |
 | **Gap:** a client that wants thinking on at an endpoint defaulted to `none` must send an effort field | Not mitigated by code: Claude Code's `thinking` object is not translated (above) | Stated in the configuration guide; the translation library is the place to fix it |
 
