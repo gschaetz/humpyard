@@ -50,6 +50,7 @@ numbers are monotonic and never reused. Start from [template.md](template.md).
 | [0035](0035-the-admin-apis-time-series-are-read-from-the-decision-log-at-query-time.md) | The admin API's time series are read from the decision log at query time (accepted) |
 | [0036](0036-admin-and-ui-work-must-not-change-the-request-paths-performance.md) | Admin and UI work must not change the request path's performance (accepted) |
 | [0037](0037-an-actor-names-who-a-key-is-for-and-grants-nothing.md) | An actor names who a key is for and grants nothing (accepted) |
+| [0038](0038-an-endpoint-default-fills-what-a-client-leaves-out-and-never-replaces-what-it-sent.md) | An endpoint default fills what a client leaves out and never replaces what it sent (accepted) |
 
 How decisions relate to enforcement: invariants that must hold mechanically are listed in
 [../invariants.md](../invariants.md) and checked by tests and CI.
