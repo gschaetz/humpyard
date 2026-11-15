@@ -1384,3 +1384,115 @@ fn the_documented_actors_example_loads_as_written() {
     );
     assert_eq!(config.keys["cc-laptop"].owner.as_deref(), Some("gary"));
 }
+
+// Request defaults on an endpoint (`add-endpoint-request-defaults`, ADR 0038).
+
+fn defaulted(settings: &str) -> String {
+    format!(
+        "{VALID}\n[targets.dflt]\nstrengths = [\"general\"]\nendpoints = [{{ provider = \"groq\", model = \"m\", request_defaults = {{ {settings} }} }}]\n"
+    )
+}
+
+#[test]
+fn an_endpoint_may_declare_request_defaults() {
+    let config = Config::from_toml(
+        &defaulted("reasoning_effort = \"none\", temperature = 0.7, top_p = 0.8, top_k = 20"),
+        env,
+    )
+    .unwrap();
+    let defaults = &config.targets["dflt"][0].request_defaults;
+    assert_eq!(defaults["reasoning_effort"], "none");
+    assert_eq!(defaults["temperature"], 0.7);
+    assert_eq!(defaults["top_p"], 0.8);
+    assert_eq!(defaults["top_k"], 20);
+    assert_eq!(defaults.len(), 4);
+}
+
+#[test]
+fn every_allowed_field_loads_at_the_edges_of_its_range() {
+    for settings in [
+        "reasoning_effort = \"high\"",
+        "temperature = 0, top_p = 0, min_p = 0, presence_penalty = -2, frequency_penalty = -2",
+        "temperature = 2, top_p = 1, min_p = 1, presence_penalty = 2, frequency_penalty = 2, top_k = 1",
+        "temperature = 1",
+    ] {
+        Config::from_toml(&defaulted(settings), env).unwrap_or_else(|e| panic!("{settings}: {e}"));
+    }
+}
+
+#[test]
+fn an_empty_table_is_the_same_as_none() {
+    let empty = Config::from_toml(&defaulted(""), env).unwrap();
+    assert!(empty.targets["dflt"][0].request_defaults.is_empty());
+    let none = Config::from_toml(&capped("context_window = 8000"), env).unwrap();
+    assert!(none.targets["capped"][0].request_defaults.is_empty());
+}
+
+#[test]
+fn a_field_outside_the_list_is_refused_naming_the_endpoint_and_the_field() {
+    for name in ["max_tokens", "stop", "seed", "tempature", "thinking"] {
+        let message = err(&defaulted(&format!("{name} = 1")));
+        assert!(
+            message.contains("`dflt`")
+                && message.contains("groq/m")
+                && message.contains(&format!("request_defaults.{name}"))
+                && message.contains("reasoning_effort, temperature, top_p, top_k, min_p"),
+            "{name}: {message}"
+        );
+    }
+}
+
+#[test]
+fn a_wrong_type_or_a_value_out_of_range_names_the_field_and_what_is_allowed() {
+    for (settings, field, wants) in [
+        ("temperature = 5", "temperature", "from 0 to 2"),
+        ("temperature = -0.1", "temperature", "from 0 to 2"),
+        ("temperature = \"hot\"", "temperature", "must be a number"),
+        ("top_p = 1.5", "top_p", "from 0 to 1"),
+        ("min_p = -1", "min_p", "from 0 to 1"),
+        ("top_k = 0", "top_k", "whole number of at least 1"),
+        ("top_k = 1.5", "top_k", "whole number of at least 1"),
+        ("top_k = \"20\"", "top_k", "whole number of at least 1"),
+        ("presence_penalty = 3", "presence_penalty", "from -2 to 2"),
+        (
+            "frequency_penalty = -3",
+            "frequency_penalty",
+            "from -2 to 2",
+        ),
+        (
+            "reasoning_effort = \"\"",
+            "reasoning_effort",
+            "non-empty string",
+        ),
+        (
+            "reasoning_effort = 1",
+            "reasoning_effort",
+            "non-empty string",
+        ),
+        (
+            "reasoning_effort = true",
+            "reasoning_effort",
+            "non-empty string",
+        ),
+        ("temperature = nan", "temperature", "must be a number"),
+    ] {
+        let message = err(&defaulted(settings));
+        assert!(
+            message.contains("`dflt`")
+                && message.contains("groq/m")
+                && message.contains(&format!("request_defaults.{field}"))
+                && message.contains(wants),
+            "{settings}: {message}"
+        );
+    }
+}
+
+#[test]
+fn request_defaults_appear_in_the_serialized_endpoint_only_when_there_are_some() {
+    let with = Config::from_toml(&defaulted("temperature = 0.7"), env).unwrap();
+    let json = serde_json::to_value(&with.targets["dflt"][0]).unwrap();
+    assert_eq!(json["request_defaults"]["temperature"], 0.7);
+    let without = Config::from_toml(&capped("context_window = 8000"), env).unwrap();
+    let json = serde_json::to_value(&without.targets["capped"][0]).unwrap();
+    assert!(json.get("request_defaults").is_none(), "{json}");
+}

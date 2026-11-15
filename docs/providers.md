@@ -140,6 +140,48 @@ alone, 400; both removed, 200 with a tool call. Add only fields a provider rejec
 for example, would stop that provider reporting usage. Google also wraps its errors in an array, which the
 gateway reads, so the message names the field.
 
+## A model's own request settings
+
+Some models need request settings that most clients never send. A thinking model served by Ollama thinks unless told not
+to, so a plain prompt can spend its whole output limit on thinking and come back empty. List the settings on the endpoint
+that serves the model and every client gets them:
+
+```toml
+[targets.local]
+class = "private"
+endpoints = [{ provider = "lab", model = "qwen3.5:35b-a3b", request_defaults = { reasoning_effort = "none", temperature = 0.7, top_p = 0.8 } }]
+```
+
+- **A default fills; it never replaces.** A field is added only when the request does not carry it, so a client that asks
+  for `temperature = 0.2` or `reasoning_effort = "high"` keeps it. A value of `0` sent by the client is the client's.
+- **It follows the endpoint, not the route.** After a failover the next endpoint is sent its own defaults, or none. This
+  is why the setting is not on the provider (a provider can serve several models) or the route (a route can fall through
+  to another model).
+- **The same for every client.** Defaults are added after the request is translated, so a request that arrived in the
+  Anthropic format gets them too.
+- **Allowed fields:** `reasoning_effort`, `temperature`, `top_p`, `top_k`, `min_p`, `presence_penalty`, `frequency_penalty`.
+  `max_tokens` is not one of them: the gateway budgets and estimates on it. A name outside the list, a wrong type or a value
+  out of range fails `check-config` and a reload, and the previous configuration keeps serving.
+
+What a Claude Code request can and cannot say: Claude Code speaks the Anthropic format, and its `thinking` object (turning
+extended thinking on, with a budget) is not carried to an OpenAI-compatible endpoint. Only its `output_config.effort`
+becomes `reasoning_effort`, and when it sends one that wins over the default. So an endpoint defaulted to
+`reasoning_effort = "none"` stays without thinking for a Claude Code session that asks for thinking only through
+`thinking`. That is a limit of the translation, not of this setting, and a native Anthropic upstream (see the roadmap)
+passes `thinking` through. Each protocol will have its own list of allowed fields.
+
+Measured on a thinking model served by Ollama (`qwen3.5:35b-a3b`), 87 small coding and tool tasks:
+
+- With the endpoint declaring `request_defaults = { reasoning_effort = "none", temperature = 0.7, top_p = 0.8 }` and the
+  client sending none of those fields, 86 of 87 passed, every request was answered and ended normally, the longest reply
+  was 331 tokens, and the median took 1.2 seconds. Without `reasoning_effort`, a trivial prompt ran to the 8,000-token
+  limit with an empty reply after 109 seconds.
+- `reasoning_effort = "none"` took effect through Ollama's OpenAI-style endpoint. Adding `temperature = 0.7, top_p = 0.8`
+  to a client that sent only `reasoning_effort` raised the passes from 79 to 85 of the same 87.
+- `top_k` did **not** take effect there: with `top_k = 1` and `temperature = 2`, four identical calls gave four different
+  answers. Ollama's OpenAI-style endpoint does not read `top_k`; a model's own `top_k` (set in its Modelfile) still
+  applies, and another provider may honor it. `min_p`, `presence_penalty` and `frequency_penalty` were not measured.
+
 ## Gemini 3.x wants a thought signature on replayed tool calls
 
 (found 2026-10-23, Codex CLI 0.163.0, after `drop_fields` fixed the first request)

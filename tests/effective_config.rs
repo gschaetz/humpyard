@@ -77,7 +77,7 @@ api_key_env = "PATH"
 [targets.home]
 class = "private"
 strengths = ["general"]
-endpoints = [{{ provider = "lab", model = "home-model", context_window = 131072, max_request_tokens = 8000 }}]
+endpoints = [{{ provider = "lab", model = "home-model", context_window = 131072, max_request_tokens = 8000, request_defaults = {{ reasoning_effort = "none", temperature = 0.7 }} }}]
 [routes.pool]
 type = "fastest"
 pool = {{ strength = "general" }}
@@ -313,4 +313,20 @@ async fn an_endpoint_shows_its_request_cap_and_omits_it_when_unset() {
     assert_eq!(capped["max_request_tokens"], 8000);
     let uncapped = &v["targets"]["auto-free-alpha"]["endpoints"][0];
     assert!(uncapped.get("max_request_tokens").is_none(), "{uncapped}");
+}
+
+#[tokio::test]
+async fn an_endpoints_request_defaults_are_shown_and_an_endpoint_without_them_shows_none() {
+    let f = fixture("request-defaults", true).await;
+    let (status, body) = get(&f.url, "/v1/config", Some(&f.ops_key)).await;
+    assert_eq!(status, 200, "{body}");
+    let v: Value = serde_json::from_str(&body).unwrap();
+    let home = &v["targets"]["home"]["endpoints"][0];
+    assert_eq!(home["request_defaults"]["temperature"], 0.7, "{home}");
+    assert_eq!(
+        home["request_defaults"]["reasoning_effort"], "none",
+        "{home}"
+    );
+    let without = &v["targets"]["auto-free-alpha"]["endpoints"][0];
+    assert!(without.get("request_defaults").is_none(), "{without}");
 }
