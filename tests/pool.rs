@@ -8,7 +8,7 @@
 
 mod common;
 
-use common::serve;
+use common::{REFUSED_URL, serve};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -174,11 +174,8 @@ async fn rate_limit_and_server_errors_fail_over_with_the_next_endpoints_model_an
 
 #[tokio::test]
 async fn unreachable_endpoint_fails_over() {
-    let closed = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let dead = format!("http://{}", closed.local_addr().unwrap());
-    drop(closed);
     let b = Upstream::new(Mode::Ok);
-    let g = gateway(&dead, &upstream(&b).await, 5).await;
+    let g = gateway(REFUSED_URL, &upstream(&b).await, 5).await;
     let resp = chat(&g, false).await;
     assert_eq!(resp.status(), 200);
     assert_eq!(header(&resp, "x-humpyard-provider"), "p2");
@@ -213,10 +210,7 @@ async fn exhausted_failover_reports_the_last_endpoints_error() {
 
 #[tokio::test]
 async fn all_endpoints_unreachable_is_502() {
-    let closed = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let dead = format!("http://{}", closed.local_addr().unwrap());
-    drop(closed);
-    let g = gateway(&dead, &dead, 5).await;
+    let g = gateway(REFUSED_URL, REFUSED_URL, 5).await;
     assert_eq!(chat(&g, false).await.status(), 502);
 }
 

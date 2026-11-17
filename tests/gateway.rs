@@ -318,10 +318,7 @@ async fn upstream_rate_limit_passes_through() {
 
 #[tokio::test]
 async fn unreachable_upstream_is_502() {
-    let closed = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = closed.local_addr().unwrap();
-    drop(closed);
-    let h = harness_with_upstream(&format!("http://{addr}"), Arc::new(Mock::default())).await;
+    let h = harness_with_upstream(common::REFUSED_URL, Arc::new(Mock::default())).await;
     let resp = h.post("/v1/chat/completions", chat_body("m", false)).await;
     assert_eq!(resp.status(), 502);
 }

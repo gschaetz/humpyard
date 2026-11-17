@@ -66,6 +66,11 @@ pub async fn serve(app: Router) -> SocketAddr {
     addr
 }
 
+/// A base URL that refuses connections. Nothing listens on port 1, and the ephemeral range never hands it out. A
+/// port that was free "a moment ago" is not safe: a parallel test's server can take it, and the "dead" endpoint then
+/// answers (a 404 instead of a 502) or counts calls meant for it.
+pub const REFUSED_URL: &str = "http://127.0.0.1:1";
+
 /// An in-memory log sink.
 #[derive(Clone, Default)]
 pub struct LogBuf(pub Arc<Mutex<Vec<u8>>>);
