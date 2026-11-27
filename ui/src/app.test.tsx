@@ -116,4 +116,29 @@ describe("the shell", () => {
     fireEvent.click(screen.getByText("Continue"));
     expect((await screen.findByRole("alert")).textContent).toBe("That is not the access token.");
   });
+
+  it("signs in from a token in the address (humpyard up) and takes it out of the address first", async () => {
+    window.history.replaceState(null, "", "/#window=7d&token=linked-token");
+    const whoami = vi
+      .fn<Client["whoami"]>()
+      .mockRejectedValueOnce(new ApiError(401, "ui_token_required", "Enter the access token."))
+      .mockResolvedValue(principal);
+    const exchangeToken = vi.fn<Client["exchangeToken"]>().mockResolvedValue(undefined);
+    render(<App client={fake({ whoami, exchangeToken })} />);
+    expect(await screen.findByText("gary")).toBeTruthy();
+    expect(exchangeToken).toHaveBeenCalledWith("linked-token");
+    expect(window.location.href).not.toContain("linked-token");
+    expect(window.location.hash).toBe("#window=7d");
+    window.history.replaceState(null, "", "/");
+  });
+
+  it("asks for the token when the one in the address is wrong", async () => {
+    window.history.replaceState(null, "", "/#token=stale");
+    const need = () => Promise.reject(new ApiError(401, "ui_token_required", "Enter the access token."));
+    const exchangeToken = () => Promise.reject(new ApiError(401, "ui_token_invalid", "That is not the access token."));
+    render(<App client={fake({ whoami: need, exchangeToken })} />);
+    expect(await screen.findByLabelText("Access token")).toBeTruthy();
+    expect(window.location.href).not.toContain("stale");
+    window.history.replaceState(null, "", "/");
+  });
 });

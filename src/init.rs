@@ -227,6 +227,24 @@ fn ask_providers(input: &mut dyn BufRead, out: &mut dyn Write) -> Result<Vec<Str
     Ok(chosen)
 }
 
+/// Whether a provider accepts a key: it lists its models with it and, when a model is named, answers one small
+/// request for it. The message never contains the key.
+pub(crate) async fn check_key(
+    base_url: &str,
+    key: &str,
+    model: Option<&str>,
+) -> Result<(), String> {
+    fetch_provider_models(base_url, key)
+        .await
+        .map_err(|e| e.to_string())?;
+    if let Some(model) = model {
+        confirm_model(base_url, key, model)
+            .await
+            .map_err(|why| format!("it lists models, but {model} {why}"))?;
+    }
+    Ok(())
+}
+
 /// One small request to the model; `Ok` when the provider answers it.
 async fn confirm_model(base_url: &str, key: &str, model: &str) -> Result<(), String> {
     let client = reqwest::Client::builder()

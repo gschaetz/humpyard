@@ -69,7 +69,19 @@ The full comparison, including where the others win: [humpyard.dev/compare](http
 
 ## Quick start
 
-The fastest way: let `humpyard init` write the config. It checks your provider's models live and sends a test request.
+**On one machine**, the fastest way is one command. Download a binary from the
+[releases](https://github.com/gschaetz/humpyard/releases) (or `cargo build --release`), then:
+
+```sh
+export GROQ_API_KEY=...        # optional: you can paste the key into the page instead
+humpyard up
+```
+
+It writes a first config if you have none, starts the gateway and the admin GUI together, and opens the GUI already
+signed in, with copy-paste settings for Claude Code, Codex and others. Everything listens on `127.0.0.1`. Details and the
+one file where a key may be saved: [On one machine](https://humpyard.dev/single-machine/).
+
+For a server, a container or a shared machine, write the config with `humpyard init`. It checks your provider's models live and sends a test request.
 
 ```sh
 export GROQ_API_KEY=...        # your key; init reads it from the environment and never stores it

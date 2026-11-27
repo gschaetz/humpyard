@@ -10,6 +10,28 @@ of the groups it covers, drawn from `GET /admin/v1/stats`, `GET /admin/v1/stats/
 only reads. More views follow as separate changes ([ADR 0032](adr/0032-the-admin-gui-runs-as-its-own-process-from-the-same-binary.md),
 [ADR 0035](adr/0035-the-admin-apis-time-series-are-read-from-the-decision-log-at-query-time.md)).
 
+## Under `humpyard up`: the first-run screens
+
+When the page is served by [`humpyard up`](single-machine.md) it has three more things, none of which exist under
+`humpyard ui`:
+
+- **Connect a tool**: copy-paste settings for Claude Code, Codex, any OpenAI-compatible tool and curl, with the gateway's
+  live address and route names filled in and a placeholder where a key goes (a single-machine gateway has no client keys).
+  The copy button copies exactly the text shown.
+- **An empty state with a test request.** While the gateway has answered nothing the page says so, and *Send a test
+  request* sends one small fixed prompt through the gateway and shows which target answered and how fast, or the step that
+  failed in words. After the first answered call the page shows the query view instead.
+- **A write-only key form**: for each configured provider, a field for its key with *Use for this run only* (the default)
+  and *Save on this machine* as separate choices. The field is emptied the moment the key is sent. The page shows only
+  whether a provider has a key and whether it comes from your environment, the saved file or this run. It never shows a key
+  back. See [Keys](single-machine.md#keys) and [ADR 0039](adr/0039-a-local-key-file-is-read-only-by-up-and-never-shown-again.md).
+
+Under `up` the query view also starts with the savings comparison chosen, at the configuration's dearest priced endpoint,
+so the first thing it says is what the traffic would have cost there. Choose *none* in the query bar to turn it off. A
+configuration with no priced endpoint has nothing to compare with and shows no strip. These screens use a few routes
+under `/local` on the page's own address, behind the same host, cross-site and session checks as everything else; they
+are answered only by `up`.
+
 ## The query view
 
 **The query bar** chooses what is shown: a window (1 hour, 6 hours, 24 hours, 7 days or 30 days), a grouping (route,

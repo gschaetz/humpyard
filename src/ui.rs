@@ -4,14 +4,15 @@
 //! no web page and no static-file path. A local web service is reachable by any page the operator visits, so every
 //! request is checked before it is looked at: its `Host` must name this machine (a rebound DNS name is refused),
 //! a cross-site request is refused, and when the command holds the admin credential a per-run access token stands
-//! between the credential and anyone else who can reach the port. Only the `ui` command (`main`) may use this
-//! module.
+//! between the credential and anyone else who can reach the port. Only the `ui` command (`main`) and `up` (which
+//! serves the same GUI) may use this module.
 
 use std::future::Future;
 use std::io::Write;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
+use async_trait::async_trait;
 use axum::Router;
 use axum::body::Body;
 use axum::extract::{Request, State};
@@ -38,6 +39,21 @@ pub struct Settings {
     pub allow_hosts: Vec<String>,
     pub allow_insecure_upstream: bool,
 }
+
+/// The routes under `/local`, which only `humpyard up` supplies (ADR 0039). They sit behind every check the GUI's own
+/// routes have, plus the run's session, a JSON content type for anything that changes state, and a small body limit.
+#[async_trait]
+pub trait Local: Send + Sync + 'static {
+    /// Answers one request. `segments` are the path parts after `local`; `body` is at most [`LOCAL_MAX_BODY`] bytes.
+    async fn handle(&self, method: &Method, segments: &[String], body: &[u8]) -> Response;
+}
+
+/// Whether this build carries the GUI's files, for `humpyard up` to say so (the embedded files are reached through
+/// this module only).
+pub const GUI_EMBEDDED: bool = crate::ui_assets::EMBEDDED;
+
+/// The most a `/local` request may carry.
+pub const LOCAL_MAX_BODY: usize = 4096;
 
 /// A secret that cannot be printed by accident: formatting it shows nothing of it.
 pub(crate) struct Secret(String);
@@ -71,6 +87,8 @@ struct Shared {
     allow_hosts: Vec<String>,
     /// Present exactly when the command injects the admin credential.
     sessions: Option<Sessions>,
+    /// The `/local` routes, present only under `humpyard up`.
+    local: Option<Arc<dyn Local>>,
 }
 
 fn is_loopback_host(url: &Url) -> bool {
@@ -128,6 +146,31 @@ pub fn prepare_with_timeout(
     settings: &Settings,
     env: &dyn Fn(&str) -> Option<String>,
     timeout: std::time::Duration,
+) -> Result<Prepared, String> {
+    prepare_with(settings, env, timeout, None)
+}
+
+/// [`prepare`] with the `/local` routes of `humpyard up`. They need the session the access token opens, so they are
+/// refused unless the command holds the credential.
+///
+/// # Errors
+/// As [`prepare`], and a `local` given without `credential_env`.
+pub fn prepare_with_local(
+    settings: &Settings,
+    env: &dyn Fn(&str) -> Option<String>,
+    local: Arc<dyn Local>,
+) -> Result<Prepared, String> {
+    if settings.credential_env.is_none() {
+        return Err("the /local routes need the admin credential held by this process".into());
+    }
+    prepare_with(settings, env, forward::TIMEOUT, Some(local))
+}
+
+fn prepare_with(
+    settings: &Settings,
+    env: &dyn Fn(&str) -> Option<String>,
+    timeout: std::time::Duration,
+    local: Option<Arc<dyn Local>>,
 ) -> Result<Prepared, String> {
     let listen: SocketAddr = settings.listen.parse().map_err(|e| {
         format!(
@@ -200,6 +243,7 @@ pub fn prepare_with_timeout(
         sessions: token.as_deref().map(Sessions::new),
         upstream: Upstream::new(upstream, credential, timeout)?,
         allow_hosts: settings.allow_hosts.clone(),
+        local,
     };
     let router = Router::new().fallback(handle).with_state(Arc::new(shared));
     Ok(Prepared {
@@ -344,6 +388,9 @@ async fn answer(shared: &Shared, request: Request) -> Response {
     if segments.len() > 2 && segments[0] == "admin" && segments[1] == "v1" {
         return api(shared, request, &segments[2..]).await;
     }
+    if segments.first().is_some_and(|first| first == "local") {
+        return local(shared, request, &segments[1..]).await;
+    }
     if segments
         .first()
         .is_some_and(|first| first == "admin" || first == "v1")
@@ -399,6 +446,48 @@ async fn api(shared: &Shared, request: Request, tail: &[String]) -> Response {
             bytes,
         )
         .await
+}
+
+/// `/local/...`: only under `humpyard up`, only with the run's session, and a request that changes anything must be
+/// JSON, so a form on another page cannot post to it.
+async fn local(shared: &Shared, request: Request, tail: &[String]) -> Response {
+    let (Some(handler), Some(sessions)) = (&shared.local, &shared.sessions) else {
+        return not_found();
+    };
+    let cookie = request
+        .headers()
+        .get(header::COOKIE)
+        .and_then(|v| v.to_str().ok());
+    if !sessions.recognises(cookie) {
+        return json_error(
+            StatusCode::UNAUTHORIZED,
+            "ui_token_required",
+            "Enter the access token this service printed when it started.",
+        );
+    }
+    let (parts, body) = request.into_parts();
+    let reads = matches!(parts.method, Method::GET | Method::HEAD);
+    if !reads
+        && !parts
+            .headers
+            .get(header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .is_some_and(|v| v.trim().eq_ignore_ascii_case("application/json"))
+    {
+        return json_error(
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            "json_required",
+            "Send this as application/json.",
+        );
+    }
+    let Ok(bytes) = axum::body::to_bytes(body, LOCAL_MAX_BODY).await else {
+        return json_error(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "request_too_large",
+            "The request body is too large.",
+        );
+    };
+    handler.handle(&parts.method, tail, &bytes).await
 }
 
 /// `POST /ui/session` with `{"token": "..."}`: the token printed at start, exchanged for a session cookie.

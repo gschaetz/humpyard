@@ -52,6 +52,7 @@ numbers are monotonic and never reused. Start from [template.md](template.md).
 | [0036](0036-admin-and-ui-work-must-not-change-the-request-paths-performance.md) | Admin and UI work must not change the request path's performance (accepted) |
 | [0037](0037-an-actor-names-who-a-key-is-for-and-grants-nothing.md) | An actor names who a key is for and grants nothing (accepted) |
 | [0038](0038-an-endpoint-default-fills-what-a-client-leaves-out-and-never-replaces-what-it-sent.md) | An endpoint default fills what a client leaves out and never replaces what it sent (accepted) |
+| [0039](0039-a-local-key-file-is-read-only-by-up-and-never-shown-again.md) | A local key file is read only by `humpyard up` and never shown again (accepted) |
 
 How decisions relate to enforcement: invariants that must hold mechanically are listed in
 [../invariants.md](../invariants.md) and checked by tests and CI.

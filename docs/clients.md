@@ -1,5 +1,9 @@
 # Using humpyard with coding agents
 
+On one machine under [`humpyard up`](single-machine.md), the page's *Connect a tool* panel shows the settings below for
+Claude Code, Codex and any OpenAI-compatible tool with your gateway's address and route names filled in, ready to copy.
+The settings it shows are checked against this page by a test, so they cannot drift apart.
+
 ## Telling the gateway what a request is
 
 [Auto routing](routing.md#auto-routing-recipe) chooses a pool from the request's content (size, tools,

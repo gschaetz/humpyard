@@ -22,7 +22,7 @@ Every module under `src/` has a class in the register, and a module without one 
 |---|---|---|
 | request | On the path of a request | `auth`, `budget`, `clock`, `error`, `estimate`, `health`, `latency`, `limiter`, `metering`, `metrics`, `num`, `policy`, `pool`, `pricing`, `repair`, `repair_request`, `retry_after`, `routing`, `scrub`, `select`, `server`, `signals` |
 | shared | Shares something the request path depends on: the runtime setup, the ledger and its writer, the configuration the request path reads, the administrative handlers that read the ledger | `admin`, `config`, `ledger`, `lib`, `main`, `overrides`, `quota` |
-| off | Never in the serving path: commands that run once and exit, and the GUI | `ctl`, `discover`, `init`, `migrate`, `prices`, `retired`, `ui`, `ui_assets` |
+| off | Never in the serving path: commands that run once and exit, and the GUI | `ctl`, `discover`, `init`, `keystore`, `migrate`, `prices`, `retired`, `ui`, `ui_assets`, `up` |
 
 A request or shared module must be named by the triggers of at least one blocking check, so a module cannot join the
 request path without something watching it.

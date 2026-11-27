@@ -129,9 +129,13 @@ fn rules() -> BTreeMap<&'static str, Module> {
         ("init", module(Edge, &[])),
         // The read-only `ctl` client for a running gateway; `serve` never uses it.
         ("ctl", module(Edge, &[])),
+        // The one file `humpyard up` may keep provider keys in (ADR 0039); only `up` reads it.
+        ("keystore", module(Core, &[])),
         // The admin GUI's server and its embedded files; `serve` never uses either.
         ("ui", module(Edge, &[])),
         ("ui_assets", module(Edge, &[])),
+        // `humpyard up`: runs the gateway as a child process and serves the GUI beside it; `serve` never uses it (ADR 0039).
+        ("up", module(Edge, &[])),
         ("lib", module(Edge, &[])),
         (
             "main",
@@ -383,7 +387,7 @@ fn only_the_init_command_uses_the_init_module() {
     let mut offenders = Vec::new();
     for path in rust_files(&src) {
         let module = module_of(path.strip_prefix(&src).unwrap());
-        if matches!(module.as_str(), "init" | "main" | "lib") {
+        if matches!(module.as_str(), "init" | "up" | "main" | "lib") {
             continue;
         }
         let code = production_code(&fs::read_to_string(&path).unwrap());
@@ -394,6 +398,28 @@ fn only_the_init_command_uses_the_init_module() {
     assert!(
         offenders.is_empty(),
         "these files use the init module, which only `humpyard init` may: {offenders:?}"
+    );
+}
+
+/// ADR 0039: only `humpyard up` may read the key file, so `serve` and every other command can never hold a key
+/// that was saved there.
+#[test]
+fn only_the_up_command_uses_the_key_store() {
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut offenders = Vec::new();
+    for path in rust_files(&src) {
+        let module = module_of(path.strip_prefix(&src).unwrap());
+        if matches!(module.as_str(), "keystore" | "up" | "main" | "lib") {
+            continue;
+        }
+        let code = production_code(&fs::read_to_string(&path).unwrap());
+        if code.contains("keystore::") || code.contains("humpyard::keystore") {
+            offenders.push(path.display().to_string());
+        }
+    }
+    assert!(
+        offenders.is_empty(),
+        "these files use the key store, which only `humpyard up` may: {offenders:?}"
     );
 }
 
@@ -491,7 +517,7 @@ fn only_the_ui_command_uses_the_gui_modules() {
                 || code.contains(&format!("humpyard::{name}"))
                 || code.contains(&format!("super::{name}"))
         };
-        if !matches!(module.as_str(), "ui" | "ui_assets" | "main" | "lib")
+        if !matches!(module.as_str(), "ui" | "ui_assets" | "up" | "main" | "lib")
             && (uses("ui") || uses("ui_assets"))
         {
             offenders.push(path.display().to_string());
@@ -541,7 +567,7 @@ fn only_the_models_commands_use_the_discovery_module() {
         // provider's list for `models check --retired`; both are command-only.
         if matches!(
             module.as_str(),
-            "discover" | "init" | "retired" | "main" | "lib"
+            "discover" | "init" | "retired" | "up" | "main" | "lib"
         ) {
             continue;
         }
