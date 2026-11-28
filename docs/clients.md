@@ -64,6 +64,9 @@ capable = ["smart"]
 
 Notes from the verified run (a read-only agent in a scratch directory, `claude --bare`):
 
+- **A 400 saying `metadata` is not supported.** Claude Code sends a `metadata` field on every request and some
+  providers (Groq among them) refuse it. Add `drop_fields = ["metadata"]` to that provider's table. A config written
+  by `humpyard init` or `humpyard up` has it already; one written earlier does not.
 - **Don't name a route `auto`.** Claude Code has its own "auto mode"; the name triggered a client
   message about it. `agent` (or anything else) is fine.
 - **Letting `/model` list your routes (verified 2026-11-07, Claude Code 2.1.311).** Claude Code can fill

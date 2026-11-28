@@ -37,8 +37,16 @@
 
 ## 6. Integration
 
-- [ ] 6.1 On a clean machine account with no config and one real free-tier key: `humpyard up`, save the key in the page, connect Claude Code from the panel, send a request, and see it in the query view. Verify: record the steps and the elapsed time in the change's notes and fix anything that took more than a few minutes.
-- [ ] 6.2 Run `cargo fmt`, clippy with `-D warnings`, the full test suite and the UI's lint and tests, and confirm the coverage floor holds. Verify: the CI `check`, `docs`, `msrv`, `deny` and `coverage` jobs pass on the PR.
+- [x] 6.1 On a clean machine account with no config and one real free-tier key: `humpyard up`, save the key in the page, connect Claude Code from the panel, send a request, and see it in the query view. Verify: record the steps and the elapsed time in the change's notes and fix anything that took more than a few minutes.
+
+  Run notes (2026-11-27 and 28): a fresh state directory, a key pasted in the page for this run only, Claude Code connected
+  from the panel through NVIDIA's free tier, a request sent and seen in the query view. The elapsed time was not measured.
+  The run also saved a Groq key on this machine once (`keys.env`, `0600`). It found four things, all fixed in this change:
+  Claude Code sends `metadata`, which Groq refuses (a first config now has `drop_fields = ["metadata"]`); Groq's free tier
+  caps a request at 8,000 tokens and Claude Code's is about 22,000, so it cannot work there (documented); the OpenRouter
+  and NVIDIA preset models had been retired (presets refreshed); and the page hid why a key was refused (it now shows the
+  per-provider checks).
+- [x] 6.2 Run `cargo fmt`, clippy with `-D warnings`, the full test suite and the UI's lint and tests, and confirm the coverage floor holds. Verify: the CI `check`, `docs`, `msrv`, `deny` and `coverage` jobs pass on the PR.
 
 ## Workflow follow-up
 

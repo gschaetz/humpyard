@@ -72,6 +72,9 @@ entry is switched off.
   yours. If you already manage admin credentials, run `humpyard serve` and `humpyard ui` yourself.
 - **Loopback only.** Anyone who can open a connection to `127.0.0.1` on this machine can send requests through the gateway:
   there are no client keys on a single-machine setup. On a shared machine use `serve`.
+- **Claude Code needs a provider that takes large requests.** Its first request is about 22,000 tokens. Groq's free tier caps a
+  request at 8,000 tokens, so it answers 413 (Claude Code words that as "Request too large"); use NVIDIA or another provider
+  with a larger limit. OpenRouter's free models only appear if the account allows free endpoints (not with zero data retention).
 - **A key change restarts the gateway**, and a request in flight at that moment may fail.
 - **Stop it with Ctrl-C (or `kill`, not `kill -9`).** The gateway is a child of `up`; if `up` is killed outright the gateway keeps
   running, and the next `humpyard up` says its address is in use until you stop it (`pkill -f 'humpyard serve'`).

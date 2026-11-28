@@ -257,9 +257,14 @@ impl UpLocal {
             // thread of its own that drives it to the end.
             let first = Arc::clone(core);
             let runtime = tokio::runtime::Handle::current();
-            let written = tokio::task::spawn_blocking(move || {
+            let secret = key.to_string();
+            let (written, progress) = tokio::task::spawn_blocking(move || {
                 let mut progress = Vec::new();
-                runtime.block_on(super::first_config(&first, &mut progress))
+                let written = runtime.block_on(super::first_config(&first, &mut progress));
+                (
+                    written,
+                    String::from_utf8_lossy(&progress).replace(&secret, "<key>"),
+                )
             })
             .await
             .map_err(|_| {
@@ -268,14 +273,25 @@ impl UpLocal {
                     "setup_failed",
                     "The first configuration could not be written.".to_string(),
                 )
-            })?
-            .map_err(|e| (StatusCode::UNPROCESSABLE_ENTITY, "provider_rejected_key", e))?;
-            if !written {
-                return Err((
-                    StatusCode::UNPROCESSABLE_ENTITY,
-                    "provider_rejected_key",
-                    "No provider accepted that key.".into(),
-                ));
+            })?;
+            // What was checked, provider by provider, is what tells a person why a key was not accepted.
+            let detail = |why: &str| format!("{why}\n{}", progress.trim());
+            match written {
+                Ok(true) => {}
+                Ok(false) => {
+                    return Err((
+                        StatusCode::UNPROCESSABLE_ENTITY,
+                        "provider_rejected_key",
+                        detail("No provider accepted that key."),
+                    ));
+                }
+                Err(e) => {
+                    return Err((
+                        StatusCode::UNPROCESSABLE_ENTITY,
+                        "provider_rejected_key",
+                        detail(&e),
+                    ));
+                }
             }
         }
         if core.missing_keys().is_ok_and(|m| !m.is_empty()) {

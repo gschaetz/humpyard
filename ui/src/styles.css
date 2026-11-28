@@ -47,7 +47,7 @@ button:disabled { opacity: 0.5; cursor: default; }
 .signin label { display: grid; gap: 0.25rem; }
 .signin input { padding: 0.4rem 0.5rem; border: 1px solid var(--line); border-radius: 6px; background: transparent; }
 .hint { margin: 0; color: var(--muted); font-size: 0.85rem; }
-.error { color: var(--bad); margin: 0; }
+.error { color: var(--bad); margin: 0; white-space: pre-line; }
 .status { max-width: 40rem; margin: 12vh auto; padding: 0 16px; }
 .shell > header { display: flex; align-items: center; gap: 1rem; padding: 0.6rem 16px; border-bottom: 1px solid var(--line); }
 .shell > header .who { margin-left: auto; color: var(--muted); }
