@@ -44,10 +44,12 @@ quota = "shared"
 ctl = "off"
 discover = "off"
 init = "off"
+keystore = "off"
 migrate = "off"
 prices = "off"
 retired = "off"
 ui = "off"
+up = "off"
 ui_assets = "off"
 
 # A check:

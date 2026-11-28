@@ -83,6 +83,7 @@ route when it cannot decide. Steps 3 to 5 are the most useful place to help; see
 
 | Item | Why now | Spec |
 |---|---|---|
+| `humpyard up`: one command for one machine | Few people reach the first working minute: `init`, `serve`, `keygen --admin`, a config edit and a second terminal stand between a download and a visible gateway. `up` writes a first config, runs the gateway and the GUI together, opens it signed in, shows how to connect Claude Code or Codex, and may keep a provider key in one private file that only it reads (ADR 0039). Built and tested; unreleased | `add-single-machine-up` (6.1, a run with a real key, is open) |
 | Measure quota against cost | Days of real data decide what a quota percent means, what the status values are and what happens at a cap. No rule should use it before that | `add-quota-routing` 2.1 |
 
 ## Next, in order

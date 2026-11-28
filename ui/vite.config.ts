@@ -11,6 +11,9 @@ export default defineConfig({
     modulePreload: { polyfill: false },
     sourcemap: false,
   },
+  // A test reads `../docs/clients.md` so the page's copy-paste settings are checked against the guide. This is the dev
+  // server's file allow-list only; the build is unaffected.
+  server: { fs: { allow: [".."] } },
   test: {
     environment: "jsdom",
     include: ["src/**/*.test.{ts,tsx}", "lint/*.test.ts"],

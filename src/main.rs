@@ -37,6 +37,10 @@ enum Command {
     /// Serve the admin GUI on its own address and forward `/admin/v1` to a gateway. A separate process from `serve`:
     /// the gateway serves no web page. Listens on loopback unless told otherwise; see docs/admin-gui.md.
     Ui(UiArgs),
+    /// One command for one machine: writes a first config if there is none, starts the gateway and the admin GUI
+    /// together, and opens the GUI already signed in. Provider keys may be saved in a private file that only this
+    /// command reads; `serve` never does. See docs/single-machine.md.
+    Up(UpArgs),
     /// Create a virtual key: prints the key once and the config block holding its hash. With `--admin`, the
     /// secret is an admin credential instead and the block is an `[admin.credentials.<id>]` one.
     Keygen {
@@ -73,6 +77,31 @@ enum Command {
         /// The shell to generate completions for.
         shell: clap_complete::Shell,
     },
+}
+
+#[derive(clap::Args)]
+struct UpArgs {
+    /// Where `up` keeps its configuration, saved keys and ledger. Default: the config directory of your user
+    /// (`$XDG_CONFIG_HOME/humpyard`, else `~/.config/humpyard`).
+    #[arg(long)]
+    state_dir: Option<PathBuf>,
+    /// Where the gateway listens (loopback only). Default: the configuration's own, else 127.0.0.1:8080.
+    #[arg(long)]
+    listen: Option<String>,
+    /// Where the GUI is served.
+    #[arg(long, default_value = "127.0.0.1:8787")]
+    ui_listen: String,
+    /// A host name the GUI answers to besides loopback (repeatable). Needed to serve the GUI beyond this machine,
+    /// which switches key entry in the page off.
+    #[arg(long = "allow-host")]
+    allow_host: Vec<String>,
+    /// An OpenAI-compatible endpoint besides the built-in providers, `NAME,BASE_URL,KEY_ENV,MODEL` (repeatable),
+    /// used when a first configuration is written.
+    #[arg(long)]
+    custom: Vec<String>,
+    /// Do not open the browser; print the signed-in link instead.
+    #[arg(long)]
+    no_open: bool,
 }
 
 #[derive(clap::Args)]
@@ -768,6 +797,9 @@ async fn main() -> ExitCode {
     if let Command::Ui(args) = command {
         return ui_command(args).await;
     }
+    if let Command::Up(args) = command {
+        return up_command(args).await;
+    }
     if let Command::MigrateModelrelay(args) = command {
         return match migrate_command(args).await {
             Ok(()) => ExitCode::SUCCESS,
@@ -801,6 +833,30 @@ async fn ui_command(args: UiArgs) -> ExitCode {
         stop.recv().await;
     };
     match humpyard::ui::run(&settings, &env, &mut std::io::stdout(), shutdown).await {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(message) => {
+            eprintln!("error: {message}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+async fn up_command(args: UpArgs) -> ExitCode {
+    let settings = humpyard::up::Settings {
+        state_dir: args.state_dir,
+        listen: args.listen,
+        ui_listen: args.ui_listen,
+        allow_hosts: args.allow_host,
+        custom: args.custom,
+        open_browser: !args.no_open,
+        exe: None,
+    };
+    let env: humpyard::up::Env = std::sync::Arc::new(|name: &str| std::env::var(name).ok());
+    let mut stop = termination_signals();
+    let shutdown = async move {
+        stop.recv().await;
+    };
+    match humpyard::up::run(&settings, env, &mut std::io::stdout(), shutdown).await {
         Ok(()) => ExitCode::SUCCESS,
         Err(message) => {
             eprintln!("error: {message}");
@@ -1002,6 +1058,7 @@ async fn run(command: Command) -> Result<(), String> {
         | Command::Init(_)
         | Command::Ctl(_)
         | Command::Ui(_)
+        | Command::Up(_)
         | Command::Completions { .. } => Ok(()), // handled in `main`
         Command::Serve { config: path } => {
             let config = Config::load(&path).map_err(|e| e.to_string())?;

@@ -19,7 +19,7 @@ Optional commands read public price and model lists (`prices`, `models`). Releas
 
 | Asset | Why it matters |
 |---|---|
-| Provider API keys | They spend the operator's money and carry the operator's identity at each provider |
+| Provider API keys | They spend the operator's money and carry the operator's identity at each provider. Under `humpyard up` a user may also keep some in one private file ([B12](#b12-the-single-machine-command-and-its-key-file-humpyard-up)) |
 | Client keys (stored as SHA-256 hashes) | They authorise spend through the gateway, within route and budget limits |
 | Admin credentials (hashes in the file) | They can create overrides and revoke credentials; one with the `config` scope can ask for configuration patches, which write nothing |
 | Prompts and responses | They may contain anything the user sent; the gateway does not store them |
@@ -46,6 +46,9 @@ flowchart LR
   S[models.dev, provider model lists] -->|B6 untrusted data, commands only| G
   B[CI and registry] -->|B7 release artifacts| G
   M[Prometheus] -->|B8 scrape credential| G
+  U[Browser on this machine] -->|B12 /local, per-run session| UP[humpyard up]
+  UP -->|B12 child process, environment| G
+  K[(keys.env, 0600)] -->|B12 read only by up| UP
 ```
 
 ## Threats and what answers them
@@ -186,6 +189,29 @@ boundary is the operator's reviewed file writing into a request a client wrote.
 | A default is applied to the wrong model after a failover | The setting belongs to the endpoint, and each attempt builds its own body | `tests/request_defaults.rs` (`a_failover_sends_each_endpoint_its_own_defaults`) |
 | A default hides a thinking request a client made | **Gap:** Claude Code's `thinking` object is not translated to OpenAI-compatible endpoints, so a default `reasoning_effort = "none"` cannot be overridden by it; only an effort field (`reasoning_effort`, or `output_config.effort`) wins. Stated in the configuration guide; the fix belongs in the translation layer or the native Anthropic upstream | [Providers](providers.md#a-models-own-request-settings) |
 
+### B12: the single-machine command and its key file (`humpyard up`)
+
+`humpyard up` runs the gateway as a child, serves the admin GUI itself, and adds a few routes under `/local` so a
+person on one machine can connect a tool and enter provider keys
+([ADR 0039](adr/0039-a-local-key-file-is-read-only-by-up-and-never-shown-again.md)). It is the first place humpyard keeps
+a secret. The boundaries are a browser talking to a local web service that can change a file, and a file in the
+user's home directory.
+
+| Threat | Mitigation | Enforced by |
+|---|---|---|
+| A web page the user visits posts a key to `/local/keys`, or reads the status | The run's session cookie (`HttpOnly`, `SameSite=Strict`) is required; a cross-site or cross-origin request is refused; a change must be `application/json`, which a plain form cannot send | `tests/up_local.rs` (`a_request_without_the_session_or_from_elsewhere_changes_nothing`) |
+| DNS rebinding reaches the local service | The `Host` must be loopback or an allowed name, as for `humpyard ui` | the same test (the rebound-host case) |
+| The key file is readable by another local user | The directory is `0700` and the file `0600`, created that way, replaced atomically, and `up` refuses a directory or file that is looser and says what to run | `tests/up_keystore.rs` (modes, `a_file_others_can_read_is_refused_and_says_how_to_fix_it`, `a_directory_others_can_use_is_refused`), `tests/up_run.rs` (`a_state_directory_others_can_use_is_refused_and_says_how_to_fix_it`) |
+| A saved key is returned, logged or put on a command line | No route returns a key; `Secret` prints nothing; the key goes to the child only as an environment variable; a refused or failed key changes nothing | `tests/up_local.rs` (the key is absent from every response, the listing and the output in the session, rejected, saved and rollback cases), `tests/up_run.rs` (`the_gateway_child_gets_no_key_on_its_command_line`), `tests/up_keystore.rs` (`no_value_appears_in_debug_output`) |
+| `serve` or another command reads the file, spreading the secret beyond those who chose it | Only the `keystore` module reads it and only `up` calls it; the gateway's loader still reads the environment alone | `tests/architecture.rs` (`only_the_up_command_uses_the_key_store`), `tests/up_keystore.rs` (`serve_does_not_read_the_file`) |
+| A key is set for a variable the configuration does not name | A key is accepted only for a provider the configuration (or, before there is one, a built-in or `--custom` provider) names, and the form has no other field | `tests/up_local.rs` (`a_key_can_be_set_only_for_a_provider_the_configuration_names`) |
+| A bad key is saved, or the gateway is left stopped by a key change | A key is checked with the provider before it is kept; if the restarted gateway does not come up, the file, the held keys and the old gateway are put back | `tests/up_local.rs` (`a_key_the_provider_rejects_is_not_saved_and_the_gateway_is_not_started`, `a_gateway_that_will_not_start_on_the_new_key_leaves_everything_as_it_was`) |
+| The admin credential or its hash outlives the run | A new credential for each run, held in memory; only its hash is in a `0600` file in a `0700` run directory that is removed on exit and, after a crash, at the next start | `tests/up_run.rs` (`the_run_directory_holds_a_hash_in_a_private_file_and_is_gone_afterwards`, `each_run_makes_its_own_credential`) |
+| The access token in the opened link leaks | It is in the fragment (never sent to a server), removed from the address before it is used, and exchanged once for a session | `ui/src/link-token.test.ts`, `ui/src/app.test.tsx` |
+| Key entry is reachable from another machine | `/local/keys` answers `403 key_entry_disabled` unless the page is served on loopback | `tests/up_local.rs` (`key_entry_is_off_when_the_page_is_served_beyond_this_machine`) |
+| Another user of a shared machine uses the loopback gateway or its page | Loopback is not a boundary between users: the page needs the per-run token and the admin API the per-run credential, but a single-machine gateway has no client keys, so any local user can send requests through it. **Gap, accepted:** use `serve` with keys on a shared machine; stated in [On one machine](single-machine.md#limits) | none |
+| A request is in flight when a key change restarts the gateway, or `up` is killed outright | The restart uses the gateway's own graceful stop. **Gap, accepted:** a request in flight at that moment may fail, and a hard kill of `up` leaves its gateway running until it is stopped (the next `up` says the address is in use) | none |
+
 ## Gaps, in the order I would close them
 
 1. **Report channel.** A security policy and private reporting ([SECURITY.md](https://github.com/gschaetz/humpyard/blob/main/SECURITY.md)). Done with this page.
@@ -200,3 +226,5 @@ boundary is the operator's reviewed file writing into a request a client wrote.
 10. **A per-credential rate limit on the admin API.** The heavy-read gate bounds how much work reads can do, but a `read` credential can still ask as fast as it likes, and the series (a heavier read) and the GUI's refreshing pages make repeated reads normal. Many visible GUI tabs add up on the gateway; there is no server-side limit.
 11. **An alert for a client key that stays revoked.** `humpyard_admin_revocations_active` and the `HumpyardAdminRevoked` rule cover admin credentials only; a key revocation has neither, so a key revoked and forgotten is quiet. Add a gauge and a rule like the admin ones.
 12. **A client's request for thinking cannot reach an OpenAI-compatible endpoint that has a `reasoning_effort` default.** The translation drops the Anthropic `thinking` object; map it to an effort in the translation layer, or serve those endpoints through a native Anthropic upstream (roadmap).
+13. **A single-machine gateway has no client keys** (`humpyard up`, B12): any local user of a shared machine can send requests through it. Accepted for the one-machine case it is for; closing it means a per-run client key handed to the page, which is a second stored or shown secret.
+14. **`humpyard up` killed outright leaves its gateway running** (B12): the child has no way to learn that its parent is gone. The next `up` refuses with the address in use. A watchdog in the child would need a change to `serve`.

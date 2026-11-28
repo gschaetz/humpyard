@@ -3,6 +3,10 @@
 Three ways to run humpyard: a release binary, the container image, or the macOS launchd service
 (which uses the binary). Releases are described at the end.
 
+**On one machine, just trying it or using it yourself?** `humpyard up` is one command: it writes a first config if
+there is none, starts the gateway and the admin GUI, and opens the GUI signed in. See
+[On one machine](single-machine.md). The rest of this page is for running `serve` yourself.
+
 Whatever you use, you need a config file ([examples/quickstart.toml](../examples/quickstart.toml) is
 the smallest; [examples/config.toml](../examples/config.toml) adds failover across two providers; check
 one with `humpyard check-config`) and the provider API keys in **environment variables** named

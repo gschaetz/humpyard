@@ -49,7 +49,7 @@ function useFragmentQuery(): [Query, (change: Partial<Query>) => void] {
  * and is rendered as text. After a failed refresh the earlier numbers stay, marked out of date with the time they are from;
  * nothing is left looking current.
  */
-export function QueryView(props: { client: Client; onRefused: () => void }) {
+export function QueryView(props: { client: Client; onRefused: () => void; preferBaseline?: boolean }) {
   const { client } = props;
   const [query, change] = useFragmentQuery();
   const [view, setView] = useState<View>("lines");
@@ -110,7 +110,8 @@ export function QueryView(props: { client: Client; onRefused: () => void }) {
 
   // A change of anything that is asked of the gateway reads again at once and starts the period over.
   const asked = [query.window, query.group, query.metric, query.route, query.target, query.refresh, baseline].join("|");
-  const ready = query.baseline === "" || configRead;
+  // A page that picks the comparison for the person waits for the configuration before its first read too.
+  const ready = (query.baseline === "" && props.preferBaseline !== true) || configRead;
   useEffect(() => {
     if (!ready) return;
     refresher.setPeriod(REFRESH_MS[current.current.refresh]);
@@ -142,6 +143,16 @@ export function QueryView(props: { client: Client; onRefused: () => void }) {
   useEffect(() => {
     loadOffered();
   }, [loadOffered]);
+  // Under `humpyard up` the comparison is chosen once, when the configuration is first read: the dearest priced endpoint,
+  // which is what the same traffic would have cost on the model a person would otherwise have sent everything to. Choosing
+  // "none" afterwards sticks, because this runs only once.
+  const defaulted = useRef(false);
+  useEffect(() => {
+    if (props.preferBaseline !== true || defaulted.current || !configRead) return;
+    defaulted.current = true;
+    const first = offered[0];
+    if (query.baseline === "" && first !== undefined) change({ baseline: first.name });
+  }, [props.preferBaseline, configRead, offered]);
 
   const rows = useMemo(() => {
     if (data === null) return [];

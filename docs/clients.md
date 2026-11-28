@@ -1,5 +1,9 @@
 # Using humpyard with coding agents
 
+On one machine under [`humpyard up`](single-machine.md), the page's *Connect a tool* panel shows the settings below for
+Claude Code, Codex and any OpenAI-compatible tool with your gateway's address and route names filled in, ready to copy.
+The settings it shows are checked against this page by a test, so they cannot drift apart.
+
 ## Telling the gateway what a request is
 
 [Auto routing](routing.md#auto-routing-recipe) chooses a pool from the request's content (size, tools,
@@ -60,6 +64,9 @@ capable = ["smart"]
 
 Notes from the verified run (a read-only agent in a scratch directory, `claude --bare`):
 
+- **A 400 saying `metadata` is not supported.** Claude Code sends a `metadata` field on every request and some
+  providers (Groq among them) refuse it. Add `drop_fields = ["metadata"]` to that provider's table. A config written
+  by `humpyard init` or `humpyard up` has it already; one written earlier does not.
 - **Don't name a route `auto`.** Claude Code has its own "auto mode"; the name triggered a client
   message about it. `agent` (or anything else) is fine.
 - **Letting `/model` list your routes (verified 2026-11-07, Claude Code 2.1.311).** Claude Code can fill

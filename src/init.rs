@@ -47,18 +47,32 @@ pub const PRESETS: [Preset; 3] = [
         name: "openrouter",
         base_url: "https://openrouter.ai/api/v1",
         key_env: "OPENROUTER_API_KEY",
+        // OpenRouter's free list changes often; these were listed with tool support on 2026-11-27.
         fast: &[
-            "openai/gpt-oss-20b:free",
-            "meta-llama/llama-3.3-70b-instruct:free",
+            "nvidia/nemotron-3.5-lightning:free",
+            "google/gemma-4-26b-a4b-it:free",
         ],
-        deep: &["openai/gpt-oss-120b:free"],
+        deep: &[
+            "nvidia/nemotron-3-ultra-550b-a55b:free",
+            "google/gemma-4-31b-it:free",
+        ],
     },
     Preset {
         name: "nvidia",
         base_url: "https://integrate.api.nvidia.com/v1",
         key_env: "NVIDIA_API_KEY",
-        fast: &["openai/gpt-oss-20b"],
-        deep: &["openai/gpt-oss-120b", "nvidia/nemotron-3-super-120b-a12b"],
+        // NVIDIA's catalogue changes often; the newer ids were in its public list on 2026-11-28.
+        fast: &[
+            "openai/gpt-oss-20b",
+            "nvidia/nemotron-3.5-lightning-30b-a3b",
+            "z-ai/glm-5.3-flash",
+        ],
+        deep: &[
+            "openai/gpt-oss-120b",
+            "nvidia/nemotron-3-super-120b-a12b",
+            "nvidia/nemotron-3-ultra-550b-a55b",
+            "moonshotai/kimi-k3.1-pro",
+        ],
     },
 ];
 
@@ -120,6 +134,10 @@ fn toml_string(text: &str) -> String {
     out
 }
 
+/// Claude Code sends `metadata` on every request and some providers refuse the field (Groq answers 400 "`metadata` is not
+/// supported with this model"), so a first config drops it: nothing downstream uses it.
+const DROP_METADATA: &str = "drop_fields = [\"metadata\"]";
+
 /// The configuration text. `key` is the hash of a virtual key for a gateway that is not loopback-only.
 #[must_use]
 pub fn render(picks: &[Pick], listen: &str, key_hash: Option<&str>) -> String {
@@ -134,7 +152,7 @@ pub fn render(picks: &[Pick], listen: &str, key_hash: Option<&str>) -> String {
     for p in picks {
         let _ = writeln!(
             out,
-            "[providers.{}]\nbase_url = {}\napi_key_env = {}\n",
+            "[providers.{}]\nbase_url = {}\napi_key_env = {}\n{DROP_METADATA}\n",
             p.name,
             toml_string(&p.base_url),
             toml_string(&p.key_env)
@@ -225,6 +243,24 @@ fn ask_providers(input: &mut dyn BufRead, out: &mut dyn Write) -> Result<Vec<Str
         chosen.push(name.to_string());
     }
     Ok(chosen)
+}
+
+/// Whether a provider accepts a key: it lists its models with it and, when a model is named, answers one small
+/// request for it. The message never contains the key.
+pub(crate) async fn check_key(
+    base_url: &str,
+    key: &str,
+    model: Option<&str>,
+) -> Result<(), String> {
+    fetch_provider_models(base_url, key)
+        .await
+        .map_err(|e| e.to_string())?;
+    if let Some(model) = model {
+        confirm_model(base_url, key, model)
+            .await
+            .map_err(|why| format!("it lists models, but {model} {why}"))?;
+    }
+    Ok(())
 }
 
 /// One small request to the model; `Ok` when the provider answers it.
@@ -363,6 +399,13 @@ async fn check_provider(
         }
     }
     if pick.fast.is_none() && pick.deep.is_none() {
+        if pick.name == "openrouter" && !listed.iter().any(|m| m.ends_with(":free")) {
+            let _ = writeln!(
+                out,
+                "  openrouter: your account lists no free models. OpenRouter hides them until free endpoints are allowed at \
+                 https://openrouter.ai/settings/privacy"
+            );
+        }
         let sample: Vec<&str> = listed.iter().map(String::as_str).take(12).collect();
         let _ = writeln!(
             out,
@@ -599,6 +642,11 @@ mod tests {
         assert!(text.contains("[targets.fast]"));
         assert!(text.contains("[targets.deep]"));
         assert!(!text.contains("[keys."));
+        assert_eq!(
+            text.matches("drop_fields = [\"metadata\"]").count(),
+            2,
+            "every provider drops `metadata`"
+        );
         let config = Config::from_toml(&text, |_| Some("placeholder".into()));
         assert!(config.is_ok(), "{config:?}");
     }
